@@ -5,7 +5,7 @@ import {
   CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, AreaChart,
 } from "recharts";
 import {
-  Wallet, TrendingUp, TrendingDown, PiggyBank, Target, Sun, Moon,
+  Wallet, TrendingUp, TrendingDown, PiggyBank, Target,
   Search, Filter, Download, ChevronRight, ChevronLeft, X, Plus,
   Home, Utensils, Car, Zap, HeartPulse, GraduationCap, Popcorn,
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
@@ -1750,7 +1750,6 @@ const TABS = [
   { id: "stats", label: "Estadísticas", icon: TrendingUp },
 ];
 export default function FinanceApp() {
-  const [dark, setDark] = useState(false);
   const [tab, setTab] = useState("dashboard");
   const [monthOpen, setMonthOpen] = useState(null);
   const { code, setCode, format } = useCurrency();
@@ -1758,14 +1757,6 @@ export default function FinanceApp() {
   const [dataLoading, setDataLoading] = useState(true);
   const realCurrentYear = new Date().getFullYear();
   const [year, setYear] = useState(realCurrentYear);
-
-  useEffect(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem("finanzas_dark") : null;
-    if (saved !== null) setDark(saved === "true");
-  }, []);
-  useEffect(() => {
-    if (typeof window !== "undefined") localStorage.setItem("finanzas_dark", String(dark));
-  }, [dark]);
 
   async function loadYearData(y = year) {
     setDataLoading(true);
@@ -1783,7 +1774,7 @@ export default function FinanceApp() {
   const openMonth = (i) => setMonthOpen(i);
   const navMonth = (delta) => setMonthOpen((i) => Math.min(11, Math.max(0, i + delta)));
   return (
-    <div className={dark ? "dark" : ""}>
+    <div>
       <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-[#0B1220] dark:text-slate-100">
         <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-slate-50/80 backdrop-blur-md dark:border-slate-800/70 dark:bg-[#0B1220]/80">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
@@ -1817,12 +1808,6 @@ export default function FinanceApp() {
               >
                 {Object.keys(CURRENCIES).map((c) => <option key={c}>{c}</option>)}
               </select>
-              <button
-                onClick={() => setDark((d) => !d)}
-                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
-              >
-                {dark ? <Sun size={15} /> : <Moon size={15} />}
-              </button>
               <button
                 onClick={handleLogout}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
