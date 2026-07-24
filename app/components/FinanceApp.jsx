@@ -10,7 +10,7 @@ import {
   Home, Utensils, Car, Zap, HeartPulse, GraduationCap, Popcorn,
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
-  Pencil,
+  Pencil, Coins, AlertTriangle,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -89,6 +89,13 @@ async function fetchYearData(year) {
 ------------------------------------------------------------------ */
 function useCurrency() {
   const [code, setCode] = useState("CRC");
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("finanzas_currency") : null;
+    if (saved && CURRENCIES[saved]) setCode(saved);
+  }, []);
+  useEffect(() => {
+    if (typeof window !== "undefined") localStorage.setItem("finanzas_currency", code);
+  }, [code]);
   const cfg = CURRENCIES[code];
   const format = useCallback((crcAmount) => {
     const value = crcAmount * cfg.rate;
@@ -97,6 +104,21 @@ function useCurrency() {
     }).format(value);
   }, [code, cfg]);
   return { code, setCode, format };
+}
+function exportToCSV(filename, rows) {
+  if (typeof window === "undefined" || !rows || rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))].join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 function statusOf(balance, ingreso) {
   if (ingreso === 0) return "gris";
@@ -239,7 +261,7 @@ function RowActions({ onEdit, onDelete }) {
 /* ---------------------------------------------------------------
    DASHBOARD
 ------------------------------------------------------------------ */
-function Dashboard({ fmt, onSelectMonth, yearData }) {
+function Dashboard({ fmt, onSelectMonth, yearData, year }) {
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -255,7 +277,8 @@ function Dashboard({ fmt, onSelectMonth, yearData }) {
     return yearData.map((m) => { acc += m.ahorroTotal; return { mes: m.mes, Ahorro: acc }; });
   }, [yearData]);
   const now = new Date();
-  const currentIdx = now.getMonth();
+  const isCurrentYear = year === now.getFullYear();
+  const currentIdx = isCurrentYear ? now.getMonth() : 11;
   const prevIdx = Math.max(0, currentIdx - 1);
   const currentMonth = yearData[currentIdx];
   const prevMonth = yearData[prevIdx];
@@ -268,12 +291,12 @@ function Dashboard({ fmt, onSelectMonth, yearData }) {
   if (allExpenses.length > 0) {
     const byCat = allExpenses.reduce((a, e) => (a[e.categoria] = (a[e.categoria] || 0) + e.monto, a), {});
     const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
-    if (top) insights.push(`Tu categoría con mayor gasto este año fue ${top[0]}.`);
+    if (top) insights.push(`Tu categoría con mayor gasto en ${year} fue ${top[0]}.`);
   }
   if (currentMonth.ingresoTotal > 0) {
-    insights.push(`Este mes has ahorrado un ${Math.round((currentMonth.ahorroTotal / currentMonth.ingresoTotal) * 100)}% de tus ingresos.`);
+    insights.push(`${isCurrentYear ? "Este mes has" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorrado un ${Math.round((currentMonth.ahorroTotal / currentMonth.ingresoTotal) * 100)}% de tus ingresos.`);
   }
-  if (totals.ahorros > 0) {
+  if (isCurrentYear && totals.ahorros > 0) {
     const promedioMensual = totals.ahorros / (currentIdx + 1);
     if (promedioMensual > 0) {
       insights.push(`Si mantienes este ritmo de ahorro, alcanzarás tu meta anual en ${Math.max(1, Math.ceil((metaAnual - totals.ahorros) / promedioMensual))} meses.`);
@@ -762,6 +785,7 @@ function IncomesView({ fmt, onDataChanged }) {
   const [showModal, setShowModal] = useState(false);
   const [editingIncome, setEditingIncome] = useState(null);
   const [deletingIncome, setDeletingIncome] = useState(null);
+  const [search, setSearch] = useState("");
   async function refetchIncomes() {
     const { data } = await supabase.from("incomes").select("*").order("date", { ascending: false });
     setIncomes(data || []);
@@ -788,26 +812,47 @@ function IncomesView({ fmt, onDataChanged }) {
     setDeletingIncome(null);
   }
   const total = incomes.reduce((a, i) => a + Number(i.amount), 0);
+  const filteredIncomes = incomes.filter((i) =>
+    `${i.type || ""} ${i.description || ""}`.toLowerCase().includes(search.toLowerCase())
+  );
   if (loading) {
     return <p className="text-sm text-slate-400">Cargando ingresos...</p>;
   }
   return (
     <div className="space-y-4">
-      <Card className="p-5 flex items-center justify-between">
+      <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Total de ingresos registrados</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
-        >
-          <Plus size={15} /> Agregar ingreso
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportToCSV("ingresos.csv", filteredIncomes.map((i) => ({ Tipo: i.type, Descripcion: i.description || "", Monto: i.amount, Fecha: i.date })))}
+            disabled={filteredIncomes.length === 0}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Download size={15} /> Exportar CSV
+          </button>
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
+          >
+            <Plus size={15} /> Agregar ingreso
+          </button>
+        </div>
       </Card>
       <Card className="overflow-hidden">
+        <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+          <div className="relative max-w-xs">
+            <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
+            <input
+              value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por tipo o descripción..."
+              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+        </div>
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {incomes.map((i) => (
+          {filteredIncomes.map((i) => (
             <div key={i.id} className="flex items-center justify-between px-5 py-3 text-sm">
               <div>
                 <p className="font-medium text-slate-700 dark:text-slate-200">{i.description || i.type}</p>
@@ -819,8 +864,10 @@ function IncomesView({ fmt, onDataChanged }) {
               </div>
             </div>
           ))}
-          {incomes.length === 0 && (
-            <p className="px-5 py-8 text-center text-sm text-slate-400">Aún no has registrado ingresos.</p>
+          {filteredIncomes.length === 0 && (
+            <p className="px-5 py-8 text-center text-sm text-slate-400">
+              {incomes.length === 0 ? "Aún no has registrado ingresos." : "Sin resultados para tu búsqueda."}
+            </p>
           )}
         </div>
       </Card>
@@ -959,6 +1006,8 @@ function ExpensesView({ fmt, onDataChanged }) {
   const [showModal, setShowModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [deletingExpense, setDeletingExpense] = useState(null);
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("Todas");
   async function refetchExpenses() {
     const { data } = await supabase
       .from("expenses")
@@ -989,26 +1038,56 @@ function ExpensesView({ fmt, onDataChanged }) {
     setDeletingExpense(null);
   }
   const total = expenses.reduce((a, e) => a + Number(e.amount), 0);
+  const categoriasDisponibles = [...new Set(expenses.map((e) => e.categories?.name).filter(Boolean))];
+  const filteredExpenses = expenses.filter((e) =>
+    (catFilter === "Todas" || e.categories?.name === catFilter) &&
+    `${e.description || ""} ${e.categories?.name || ""}`.toLowerCase().includes(search.toLowerCase())
+  );
   if (loading) {
     return <p className="text-sm text-slate-400">Cargando gastos...</p>;
   }
   return (
     <div className="space-y-4">
-      <Card className="p-5 flex items-center justify-between">
+      <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Total de gastos registrados</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
-        >
-          <Plus size={15} /> Agregar gasto
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date, Recurrente: e.is_recurring ? "Si" : "No" })))}
+            disabled={filteredExpenses.length === 0}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Download size={15} /> Exportar CSV
+          </button>
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
+          >
+            <Plus size={15} /> Agregar gasto
+          </button>
+        </div>
       </Card>
       <Card className="overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+          <div className="relative min-w-[160px] flex-1">
+            <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
+            <input
+              value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por descripción o categoría..."
+              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          <select
+            value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+          >
+            <option>Todas</option>
+            {categoriasDisponibles.map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </div>
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {expenses.map((e) => (
+          {filteredExpenses.map((e) => (
             <div key={e.id} className="flex items-center justify-between px-5 py-3 text-sm">
               <div className="flex items-center gap-3">
                 <div
@@ -1028,8 +1107,10 @@ function ExpensesView({ fmt, onDataChanged }) {
               </div>
             </div>
           ))}
-          {expenses.length === 0 && (
-            <p className="px-5 py-8 text-center text-sm text-slate-400">Aún no has registrado gastos.</p>
+          {filteredExpenses.length === 0 && (
+            <p className="px-5 py-8 text-center text-sm text-slate-400">
+              {expenses.length === 0 ? "Aún no has registrado gastos." : "Sin resultados para tu búsqueda."}
+            </p>
           )}
         </div>
       </Card>
@@ -1182,6 +1263,7 @@ function SavingsView({ fmt, onDataChanged }) {
   const [showModal, setShowModal] = useState(false);
   const [editingSaving, setEditingSaving] = useState(null);
   const [deletingSaving, setDeletingSaving] = useState(null);
+  const [typeFilter, setTypeFilter] = useState("Todos");
   async function refetchSavings() {
     const { data } = await supabase.from("savings").select("*").order("date", { ascending: false });
     setSavings(data || []);
@@ -1204,26 +1286,45 @@ function SavingsView({ fmt, onDataChanged }) {
     setDeletingSaving(null);
   }
   const total = savings.reduce((a, s) => a + Number(s.amount), 0);
+  const filteredSavings = savings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
   if (loading) {
     return <p className="text-sm text-slate-400">Cargando ahorros...</p>;
   }
   return (
     <div className="space-y-4">
-      <Card className="p-5 flex items-center justify-between">
+      <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Total ahorrado</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-blue-500">{fmt(total)}</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
-        >
-          <Plus size={15} /> Agregar ahorro
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportToCSV("ahorros.csv", filteredSavings.map((s) => ({ Tipo: SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type, Monto: s.amount, Fecha: s.date })))}
+            disabled={filteredSavings.length === 0}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Download size={15} /> Exportar CSV
+          </button>
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
+          >
+            <Plus size={15} /> Agregar ahorro
+          </button>
+        </div>
       </Card>
       <Card className="overflow-hidden">
+        <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+          <select
+            value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+          >
+            <option>Todos</option>
+            {SAVINGS_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </div>
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {savings.map((s) => {
+          {filteredSavings.map((s) => {
             const label = SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type;
             return (
               <div key={s.id} className="flex items-center justify-between px-5 py-3 text-sm">
@@ -1238,8 +1339,10 @@ function SavingsView({ fmt, onDataChanged }) {
               </div>
             );
           })}
-          {savings.length === 0 && (
-            <p className="px-5 py-8 text-center text-sm text-slate-400">Aún no has registrado ahorros.</p>
+          {filteredSavings.length === 0 && (
+            <p className="px-5 py-8 text-center text-sm text-slate-400">
+              {savings.length === 0 ? "Aún no has registrado ahorros." : "No hay ahorros de este tipo."}
+            </p>
           )}
         </div>
       </Card>
@@ -1361,6 +1464,209 @@ function SavingModal({ saving: savingRecord, onClose, onSaved }) {
   );
 }
 /* ---------------------------------------------------------------
+   PRESUPUESTOS
+------------------------------------------------------------------ */
+function BudgetsView({ fmt }) {
+  const [categories, setCategories] = useState([]);
+  const [budgets, setBudgets] = useState([]);
+  const [monthExpenses, setMonthExpenses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingBudget, setEditingBudget] = useState(null);
+  const [deletingBudget, setDeletingBudget] = useState(null);
+
+  async function refetch() {
+    const now = new Date();
+    const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const last = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const [{ data: cats, error: catError }, { data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
+      supabase.from("categories").select("*"),
+      supabase.from("budgets").select("*"),
+      supabase.from("expenses").select("amount, category_id").gte("date", first).lte("date", last),
+    ]);
+    if (catError) console.error("Error cargando categorías:", catError.message);
+    if (budError) console.error("Error cargando presupuestos:", budError.message);
+    if (expError) console.error("Error cargando gastos del mes:", expError.message);
+    setCategories(cats || []);
+    setBudgets(buds || []);
+    setMonthExpenses(exps || []);
+    setLoading(false);
+  }
+  useEffect(() => {
+    refetch();
+  }, []);
+
+  async function handleDelete(id) {
+    const { error } = await supabase.from("budgets").delete().eq("id", id);
+    if (error) throw error;
+    setBudgets((prev) => prev.filter((b) => b.id !== id));
+    setDeletingBudget(null);
+  }
+
+  if (loading) {
+    return <p className="text-sm text-slate-400">Cargando presupuestos...</p>;
+  }
+
+  const rows = categories.map((c) => {
+    const budget = budgets.find((b) => b.category_id === c.id);
+    const spent = monthExpenses.filter((e) => e.category_id === c.id).reduce((a, e) => a + Number(e.amount), 0);
+    const pct = budget ? Math.round((spent / Number(budget.monthly_amount)) * 100) : null;
+    return { category: c, budget, spent, pct };
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <Eyebrow>Presupuestos del mes actual</Eyebrow>
+        <p className="mt-1 text-sm text-slate-400">Define un límite mensual por categoría y sigue tu progreso en tiempo real.</p>
+      </Card>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {rows.map(({ category, budget, spent, pct }) => {
+          const color = category.color || "#64748B";
+          const over = pct !== null && pct >= 100;
+          const near = pct !== null && pct >= 80 && pct < 100;
+          return (
+            <Card key={category.id} className="p-5">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-semibold" style={{ backgroundColor: `${color}1a`, color }}>
+                    {category.name.charAt(0)}
+                  </div>
+                  <div>
+                    <p className="font-medium text-slate-800 dark:text-white">{category.name}</p>
+                    <p className="text-xs text-slate-400">
+                      {budget ? `${fmt(spent)} de ${fmt(budget.monthly_amount)}` : "Sin presupuesto definido"}
+                    </p>
+                  </div>
+                </div>
+                {budget ? (
+                  <RowActions onEdit={() => setEditingBudget({ category, budget })} onDelete={() => setDeletingBudget(budget)} />
+                ) : (
+                  <button
+                    onClick={() => setEditingBudget({ category, budget: null })}
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                    aria-label="Definir presupuesto"
+                  >
+                    <Plus size={14} />
+                  </button>
+                )}
+              </div>
+              {budget && (
+                <>
+                  <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ease-out ${over ? "bg-red-500" : near ? "bg-amber-400" : "bg-emerald-500"}`}
+                      style={{ width: `${Math.min(100, pct)}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs">
+                    <span className={`font-medium ${over ? "text-red-500" : near ? "text-amber-500" : "text-emerald-600"}`}>{pct}% usado</span>
+                    {over && (
+                      <span className="inline-flex items-center gap-1 text-red-500">
+                        <AlertTriangle size={12} /> Pasaste el límite
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+            </Card>
+          );
+        })}
+        {rows.length === 0 && (
+          <p className="text-sm text-slate-400">Primero crea categorías de gasto para poder definirles un presupuesto.</p>
+        )}
+      </div>
+      {editingBudget && (
+        <BudgetModal
+          category={editingBudget.category}
+          budget={editingBudget.budget}
+          onClose={() => setEditingBudget(null)}
+          onSaved={refetch}
+        />
+      )}
+      {deletingBudget && (
+        <ConfirmDeleteModal
+          title="Eliminar presupuesto"
+          message="¿Seguro que quieres quitar el presupuesto de esta categoría? Puedes volver a definirlo cuando quieras."
+          onCancel={() => setDeletingBudget(null)}
+          onConfirm={() => handleDelete(deletingBudget.id)}
+        />
+      )}
+    </div>
+  );
+}
+function BudgetModal({ category, budget, onClose, onSaved }) {
+  const isEditing = Boolean(budget);
+  const [amount, setAmount] = useState(budget ? String(budget.monthly_amount) : "");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!amount) {
+      setErrorMsg("Ingresa un monto.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("budgets").update({ monthly_amount: Number(amount) }).eq("id", budget.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("budgets").insert({
+      user_id: userId || null,
+      category_id: category.id,
+      monthly_amount: Number(amount),
+    });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+            {isEditing ? "Editar presupuesto" : "Definir presupuesto"} · {category.name}
+          </h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Límite mensual</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="150000"
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+          <button
+            type="submit" disabled={saving}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Definir presupuesto"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+/* ---------------------------------------------------------------
    ESTADÍSTICAS
 ------------------------------------------------------------------ */
 function StatsView({ fmt, yearData }) {
@@ -1438,6 +1744,7 @@ const TABS = [
   { id: "annual", label: "Vista anual", icon: Calendar },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
+  { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "savings", label: "Ahorros", icon: PiggyBank },
   { id: "goals", label: "Metas", icon: Target },
   { id: "stats", label: "Estadísticas", icon: TrendingUp },
@@ -1449,16 +1756,27 @@ export default function FinanceApp() {
   const { code, setCode, format } = useCurrency();
   const [yearData, setYearData] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
-  const currentYear = new Date().getFullYear();
-  async function loadYearData() {
+  const realCurrentYear = new Date().getFullYear();
+  const [year, setYear] = useState(realCurrentYear);
+
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("finanzas_dark") : null;
+    if (saved !== null) setDark(saved === "true");
+  }, []);
+  useEffect(() => {
+    if (typeof window !== "undefined") localStorage.setItem("finanzas_dark", String(dark));
+  }, [dark]);
+
+  async function loadYearData(y = year) {
     setDataLoading(true);
-    const data = await fetchYearData(currentYear);
+    const data = await fetchYearData(y);
     setYearData(data);
     setDataLoading(false);
   }
   useEffect(() => {
-    loadYearData();
-  }, []);
+    loadYearData(year);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year]);
   async function handleLogout() {
     await supabase.auth.signOut();
   }
@@ -1539,24 +1857,48 @@ export default function FinanceApp() {
                 {tab === "annual" && "Vista anual"}
                 {tab === "incomes" && "Tus ingresos"}
                 {tab === "expenses" && "Tus gastos"}
+                {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && "Tus ahorros"}
                 {tab === "goals" && "Tus metas"}
                 {tab === "stats" && "Estadísticas"}
               </h1>
-              <p className="text-sm text-slate-400">{currentYear} · actualizado en tiempo real</p>
+              {["dashboard", "annual", "stats"].includes(tab) ? (
+                <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
+                  <button
+                    onClick={() => setYear((y) => y - 1)}
+                    className="rounded-md p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    aria-label="Año anterior"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span className="tabular-nums font-medium text-slate-600 dark:text-slate-300">{year}</span>
+                  <button
+                    onClick={() => setYear((y) => Math.min(realCurrentYear, y + 1))}
+                    disabled={year >= realCurrentYear}
+                    className="rounded-md p-0.5 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                    aria-label="Año siguiente"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                  <span>· actualizado en tiempo real</span>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">{realCurrentYear} · actualizado en tiempo real</p>
+              )}
             </div>
           </div>
           {dataLoading || !yearData ? (
             <p className="text-sm text-slate-400">Cargando tus datos...</p>
           ) : (
             <>
-              {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} />}
+              {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} />}
               {tab === "annual" && <AnnualTable fmt={format} onSelectMonth={openMonth} yearData={yearData} />}
               {tab === "stats" && <StatsView fmt={format} yearData={yearData} />}
             </>
           )}
           {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} />}
           {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} />}
+          {tab === "budgets" && <BudgetsView fmt={format} />}
           {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} />}
           {tab === "goals" && <GoalsView fmt={format} />}
         </main>
