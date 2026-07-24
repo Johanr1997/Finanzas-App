@@ -121,6 +121,15 @@ function exportToCSV(filename, rows) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+function sortCategories(cats) {
+  const rank = (name) => {
+    const n = (name || "").trim().toLowerCase();
+    if (n === "compras a plazos") return 0;
+    if (n === "otros") return 2;
+    return 1;
+  };
+  return [...cats].sort((a, b) => rank(a.name) - rank(b.name));
+}
 function addMonthsToDateString(dateStr, monthsToAdd) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const targetIndex = m - 1 + monthsToAdd;
@@ -1035,7 +1044,7 @@ function ExpensesView({ fmt, onDataChanged }) {
       if (expError) console.error("Error cargando gastos:", expError.message);
       if (catError) console.error("Error cargando categorías:", catError.message);
       setExpenses(exp || []);
-      setCategories(cats || []);
+      setCategories(sortCategories(cats || []));
       setLoading(false);
     }
     fetchAll();
@@ -1159,7 +1168,7 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
   const [errorMsg, setErrorMsg] = useState("");
 
   const selectedCategory = categories.find((c) => c.id === categoryId);
-  const isInstallment = !isEditing && selectedCategory?.name === "Compras a plazos";
+  const isInstallment = !isEditing && (selectedCategory?.name || "").trim().toLowerCase() === "compras a plazos";
 
   async function handleSubmit(e) {
     e.preventDefault();
