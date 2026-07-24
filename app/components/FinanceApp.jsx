@@ -10,7 +10,7 @@ import {
   Home, Utensils, Car, Zap, HeartPulse, GraduationCap, Popcorn,
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
-  Pencil, Coins, AlertTriangle,
+  Pencil, Coins, AlertTriangle, CreditCard,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -28,6 +28,7 @@ const CATEGORY_META = {
   Entretenimiento: { icon: Popcorn, color: "#8B5CF6" },
   Compras: { icon: ShoppingBag, color: "#EC4899" },
   Suscripciones: { icon: Repeat, color: "#F43F5E" },
+  "Compras a plazos": { icon: CreditCard, color: "#DB2777" },
   Otros: { icon: MoreHorizontal, color: "#64748B" },
 };
 const CATEGORY_NAMES = Object.keys(CATEGORY_META);
@@ -119,6 +120,15 @@ function exportToCSV(filename, rows) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+function addMonthsToDateString(dateStr, monthsToAdd) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const targetIndex = m - 1 + monthsToAdd;
+  const targetYear = y + Math.floor(targetIndex / 12);
+  const targetMonth = ((targetIndex % 12) + 12) % 12;
+  const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const targetDay = Math.min(d, lastDayOfTargetMonth);
+  return `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
 }
 function statusOf(balance, ingreso) {
   if (ingreso === 0) return "gris";
@@ -1144,12 +1154,21 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
   const [date, setDate] = useState(expense?.date || today);
   const [isRecurring, setIsRecurring] = useState(expense?.is_recurring || false);
+  const [months, setMonths] = useState("2");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const selectedCategory = categories.find((c) => c.id === categoryId);
+  const isInstallment = !isEditing && selectedCategory?.name === "Compras a plazos";
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!categoryId || !amount || !date) {
       setErrorMsg("Completa al menos la categoría, el monto y la fecha.");
+      return;
+    }
+    if (isInstallment && (!months || Number(months) < 1)) {
+      setErrorMsg("Indica a cuántos meses es la compra.");
       return;
     }
     setSaving(true);
@@ -1173,6 +1192,30 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
     }
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData?.user?.id;
+
+    if (isInstallment) {
+      const totalMonths = Number(months);
+      const rows = Array.from({ length: totalMonths }, (_, i) => ({
+        user_id: userId || null,
+        category_id: categoryId,
+        description: totalMonths > 1
+          ? `${description || "Compra a plazos"} (cuota ${i + 1}/${totalMonths})`
+          : description,
+        amount: Number(amount),
+        date: addMonthsToDateString(date, i),
+        is_recurring: false,
+      }));
+      const { error } = await supabase.from("expenses").insert(rows);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+
     const { error } = await supabase.from("expenses").insert({
       user_id: userId || null,
       category_id: categoryId,
@@ -1212,13 +1255,15 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
             <input
               value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej. Supermercado semana"
+              placeholder={isInstallment ? "Ej. Refrigeradora" : "Ej. Supermercado semana"}
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                {isInstallment ? "Monto de la cuota mensual" : "Monto"}
+              </label>
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="25000"
@@ -1226,23 +1271,41 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                {isInstallment ? "Fecha de la 1ª cuota" : "Fecha"}
+              </label>
               <input
                 type="date" value={date} onChange={(e) => setDate(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>
           </div>
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
-            <input type="checkbox" checked={isRecurring} onChange={(e) => setIsRecurring(e.target.checked)} />
-            Es un gasto recurrente (se repite cada mes)
-          </label>
+          {isInstallment ? (
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿A cuántos meses (cuotas)?</label>
+              <input
+                type="number" min="1" value={months} onChange={(e) => setMonths(e.target.value)}
+                placeholder="5"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+              {amount && months && Number(months) > 0 && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Se registrarán {months} gastos de {Number(amount).toLocaleString("es-CR")} cada uno, uno por mes, empezando el {date}.
+                </p>
+              )}
+            </div>
+          ) : (
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+              <input type="checkbox" checked={isRecurring} onChange={(e) => setIsRecurring(e.target.checked)} />
+              Es un gasto recurrente (se repite cada mes)
+            </label>
+          )}
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
           <button
             type="submit" disabled={saving}
             className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
           >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar gasto"}
+            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : isInstallment ? `Registrar ${months || 0} cuotas` : "Agregar gasto"}
           </button>
         </form>
       </div>
