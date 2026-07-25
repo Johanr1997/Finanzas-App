@@ -10,7 +10,7 @@ import {
   Home, Utensils, Car, Zap, HeartPulse, GraduationCap, Popcorn,
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
-  Pencil, Coins, AlertTriangle, CreditCard, Minus,
+  Pencil, Coins, AlertTriangle, CreditCard, Minus, Landmark,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -66,7 +66,7 @@ async function fetchYearData(year) {
     { data: recIncomes, error: recIncError },
   ] = await Promise.all([
     supabase.from("incomes").select("*").gte("date", start).lte("date", end),
-    supabase.from("expenses").select("*, categories(name, color, icon)").gte("date", start).lte("date", end),
+    supabase.from("expenses").select("*, categories(name, color, icon), credit_cards(name)").gte("date", start).lte("date", end),
     supabase.from("savings").select("*").gte("date", start).lte("date", end),
     supabase.from("installment_plans").select("*, categories(name, color, icon)"),
     supabase.from("recurring_expenses").select("*, categories(name, color, icon)"),
@@ -137,6 +137,8 @@ async function fetchYearData(year) {
       categoria: e.categories?.name || "Otros",
       descripcion: e.description || e.categories?.name || "Gasto",
       fecha: e.date,
+      fechaCompra: e.purchase_date || null,
+      tarjeta: e.credit_cards?.name || null,
       monto: Number(e.amount),
     }));
     return {
@@ -206,6 +208,26 @@ function addMonthsToDateString(dateStr, monthsToAdd) {
   const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
   const targetDay = Math.min(d, lastDayOfTargetMonth);
   return `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
+}
+// A partir de la fecha real de una compra con tarjeta de crédito, calcula la
+// fecha en la que realmente toca pagarla (según el día de corte y el día de
+// pago de la tarjeta) — esa es la fecha que se usa para los totales
+// mensuales, no la fecha de la compra.
+function computeCardPaymentDate(purchaseDateStr, cutoffDay, paymentDay) {
+  const [y, m, d] = purchaseDateStr.split("-").map(Number);
+  let statementYear = y, statementMonth = m;
+  if (d > cutoffDay) {
+    statementMonth += 1;
+    if (statementMonth > 12) { statementMonth = 1; statementYear += 1; }
+  }
+  let paymentYear = statementYear, paymentMonth = statementMonth;
+  if (paymentDay <= cutoffDay) {
+    paymentMonth += 1;
+    if (paymentMonth > 12) { paymentMonth = 1; paymentYear += 1; }
+  }
+  const lastDay = new Date(paymentYear, paymentMonth, 0).getDate();
+  const day = Math.min(paymentDay, lastDay);
+  return `${paymentYear}-${String(paymentMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 // Cuántas cuotas de un plan de pago ya se cumplieron a la fecha de hoy.
 // 0 = aún no empieza a correr ninguna cuota completa; clamp a total_months.
@@ -706,7 +728,11 @@ function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
                       </div>
                       <div>
                         <p className="font-medium text-slate-700 dark:text-slate-200">{e.descripcion}</p>
-                        <p className="text-xs text-slate-400">{e.categoria} · {e.fecha}</p>
+                        <p className="text-xs text-slate-400">
+                          {e.categoria} · {e.fecha}
+                          {e.fechaCompra && e.fechaCompra !== e.fecha && ` · compra: ${e.fechaCompra}`}
+                          {e.tarjeta && ` · ${e.tarjeta}`}
+                        </p>
                       </div>
                     </div>
                     <span className="tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(e.monto)}</span>
@@ -1507,16 +1533,22 @@ function ExpensesView({ fmt, onDataChanged, year }) {
   const [showRecurringModal, setShowRecurringModal] = useState(false);
   const [editingRecurring, setEditingRecurring] = useState(null);
   const [deletingRecurring, setDeletingRecurring] = useState(null);
+  const [cards, setCards] = useState([]);
+  const [showCardsManager, setShowCardsManager] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
   async function refetchExpenses() {
     const { data } = await supabase
       .from("expenses")
-      .select("*, categories(name, color, icon)")
+      .select("*, categories(name, color, icon), credit_cards(name)")
       .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
       .order("date", { ascending: false });
     setExpenses(data || []);
     if (onDataChanged) onDataChanged();
+  }
+  async function refetchCards() {
+    const { data } = await supabase.from("credit_cards").select("*").order("name", { ascending: true });
+    setCards(data || []);
   }
   async function refetchPlans() {
     const { data } = await supabase
@@ -1547,25 +1579,29 @@ function ExpensesView({ fmt, onDataChanged, year }) {
         { data: pls, error: planError },
         { data: overrides, error: overrideError },
         { data: rec, error: recError },
+        { data: crds, error: cardError },
       ] = await Promise.all([
-        supabase.from("expenses").select("*, categories(name, color, icon)")
+        supabase.from("expenses").select("*, categories(name, color, icon), credit_cards(name)")
           .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
           .order("date", { ascending: false }),
         supabase.from("categories").select("*"),
         supabase.from("installment_plans").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
         supabase.from("installment_payment_status").select("*"),
         supabase.from("recurring_expenses").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
+        supabase.from("credit_cards").select("*").order("name", { ascending: true }),
       ]);
       if (expError) console.error("Error cargando gastos:", expError.message);
       if (catError) console.error("Error cargando categorías:", catError.message);
       if (planError) console.error("Error cargando planes de pago:", planError.message);
       if (overrideError) console.error("Error cargando estado de cuotas:", overrideError.message);
       if (recError) console.error("Error cargando gastos fijos:", recError.message);
+      if (cardError) console.error("Error cargando tarjetas:", cardError.message);
       setExpenses(exp || []);
       setCategories(sortCategories(cats || []));
       setPlans(pls || []);
       setPaymentOverrides(overrides || []);
       setRecurring(rec || []);
+      setCards(crds || []);
       setLoading(false);
     }
     fetchAll();
@@ -1591,6 +1627,12 @@ function ExpensesView({ fmt, onDataChanged, year }) {
     if (onDataChanged) onDataChanged();
     setDeletingRecurring(null);
   }
+  async function handleDeleteCard(id) {
+    const { error } = await supabase.from("credit_cards").delete().eq("id", id);
+    if (error) throw error;
+    setCards((prev) => prev.filter((c) => c.id !== id));
+    refetchExpenses();
+  }
   const total = expenses.reduce((a, e) => a + Number(e.amount), 0);
   const categoriasDisponibles = [...new Set(expenses.map((e) => e.categories?.name).filter(Boolean))];
   const filteredExpenses = expenses.filter((e) =>
@@ -1609,11 +1651,17 @@ function ExpensesView({ fmt, onDataChanged, year }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date })))}
+            onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date, FechaCompra: e.purchase_date || "", Tarjeta: e.credit_cards?.name || "" })))}
             disabled={filteredExpenses.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Download size={15} /> Exportar CSV
+          </button>
+          <button
+            onClick={() => setShowCardsManager(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Landmark size={15} /> Tarjetas
           </button>
           <button
             onClick={() => setShowRecurringModal(true)}
@@ -1756,7 +1804,11 @@ function ExpensesView({ fmt, onDataChanged, year }) {
                 </div>
                 <div>
                   <p className="font-medium text-slate-700 dark:text-slate-200">{e.description || e.categories?.name}</p>
-                  <p className="text-xs text-slate-400">{e.categories?.name} · {e.date}</p>
+                  <p className="text-xs text-slate-400">
+                    {e.categories?.name} · {e.date}
+                    {e.purchase_date && e.purchase_date !== e.date && ` · compra: ${e.purchase_date}`}
+                    {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1773,11 +1825,12 @@ function ExpensesView({ fmt, onDataChanged, year }) {
         </div>
       </Card>
       {showModal && (
-        <ExpenseModal categories={categories} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
+        <ExpenseModal categories={categories} cards={cards} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
       )}
       {editingExpense && (
         <ExpenseModal
           categories={categories}
+          cards={cards}
           expense={editingExpense}
           onClose={() => setEditingExpense(null)}
           onSaved={refetchExpenses}
@@ -1838,18 +1891,33 @@ function ExpensesView({ fmt, onDataChanged, year }) {
           onConfirm={() => handleDeleteRecurring(deletingRecurring.id)}
         />
       )}
+      {showCardsManager && (
+        <CreditCardsManagerModal
+          cards={cards}
+          onClose={() => setShowCardsManager(false)}
+          onChanged={refetchCards}
+          onDeleteCard={handleDeleteCard}
+        />
+      )}
     </div>
   );
 }
-function ExpenseModal({ categories, expense, onClose, onSaved }) {
+function ExpenseModal({ categories, cards, expense, onClose, onSaved }) {
+  const cardsList = cards || [];
   const isEditing = Boolean(expense);
   const today = new Date().toISOString().slice(0, 10);
   const [categoryId, setCategoryId] = useState(expense?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(expense?.description || "");
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
-  const [date, setDate] = useState(expense?.date || today);
+  const [date, setDate] = useState(expense?.purchase_date || expense?.date || today);
+  const [cardId, setCardId] = useState(expense?.card_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const selectedCard = cardsList.find((c) => c.id === cardId) || null;
+  const computedPaymentDate = selectedCard && date
+    ? computeCardPaymentDate(date, Number(selectedCard.cutoff_day), Number(selectedCard.payment_day))
+    : null;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -1859,14 +1927,27 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
     }
     setSaving(true);
     setErrorMsg("");
+    const payload = selectedCard
+      ? {
+          category_id: categoryId,
+          description,
+          amount: Number(amount),
+          date: computedPaymentDate,
+          purchase_date: date,
+          card_id: selectedCard.id,
+          is_recurring: false,
+        }
+      : {
+          category_id: categoryId,
+          description,
+          amount: Number(amount),
+          date,
+          purchase_date: null,
+          card_id: null,
+          is_recurring: false,
+        };
     if (isEditing) {
-      const { error } = await supabase.from("expenses").update({
-        category_id: categoryId,
-        description,
-        amount: Number(amount),
-        date,
-        is_recurring: false,
-      }).eq("id", expense.id);
+      const { error } = await supabase.from("expenses").update(payload).eq("id", expense.id);
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -1880,11 +1961,7 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
     const userId = userData?.user?.id;
     const { error } = await supabase.from("expenses").insert({
       user_id: userId || null,
-      category_id: categoryId,
-      description,
-      amount: Number(amount),
-      date,
-      is_recurring: false,
+      ...payload,
     });
     setSaving(false);
     if (error) {
@@ -1931,13 +2008,32 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha"}</label>
               <input
                 type="date" value={date} onChange={(e) => setDate(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>
           </div>
+          {cardsList.length > 0 && (
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Método de pago</label>
+              <select
+                value={cardId} onChange={(e) => setCardId(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              >
+                <option value="">Efectivo / débito</option>
+                {cardsList.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              {selectedCard && computedPaymentDate && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Corte el día {selectedCard.cutoff_day} y pago el día {selectedCard.payment_day}: este gasto se contará en tu balance con fecha de pago <span className="font-medium text-slate-600 dark:text-slate-300">{computedPaymentDate}</span>.
+                </p>
+              )}
+            </div>
+          )}
           <p className="text-xs text-slate-400">
             ¿Es un gasto fijo que se repite todos los meses (alquiler, suscripción, gimnasio)? Usa el botón "Gasto fijo" en vez de este formulario, así no tienes que volver a registrarlo cada mes.
           </p>
@@ -1947,6 +2043,155 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
             className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
           >
             {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar gasto"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+function CreditCardsManagerModal({ cards, onClose, onChanged, onDeleteCard }) {
+  const [showCardModal, setShowCardModal] = useState(false);
+  const [editingCard, setEditingCard] = useState(null);
+  const [deletingCard, setDeletingCard] = useState(null);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Tarjetas de crédito</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          Registra el día de corte y el día de pago de cada tarjeta. Al agregar un gasto con esa tarjeta, la app calcula sola en qué mes realmente vas a pagarlo, en vez de contarlo en el mes de la compra.
+        </p>
+        <div className="space-y-2">
+          {cards.length === 0 && (
+            <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-700">
+              Aún no has registrado tarjetas.
+            </p>
+          )}
+          {cards.map((c) => (
+            <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-3 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                  <Landmark size={16} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-800 dark:text-white">{c.name}</p>
+                  <p className="text-xs text-slate-400">Corte día {c.cutoff_day} · Pago día {c.payment_day}</p>
+                </div>
+              </div>
+              <RowActions onEdit={() => setEditingCard(c)} onDelete={() => setDeletingCard(c)} />
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => setShowCardModal(true)}
+          className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <Plus size={15} /> Agregar tarjeta
+        </button>
+      </div>
+      {showCardModal && (
+        <CreditCardModal onClose={() => setShowCardModal(false)} onSaved={onChanged} />
+      )}
+      {editingCard && (
+        <CreditCardModal card={editingCard} onClose={() => setEditingCard(null)} onSaved={onChanged} />
+      )}
+      {deletingCard && (
+        <ConfirmDeleteModal
+          title="Eliminar tarjeta"
+          message={`¿Seguro que quieres eliminar la tarjeta "${deletingCard.name}"? Los gastos ya registrados con esta tarjeta no se borran, pero dejarán de mostrar su nombre. Esta acción no se puede deshacer.`}
+          onCancel={() => setDeletingCard(null)}
+          onConfirm={async () => { await onDeleteCard(deletingCard.id); setDeletingCard(null); }}
+        />
+      )}
+    </div>
+  );
+}
+function CreditCardModal({ card, onClose, onSaved }) {
+  const isEditing = Boolean(card);
+  const [name, setName] = useState(card?.name || "");
+  const [cutoffDay, setCutoffDay] = useState(card ? String(card.cutoff_day) : "");
+  const [paymentDay, setPaymentDay] = useState(card ? String(card.payment_day) : "");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const cutoff = Number(cutoffDay);
+    const payment = Number(paymentDay);
+    if (!name || !cutoffDay || !paymentDay || cutoff < 1 || cutoff > 31 || payment < 1 || payment > 31) {
+      setErrorMsg("Completa el nombre y días válidos (entre 1 y 31).");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("credit_cards").update({
+        name, cutoff_day: cutoff, payment_day: payment,
+      }).eq("id", card.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("credit_cards").insert({
+      user_id: userId || null, name, cutoff_day: cutoff, payment_day: payment,
+    });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar tarjeta" : "Nueva tarjeta"}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre de la tarjeta</label>
+            <input
+              value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="Ej. BAC Visa"
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Día de corte</label>
+              <input
+                type="number" min="1" max="31" value={cutoffDay} onChange={(e) => setCutoffDay(e.target.value)}
+                placeholder="3"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Día de pago</label>
+              <input
+                type="number" min="1" max="31" value={paymentDay} onChange={(e) => setPaymentDay(e.target.value)}
+                placeholder="18"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+          </div>
+          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+          <button
+            type="submit" disabled={saving}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tarjeta"}
           </button>
         </form>
       </div>
