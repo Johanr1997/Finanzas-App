@@ -744,27 +744,30 @@ function Row({ label, value, bold }) {
 ------------------------------------------------------------------ */
 function GoalsView({ fmt }) {
   const [goals, setGoals] = useState([]);
+  const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
   const [deletingGoal, setDeletingGoal] = useState(null);
   const [contributingGoal, setContributingGoal] = useState(null);
+  const [viewingContributionsGoal, setViewingContributionsGoal] = useState(null);
   async function refetchGoals() {
     const { data } = await supabase.from("goals").select("*");
     setGoals(data || []);
   }
   useEffect(() => {
-    async function fetchGoals() {
-      const { data, error } = await supabase.from("goals").select("*");
-      if (error) {
-        console.error("Error cargando metas:", error.message);
-        setGoals([]);
-      } else {
-        setGoals(data || []);
-      }
+    async function fetchAll() {
+      const [{ data: gls, error }, { data: contribs, error: contribError }] = await Promise.all([
+        supabase.from("goals").select("*"),
+        supabase.from("savings").select("*").not("goal_id", "is", null).order("date", { ascending: false }),
+      ]);
+      if (error) console.error("Error cargando metas:", error.message);
+      if (contribError) console.error("Error cargando aportes:", contribError.message);
+      setGoals(gls || []);
+      setContributions(contribs || []);
       setLoading(false);
     }
-    fetchGoals();
+    fetchAll();
   }, []);
   async function handleDelete(id) {
     const { error } = await supabase.from("goals").delete().eq("id", id);
@@ -804,12 +807,20 @@ function GoalsView({ fmt }) {
               <span className="font-medium" style={{ color: g.color }}>{pct}% completado</span>
               {pct >= 100 && <span className="inline-flex items-center gap-1 text-emerald-600"><Check size={12} /> Meta alcanzada</span>}
             </div>
-            <button
-              onClick={() => setContributingGoal(g)}
-              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              Actualizar monto
-            </button>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setContributingGoal(g)}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Actualizar monto
+              </button>
+              <button
+                onClick={() => setViewingContributionsGoal(g)}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Ver aportes
+              </button>
+            </div>
           </Card>
         );
       })}
@@ -840,6 +851,14 @@ function GoalsView({ fmt }) {
           fmt={fmt}
           onClose={() => setContributingGoal(null)}
           onSaved={refetchGoals}
+        />
+      )}
+      {viewingContributionsGoal && (
+        <GoalContributionsListModal
+          goal={viewingContributionsGoal}
+          contributions={contributions.filter((c) => c.goal_id === viewingContributionsGoal.id)}
+          fmt={fmt}
+          onClose={() => setViewingContributionsGoal(null)}
         />
       )}
     </div>
@@ -931,6 +950,49 @@ function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
             {saving ? "Guardando..." : mode === "agregar" ? "Agregar aporte" : "Rebajar monto"}
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+// Solo lectura: muestra los ahorros de la pestaña Ahorros que se vincularon
+// a esta meta. Para editarlos o borrarlos, se hace desde Ahorros (ahí vive
+// el registro real); esto evita duplicar esa lógica en dos lugares.
+function GoalContributionsListModal({ goal, contributions, fmt, onClose }) {
+  const total = contributions.reduce((a, c) => a + Number(c.amount), 0);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Aportes · {goal.name}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          Ahorros de la pestaña Ahorros vinculados a esta meta. Para editar o eliminar alguno, hazlo desde ahí.
+        </p>
+        <div className="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          {contributions.map((c) => {
+            const label = SAVINGS_TYPES.find((t) => t.value === c.type)?.label || c.type;
+            return (
+              <div key={c.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+                <div>
+                  <p className="font-medium text-slate-700 dark:text-slate-200">{label}</p>
+                  <p className="text-xs text-slate-400">{c.date}</p>
+                </div>
+                <span className="tabular-nums font-medium text-blue-500">{fmt(c.amount)}</span>
+              </div>
+            );
+          })}
+          {contributions.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-slate-400">
+              Aún no hay ahorros vinculados a esta meta. Agrega uno desde la pestaña Ahorros y elige esta meta ahí.
+            </p>
+          )}
+        </div>
+        {contributions.length > 0 && (
+          <p className="mt-3 text-right text-xs text-slate-400">
+            Total aportado: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(total)}</span>
+          </p>
+        )}
       </div>
     </div>
   );
