@@ -40,6 +40,20 @@ const CURRENCIES = {
 /* ---------------------------------------------------------------
    DATOS REALES — agrupa incomes/expenses/savings por mes
 ------------------------------------------------------------------ */
+// Genera, solo para el año pedido, una entrada virtual por cada mes en que
+// un ítem "fijo" (plan de pago con total_months, o gasto/ingreso fijo sin
+// fecha de fin) aplica. Nunca se guarda como fila real en expenses/incomes.
+function synthesizeRecurringEntries(item, year, { totalMonths } = {}) {
+  const out = [];
+  const cap = totalMonths ?? 1200; // 1200 = 100 años, tope de seguridad para ítems sin fin
+  for (let i = 0; i < cap; i++) {
+    const d = addMonthsToDateString(item.start_date, i);
+    const dy = Number(d.slice(0, 4));
+    if (dy > year) break;
+    if (dy === year) out.push({ date: d, index: i });
+  }
+  return out;
+}
 async function fetchYearData(year) {
   const start = `${year}-01-01`;
   const end = `${year}-12-31`;
@@ -48,39 +62,70 @@ async function fetchYearData(year) {
     { data: expenses, error: expError },
     { data: savings, error: savError },
     { data: plans, error: planError },
+    { data: recExpenses, error: recExpError },
+    { data: recIncomes, error: recIncError },
   ] = await Promise.all([
     supabase.from("incomes").select("*").gte("date", start).lte("date", end),
     supabase.from("expenses").select("*, categories(name, color, icon)").gte("date", start).lte("date", end),
     supabase.from("savings").select("*").gte("date", start).lte("date", end),
     supabase.from("installment_plans").select("*, categories(name, color, icon)"),
+    supabase.from("recurring_expenses").select("*, categories(name, color, icon)"),
+    supabase.from("recurring_incomes").select("*"),
   ]);
   if (incError) console.error("Error incomes:", incError.message);
   if (expError) console.error("Error expenses:", expError.message);
   if (savError) console.error("Error savings:", savError.message);
   if (planError) console.error("Error planes de pago:", planError.message);
+  if (recExpError) console.error("Error gastos fijos:", recExpError.message);
+  if (recIncError) console.error("Error ingresos fijos:", recIncError.message);
   // Los planes de pago no se guardan como una fila por cuota: se sintetizan
   // aquí, solo para el año consultado, a partir de start_date + total_months.
   const planExpenses = [];
   (plans || []).forEach((p) => {
     const totalMonths = Number(p.total_months) || 0;
-    for (let i = 0; i < totalMonths; i++) {
-      const cuotaDate = addMonthsToDateString(p.start_date, i);
-      if (cuotaDate.slice(0, 4) === String(year)) {
-        planExpenses.push({
-          id: `plan-${p.id}-${i}`,
-          amount: Number(p.monthly_amount),
-          date: cuotaDate,
-          description: `${p.description || "Plan de pago"} (cuota ${i + 1}/${totalMonths})`,
-          is_recurring: false,
-          categories: p.categories,
-        });
-      }
-    }
+    synthesizeRecurringEntries(p, year, { totalMonths }).forEach(({ date, index }) => {
+      planExpenses.push({
+        id: `plan-${p.id}-${index}`,
+        amount: Number(p.monthly_amount),
+        date,
+        description: `${p.description || "Plan de pago"} (cuota ${index + 1}/${totalMonths})`,
+        is_recurring: false,
+        categories: p.categories,
+      });
+    });
   });
-  const allExpenses = [...(expenses || []), ...planExpenses];
+  // Gastos e ingresos fijos mensuales: igual que los planes de pago, pero
+  // sin fecha de fin (se repiten indefinidamente desde start_date).
+  const recurringExpenseEntries = [];
+  (recExpenses || []).forEach((r) => {
+    synthesizeRecurringEntries(r, year).forEach(({ date, index }) => {
+      recurringExpenseEntries.push({
+        id: `recexp-${r.id}-${index}`,
+        amount: Number(r.amount),
+        date,
+        description: `${r.description || "Gasto fijo"} (fijo)`,
+        is_recurring: true,
+        categories: r.categories,
+      });
+    });
+  });
+  const recurringIncomeEntries = [];
+  (recIncomes || []).forEach((r) => {
+    synthesizeRecurringEntries(r, year).forEach(({ date, index }) => {
+      recurringIncomeEntries.push({
+        id: `recinc-${r.id}-${index}`,
+        amount: Number(r.amount),
+        date,
+        type: r.type || "Ingreso fijo",
+        description: r.description ? `${r.description} (fijo)` : "(fijo)",
+      });
+    });
+  });
+  const allExpenses = [...(expenses || []), ...planExpenses, ...recurringExpenseEntries];
+  const allIncomes = [...(incomes || []), ...recurringIncomeEntries];
   const monthsData = MONTHS.map((m, i) => {
     const monthNum = i + 1;
-    const monthIncomes = (incomes || []).filter((r) => new Date(r.date).getMonth() + 1 === monthNum);
+    const monthIncomes = allIncomes.filter((r) => new Date(r.date).getMonth() + 1 === monthNum);
     const monthExpenses = allExpenses.filter((r) => new Date(r.date).getMonth() + 1 === monthNum);
     const monthSavings = (savings || []).filter((r) => new Date(r.date).getMonth() + 1 === monthNum);
     const ingresoTotal = monthIncomes.reduce((a, r) => a + Number(r.amount), 0);
@@ -204,6 +249,15 @@ function cuotaStatus(overrides, planId, cuotaNumber) {
   return found ? found.status : "pagada";
 }
 const CUOTA_STATUS_LABEL = { pagada: "Pagada", atrasada: "Pagada tarde", no_pagada: "No pagada" };
+// Suma (o resta, si delta es negativo) al monto actual de una meta, leyendo
+// el valor más reciente de la base antes de escribir. Se usa cuando un
+// ahorro vinculado a una meta se crea, edita o elimina.
+async function adjustGoalAmount(goalId, delta) {
+  if (!goalId || !delta) return;
+  const { data } = await supabase.from("goals").select("current_amount").eq("id", goalId).single();
+  if (!data) return;
+  await supabase.from("goals").update({ current_amount: Number(data.current_amount) + delta }).eq("id", goalId);
+}
 function statusOf(balance, ingreso) {
   if (ingreso === 0) return "gris";
   const ratio = balance / ingreso;
@@ -346,6 +400,13 @@ function RowActions({ onEdit, onDelete }) {
    DASHBOARD
 ------------------------------------------------------------------ */
 function Dashboard({ fmt, onSelectMonth, yearData, year }) {
+  const [goals, setGoals] = useState([]);
+  useEffect(() => {
+    supabase.from("goals").select("*").then(({ data, error }) => {
+      if (error) console.error("Error cargando metas:", error.message);
+      setGoals(data || []);
+    });
+  }, []);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -353,8 +414,11 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
     const balance = ingresos - gastos - ahorros;
     return { ingresos, gastos, ahorros, balance, saldo: ingresos - gastos };
   }, [yearData]);
-  const metaAnual = 3000000;
-  const metaProgreso = Math.min(100, Math.round((totals.ahorros / (metaAnual || 1)) * 100));
+  // El progreso mostrado aquí viene de tus metas reales (pestaña Metas), no
+  // de un número fijo — así los dos lados de la app siempre concuerdan.
+  const totalMetaObjetivo = useMemo(() => goals.reduce((a, g) => a + Number(g.target_amount), 0), [goals]);
+  const totalMetaActual = useMemo(() => goals.reduce((a, g) => a + Number(g.current_amount), 0), [goals]);
+  const metaProgreso = totalMetaObjetivo > 0 ? Math.min(100, Math.round((totalMetaActual / totalMetaObjetivo) * 100)) : 0;
   const barData = yearData.map((m) => ({ mes: m.mes, Ingresos: m.ingresoTotal, Gastos: m.gastoTotal }));
   const lineData = useMemo(() => {
     let acc = 0;
@@ -380,10 +444,10 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
   if (currentMonth.ingresoTotal > 0) {
     insights.push(`${isCurrentYear ? "Este mes has" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorrado un ${Math.round((currentMonth.ahorroTotal / currentMonth.ingresoTotal) * 100)}% de tus ingresos.`);
   }
-  if (isCurrentYear && totals.ahorros > 0) {
+  if (isCurrentYear && totals.ahorros > 0 && totalMetaObjetivo > totalMetaActual) {
     const promedioMensual = totals.ahorros / (currentIdx + 1);
     if (promedioMensual > 0) {
-      insights.push(`Si mantienes este ritmo de ahorro, alcanzarás tu meta anual en ${Math.max(1, Math.ceil((metaAnual - totals.ahorros) / promedioMensual))} meses.`);
+      insights.push(`Si mantienes este ritmo de ahorro, alcanzarías tus metas pendientes en ${Math.max(1, Math.ceil((totalMetaObjetivo - totalMetaActual) / promedioMensual))} meses.`);
     }
   }
   if (insights.length === 0) {
@@ -398,12 +462,21 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
         <StatCard label="Ahorros del año" value={fmt(totals.ahorros)} icon={PiggyBank} accent="blue" />
         <StatCard label="Balance neto" value={fmt(totals.balance)} icon={Wallet} accent={totals.balance >= 0 ? "green" : "red"} />
         <Card className="p-5 flex items-center gap-4">
-          <ProgressRing percent={metaProgreso} color="#F59E0B" size={56} />
-          <div>
-            <Eyebrow>Meta anual de ahorro</Eyebrow>
-            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{metaProgreso}%</p>
-            <p className="text-xs text-slate-400">{fmt(totals.ahorros)} de {fmt(metaAnual)}</p>
-          </div>
+          {totalMetaObjetivo > 0 ? (
+            <>
+              <ProgressRing percent={metaProgreso} color="#F59E0B" size={56} />
+              <div>
+                <Eyebrow>Progreso de tus metas</Eyebrow>
+                <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{metaProgreso}%</p>
+                <p className="text-xs text-slate-400">{fmt(totalMetaActual)} de {fmt(totalMetaObjetivo)}</p>
+              </div>
+            </>
+          ) : (
+            <div>
+              <Eyebrow>Progreso de tus metas</Eyebrow>
+              <p className="mt-1 text-sm text-slate-400">Crea una meta en la pestaña Metas para ver tu progreso aquí.</p>
+            </div>
+          )}
         </Card>
       </div>
       <Card className="p-5">
@@ -968,37 +1041,59 @@ function GoalModal({ goal, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    INGRESOS
 ------------------------------------------------------------------ */
-function IncomesView({ fmt, onDataChanged }) {
+function IncomesView({ fmt, onDataChanged, year }) {
   const [incomes, setIncomes] = useState([]);
+  const [recurring, setRecurring] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingIncome, setEditingIncome] = useState(null);
   const [deletingIncome, setDeletingIncome] = useState(null);
+  const [showRecurringModal, setShowRecurringModal] = useState(false);
+  const [editingRecurring, setEditingRecurring] = useState(null);
+  const [deletingRecurring, setDeletingRecurring] = useState(null);
   const [search, setSearch] = useState("");
   async function refetchIncomes() {
-    const { data } = await supabase.from("incomes").select("*").order("date", { ascending: false });
+    const { data } = await supabase.from("incomes").select("*")
+      .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
+      .order("date", { ascending: false });
     setIncomes(data || []);
     if (onDataChanged) onDataChanged();
   }
+  async function refetchRecurring() {
+    const { data } = await supabase.from("recurring_incomes").select("*").order("start_date", { ascending: false });
+    setRecurring(data || []);
+    if (onDataChanged) onDataChanged();
+  }
   useEffect(() => {
-    async function fetchIncomes() {
-      const { data, error } = await supabase.from("incomes").select("*").order("date", { ascending: false });
-      if (error) {
-        console.error("Error cargando ingresos:", error.message);
-        setIncomes([]);
-      } else {
-        setIncomes(data || []);
-      }
+    async function fetchAll() {
+      setLoading(true);
+      const [{ data: inc, error }, { data: rec, error: recError }] = await Promise.all([
+        supabase.from("incomes").select("*")
+          .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
+          .order("date", { ascending: false }),
+        supabase.from("recurring_incomes").select("*").order("start_date", { ascending: false }),
+      ]);
+      if (error) console.error("Error cargando ingresos:", error.message);
+      if (recError) console.error("Error cargando ingresos fijos:", recError.message);
+      setIncomes(inc || []);
+      setRecurring(rec || []);
       setLoading(false);
     }
-    fetchIncomes();
-  }, []);
+    fetchAll();
+  }, [year]);
   async function handleDelete(id) {
     const { error } = await supabase.from("incomes").delete().eq("id", id);
     if (error) throw error;
     setIncomes((prev) => prev.filter((i) => i.id !== id));
     if (onDataChanged) onDataChanged();
     setDeletingIncome(null);
+  }
+  async function handleDeleteRecurring(id) {
+    const { error } = await supabase.from("recurring_incomes").delete().eq("id", id);
+    if (error) throw error;
+    setRecurring((prev) => prev.filter((r) => r.id !== id));
+    if (onDataChanged) onDataChanged();
+    setDeletingRecurring(null);
   }
   const total = incomes.reduce((a, i) => a + Number(i.amount), 0);
   const filteredIncomes = incomes.filter((i) =>
@@ -1011,16 +1106,22 @@ function IncomesView({ fmt, onDataChanged }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total de ingresos registrados</Eyebrow>
+          <Eyebrow>Total de ingresos en {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => exportToCSV("ingresos.csv", filteredIncomes.map((i) => ({ Tipo: i.type, Descripcion: i.description || "", Monto: i.amount, Fecha: i.date })))}
             disabled={filteredIncomes.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Download size={15} /> Exportar CSV
+          </button>
+          <button
+            onClick={() => setShowRecurringModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Repeat size={15} /> Ingreso fijo
           </button>
           <button
             onClick={() => setShowModal(true)}
@@ -1030,6 +1131,30 @@ function IncomesView({ fmt, onDataChanged }) {
           </button>
         </div>
       </Card>
+      {recurring.length > 0 && (
+        <Card className="p-5">
+          <Eyebrow>Ingresos fijos mensuales</Eyebrow>
+          <p className="mt-1 text-xs text-slate-400">
+            Salario u otro ingreso fijo. Se cuenta automáticamente cada mes desde su fecha de inicio, sin tener que volver a registrarlo.
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {recurring.map((r) => (
+              <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
+                    <Repeat size={16} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.type || "Ingreso fijo"}</p>
+                    <p className="text-xs text-slate-400">{r.type} · {fmt(r.amount)}/mes · desde {r.start_date}</p>
+                  </div>
+                </div>
+                <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       <Card className="overflow-hidden">
         <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
           <div className="relative max-w-xs">
@@ -1055,7 +1180,7 @@ function IncomesView({ fmt, onDataChanged }) {
           ))}
           {filteredIncomes.length === 0 && (
             <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {incomes.length === 0 ? "Aún no has registrado ingresos." : "Sin resultados para tu búsqueda."}
+              {incomes.length === 0 ? `Aún no has registrado ingresos en ${year}.` : "Sin resultados para tu búsqueda."}
             </p>
           )}
         </div>
@@ -1072,6 +1197,20 @@ function IncomesView({ fmt, onDataChanged }) {
           message={`¿Seguro que quieres eliminar este ingreso de ${fmt(deletingIncome.amount)}? Esta acción no se puede deshacer.`}
           onCancel={() => setDeletingIncome(null)}
           onConfirm={() => handleDelete(deletingIncome.id)}
+        />
+      )}
+      {showRecurringModal && (
+        <RecurringIncomeModal onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} />
+      )}
+      {editingRecurring && (
+        <RecurringIncomeModal item={editingRecurring} onClose={() => setEditingRecurring(null)} onSaved={refetchRecurring} />
+      )}
+      {deletingRecurring && (
+        <ConfirmDeleteModal
+          title="Eliminar ingreso fijo"
+          message={`¿Seguro que quieres eliminar "${deletingRecurring.description || deletingRecurring.type || "este ingreso fijo"}"? Ya no se contará en tus ingresos de los próximos meses. Esta acción no se puede deshacer.`}
+          onCancel={() => setDeletingRecurring(null)}
+          onConfirm={() => handleDeleteRecurring(deletingRecurring.id)}
         />
       )}
     </div>
@@ -1185,14 +1324,116 @@ function IncomeModal({ income, onClose, onSaved }) {
     </div>
   );
 }
+function RecurringIncomeModal({ item, onClose, onSaved }) {
+  const isEditing = Boolean(item);
+  const today = new Date().toISOString().slice(0, 10);
+  const [type, setType] = useState(item?.type || "");
+  const [description, setDescription] = useState(item?.description || "");
+  const [amount, setAmount] = useState(item ? String(item.amount) : "");
+  const [startDate, setStartDate] = useState(item?.start_date || today);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!type || !amount || !startDate) {
+      setErrorMsg("Completa el tipo, el monto y la fecha de inicio.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("recurring_incomes").update({
+        type, description, amount: Number(amount), start_date: startDate,
+      }).eq("id", item.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("recurring_incomes").insert({
+      user_id: userId || null,
+      type, description, amount: Number(amount), start_date: startDate,
+    });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar ingreso fijo" : "Nuevo ingreso fijo"}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          Para un salario u otro ingreso que se repite cada mes por tiempo indefinido. Se cuenta automáticamente cada mes desde la fecha de inicio, hasta que lo elimines.
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
+            <input
+              value={type} onChange={(e) => setType(e.target.value)}
+              placeholder="Ej. Salario"
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
+            <input
+              value={description} onChange={(e) => setDescription(e.target.value)}
+              placeholder="Ej. Salario quincenal empresa X"
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto mensual</label>
+              <input
+                type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+                placeholder="500000"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Empieza el</label>
+              <input
+                type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+          </div>
+          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+          <button
+            type="submit" disabled={saving}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear ingreso fijo"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 /* ---------------------------------------------------------------
    GASTOS
 ------------------------------------------------------------------ */
-function ExpensesView({ fmt, onDataChanged }) {
+function ExpensesView({ fmt, onDataChanged, year }) {
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [plans, setPlans] = useState([]);
   const [paymentOverrides, setPaymentOverrides] = useState([]);
+  const [recurring, setRecurring] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
@@ -1201,12 +1442,16 @@ function ExpensesView({ fmt, onDataChanged }) {
   const [editingPlan, setEditingPlan] = useState(null);
   const [deletingPlan, setDeletingPlan] = useState(null);
   const [viewingPlanPayments, setViewingPlanPayments] = useState(null);
+  const [showRecurringModal, setShowRecurringModal] = useState(false);
+  const [editingRecurring, setEditingRecurring] = useState(null);
+  const [deletingRecurring, setDeletingRecurring] = useState(null);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
   async function refetchExpenses() {
     const { data } = await supabase
       .from("expenses")
       .select("*, categories(name, color, icon)")
+      .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
       .order("date", { ascending: false });
     setExpenses(data || []);
     if (onDataChanged) onDataChanged();
@@ -1223,31 +1468,46 @@ function ExpensesView({ fmt, onDataChanged }) {
     const { data } = await supabase.from("installment_payment_status").select("*");
     setPaymentOverrides(data || []);
   }
+  async function refetchRecurring() {
+    const { data } = await supabase
+      .from("recurring_expenses")
+      .select("*, categories(name, color, icon)")
+      .order("start_date", { ascending: false });
+    setRecurring(data || []);
+    if (onDataChanged) onDataChanged();
+  }
   useEffect(() => {
     async function fetchAll() {
+      setLoading(true);
       const [
         { data: exp, error: expError },
         { data: cats, error: catError },
         { data: pls, error: planError },
         { data: overrides, error: overrideError },
+        { data: rec, error: recError },
       ] = await Promise.all([
-        supabase.from("expenses").select("*, categories(name, color, icon)").order("date", { ascending: false }),
+        supabase.from("expenses").select("*, categories(name, color, icon)")
+          .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
+          .order("date", { ascending: false }),
         supabase.from("categories").select("*"),
         supabase.from("installment_plans").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
         supabase.from("installment_payment_status").select("*"),
+        supabase.from("recurring_expenses").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
       ]);
       if (expError) console.error("Error cargando gastos:", expError.message);
       if (catError) console.error("Error cargando categorías:", catError.message);
       if (planError) console.error("Error cargando planes de pago:", planError.message);
       if (overrideError) console.error("Error cargando estado de cuotas:", overrideError.message);
+      if (recError) console.error("Error cargando gastos fijos:", recError.message);
       setExpenses(exp || []);
       setCategories(sortCategories(cats || []));
       setPlans(pls || []);
       setPaymentOverrides(overrides || []);
+      setRecurring(rec || []);
       setLoading(false);
     }
     fetchAll();
-  }, []);
+  }, [year]);
   async function handleDelete(id) {
     const { error } = await supabase.from("expenses").delete().eq("id", id);
     if (error) throw error;
@@ -1262,6 +1522,13 @@ function ExpensesView({ fmt, onDataChanged }) {
     if (onDataChanged) onDataChanged();
     setDeletingPlan(null);
   }
+  async function handleDeleteRecurring(id) {
+    const { error } = await supabase.from("recurring_expenses").delete().eq("id", id);
+    if (error) throw error;
+    setRecurring((prev) => prev.filter((r) => r.id !== id));
+    if (onDataChanged) onDataChanged();
+    setDeletingRecurring(null);
+  }
   const total = expenses.reduce((a, e) => a + Number(e.amount), 0);
   const categoriasDisponibles = [...new Set(expenses.map((e) => e.categories?.name).filter(Boolean))];
   const filteredExpenses = expenses.filter((e) =>
@@ -1275,16 +1542,22 @@ function ExpensesView({ fmt, onDataChanged }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total de gastos registrados</Eyebrow>
+          <Eyebrow>Total de gastos en {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date, Recurrente: e.is_recurring ? "Si" : "No" })))}
+            onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date })))}
             disabled={filteredExpenses.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Download size={15} /> Exportar CSV
+          </button>
+          <button
+            onClick={() => setShowRecurringModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Repeat size={15} /> Gasto fijo
           </button>
           <button
             onClick={() => setShowPlanModal(true)}
@@ -1300,6 +1573,36 @@ function ExpensesView({ fmt, onDataChanged }) {
           </button>
         </div>
       </Card>
+      {recurring.length > 0 && (
+        <Card className="p-5">
+          <Eyebrow>Gastos fijos mensuales</Eyebrow>
+          <p className="mt-1 text-xs text-slate-400">
+            Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes desde su fecha de inicio, sin tener que volver a registrarlos.
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {recurring.map((r) => {
+              const color = r.categories?.color || "#64748B";
+              return (
+                <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
+                      style={{ backgroundColor: `${color}1a`, color }}
+                    >
+                      <Repeat size={16} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
+                      <p className="text-xs text-slate-400">{r.categories?.name} · {fmt(r.amount)}/mes · desde {r.start_date}</p>
+                    </div>
+                  </div>
+                  <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
       {plans.length > 0 && (
         <Card className="p-5">
           <Eyebrow>Planes de pago activos</Eyebrow>
@@ -1454,6 +1757,25 @@ function ExpensesView({ fmt, onDataChanged }) {
           onChanged={refetchOverrides}
         />
       )}
+      {showRecurringModal && (
+        <RecurringExpenseModal categories={categories} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} />
+      )}
+      {editingRecurring && (
+        <RecurringExpenseModal
+          categories={categories}
+          item={editingRecurring}
+          onClose={() => setEditingRecurring(null)}
+          onSaved={refetchRecurring}
+        />
+      )}
+      {deletingRecurring && (
+        <ConfirmDeleteModal
+          title="Eliminar gasto fijo"
+          message={`¿Seguro que quieres eliminar "${deletingRecurring.description || deletingRecurring.categories?.name || "este gasto fijo"}"? Ya no se contará en tus gastos de los próximos meses. Esta acción no se puede deshacer.`}
+          onCancel={() => setDeletingRecurring(null)}
+          onConfirm={() => handleDeleteRecurring(deletingRecurring.id)}
+        />
+      )}
     </div>
   );
 }
@@ -1464,7 +1786,6 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
   const [description, setDescription] = useState(expense?.description || "");
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
   const [date, setDate] = useState(expense?.date || today);
-  const [isRecurring, setIsRecurring] = useState(expense?.is_recurring || false);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -1482,7 +1803,7 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
         description,
         amount: Number(amount),
         date,
-        is_recurring: isRecurring,
+        is_recurring: false,
       }).eq("id", expense.id);
       setSaving(false);
       if (error) {
@@ -1501,7 +1822,7 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
       description,
       amount: Number(amount),
       date,
-      is_recurring: isRecurring,
+      is_recurring: false,
     });
     setSaving(false);
     if (error) {
@@ -1555,10 +1876,9 @@ function ExpenseModal({ categories, expense, onClose, onSaved }) {
               />
             </div>
           </div>
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
-            <input type="checkbox" checked={isRecurring} onChange={(e) => setIsRecurring(e.target.checked)} />
-            Es un gasto recurrente (se repite cada mes)
-          </label>
+          <p className="text-xs text-slate-400">
+            ¿Es un gasto fijo que se repite todos los meses (alquiler, suscripción, gimnasio)? Usa el botón "Gasto fijo" en vez de este formulario, así no tienes que volver a registrarlo cada mes.
+          </p>
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
           <button
             type="submit" disabled={saving}
@@ -1697,6 +2017,116 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
     </div>
   );
 }
+function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
+  const isEditing = Boolean(item);
+  const today = new Date().toISOString().slice(0, 10);
+  const [categoryId, setCategoryId] = useState(item?.category_id || categories[0]?.id || "");
+  const [description, setDescription] = useState(item?.description || "");
+  const [amount, setAmount] = useState(item ? String(item.amount) : "");
+  const [startDate, setStartDate] = useState(item?.start_date || today);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!categoryId || !amount || !startDate) {
+      setErrorMsg("Completa la categoría, el monto y la fecha de inicio.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("recurring_expenses").update({
+        category_id: categoryId,
+        description,
+        amount: Number(amount),
+        start_date: startDate,
+      }).eq("id", item.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("recurring_expenses").insert({
+      user_id: userId || null,
+      category_id: categoryId,
+      description,
+      amount: Number(amount),
+      start_date: startDate,
+    });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar gasto fijo" : "Nuevo gasto fijo"}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          Para alquiler, suscripciones, gimnasio y otros pagos que se repiten cada mes por tiempo indefinido. Se cuenta automáticamente cada mes desde la fecha de inicio, hasta que lo elimines.
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+            <select
+              value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción</label>
+            <input
+              value={description} onChange={(e) => setDescription(e.target.value)}
+              placeholder="Ej. Alquiler apartamento"
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto mensual</label>
+              <input
+                type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+                placeholder="150000"
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Empieza el</label>
+              <input
+                type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+          </div>
+          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+          <button
+            type="submit" disabled={saving}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear gasto fijo"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 // Checklist de cuotas de un plan: el cálculo automático por fecha (cuota
 // actual, progreso, gastos mensuales) no cambia. Esto solo permite marcar
 // manualmente si una cuota puntual se pagó tarde o no se pagó, para que el
@@ -1795,31 +2225,45 @@ const SAVINGS_TYPES = [
   { value: "inversiones", label: "Inversiones" },
   { value: "libre", label: "Ahorro libre" },
 ];
-function SavingsView({ fmt, onDataChanged }) {
+function SavingsView({ fmt, onDataChanged, year }) {
   const [savings, setSavings] = useState([]);
+  const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingSaving, setEditingSaving] = useState(null);
   const [deletingSaving, setDeletingSaving] = useState(null);
   const [typeFilter, setTypeFilter] = useState("Todos");
   async function refetchSavings() {
-    const { data } = await supabase.from("savings").select("*").order("date", { ascending: false });
+    const { data } = await supabase
+      .from("savings")
+      .select("*, goals(name, color)")
+      .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
+      .order("date", { ascending: false });
     setSavings(data || []);
     if (onDataChanged) onDataChanged();
   }
   useEffect(() => {
-    async function fetchSavings() {
-      const { data, error } = await supabase.from("savings").select("*").order("date", { ascending: false });
+    async function fetchAll() {
+      setLoading(true);
+      const [{ data: sav, error }, { data: gls, error: glsError }] = await Promise.all([
+        supabase.from("savings").select("*, goals(name, color)")
+          .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
+          .order("date", { ascending: false }),
+        supabase.from("goals").select("*"),
+      ]);
       if (error) console.error("Error cargando ahorros:", error.message);
-      setSavings(data || []);
+      if (glsError) console.error("Error cargando metas:", glsError.message);
+      setSavings(sav || []);
+      setGoals(gls || []);
       setLoading(false);
     }
-    fetchSavings();
-  }, []);
-  async function handleDelete(id) {
-    const { error } = await supabase.from("savings").delete().eq("id", id);
+    fetchAll();
+  }, [year]);
+  async function handleDelete(record) {
+    const { error } = await supabase.from("savings").delete().eq("id", record.id);
     if (error) throw error;
-    setSavings((prev) => prev.filter((s) => s.id !== id));
+    if (record.goal_id) await adjustGoalAmount(record.goal_id, -Number(record.amount));
+    setSavings((prev) => prev.filter((s) => s.id !== record.id));
     if (onDataChanged) onDataChanged();
     setDeletingSaving(null);
   }
@@ -1832,12 +2276,12 @@ function SavingsView({ fmt, onDataChanged }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total ahorrado</Eyebrow>
+          <Eyebrow>Total ahorrado en {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-blue-500">{fmt(total)}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => exportToCSV("ahorros.csv", filteredSavings.map((s) => ({ Tipo: SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type, Monto: s.amount, Fecha: s.date })))}
+            onClick={() => exportToCSV("ahorros.csv", filteredSavings.map((s) => ({ Tipo: SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type, Meta: s.goals?.name || "", Monto: s.amount, Fecha: s.date })))}
             disabled={filteredSavings.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
@@ -1868,7 +2312,14 @@ function SavingsView({ fmt, onDataChanged }) {
               <div key={s.id} className="flex items-center justify-between px-5 py-3 text-sm">
                 <div>
                   <p className="font-medium text-slate-700 dark:text-slate-200">{label}</p>
-                  <p className="text-xs text-slate-400">{s.date}</p>
+                  <p className="text-xs text-slate-400">
+                    {s.date}
+                    {s.goals?.name && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium" style={{ backgroundColor: `${s.goals.color || "#3B82F6"}1a`, color: s.goals.color || "#3B82F6" }}>
+                        <Target size={10} /> {s.goals.name}
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="tabular-nums font-medium text-blue-500">{fmt(s.amount)}</span>
@@ -1879,32 +2330,33 @@ function SavingsView({ fmt, onDataChanged }) {
           })}
           {filteredSavings.length === 0 && (
             <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {savings.length === 0 ? "Aún no has registrado ahorros." : "No hay ahorros de este tipo."}
+              {savings.length === 0 ? `Aún no has registrado ahorros en ${year}.` : "No hay ahorros de este tipo."}
             </p>
           )}
         </div>
       </Card>
       {showModal && (
-        <SavingModal onClose={() => setShowModal(false)} onSaved={refetchSavings} />
+        <SavingModal goals={goals} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
       )}
       {editingSaving && (
-        <SavingModal saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} />
+        <SavingModal goals={goals} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} />
       )}
       {deletingSaving && (
         <ConfirmDeleteModal
           title="Eliminar ahorro"
           message={`¿Seguro que quieres eliminar este registro de ahorro de ${fmt(deletingSaving.amount)}? Esta acción no se puede deshacer.`}
           onCancel={() => setDeletingSaving(null)}
-          onConfirm={() => handleDelete(deletingSaving.id)}
+          onConfirm={() => handleDelete(deletingSaving)}
         />
       )}
     </div>
   );
 }
-function SavingModal({ saving: savingRecord, onClose, onSaved }) {
+function SavingModal({ saving: savingRecord, goals, onClose, onSaved }) {
   const isEditing = Boolean(savingRecord);
   const today = new Date().toISOString().slice(0, 10);
   const [type, setType] = useState(savingRecord?.type || "libre");
+  const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
   const [date, setDate] = useState(savingRecord?.date || today);
   const [saving, setSaving] = useState(false);
@@ -1918,14 +2370,27 @@ function SavingModal({ saving: savingRecord, onClose, onSaved }) {
     setSaving(true);
     setErrorMsg("");
     const dateObj = new Date(date);
+    const newGoalId = goalId || null;
+    const newAmount = Number(amount);
     if (isEditing) {
       const { error } = await supabase.from("savings").update({
         type,
-        amount: Number(amount),
+        goal_id: newGoalId,
+        amount: newAmount,
         date,
         year: dateObj.getFullYear(),
         month: dateObj.getMonth() + 1,
       }).eq("id", savingRecord.id);
+      if (!error) {
+        const oldGoalId = savingRecord.goal_id || null;
+        const oldAmount = Number(savingRecord.amount);
+        if (oldGoalId === newGoalId) {
+          if (oldGoalId) await adjustGoalAmount(oldGoalId, newAmount - oldAmount);
+        } else {
+          if (oldGoalId) await adjustGoalAmount(oldGoalId, -oldAmount);
+          if (newGoalId) await adjustGoalAmount(newGoalId, newAmount);
+        }
+      }
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -1940,11 +2405,13 @@ function SavingModal({ saving: savingRecord, onClose, onSaved }) {
     const { error } = await supabase.from("savings").insert({
       user_id: userId || null,
       type,
-      amount: Number(amount),
+      goal_id: newGoalId,
+      amount: newAmount,
       date,
       year: dateObj.getFullYear(),
       month: dateObj.getMonth() + 1,
     });
+    if (!error && newGoalId) await adjustGoalAmount(newGoalId, newAmount);
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
@@ -1971,6 +2438,21 @@ function SavingModal({ saving: savingRecord, onClose, onSaved }) {
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una meta (opcional)</label>
+            <select
+              value={goalId} onChange={(e) => setGoalId(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              <option value="">Ninguna</option>
+              {(goals || []).map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+            {goalId && (
+              <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al progreso de esa meta.</p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -2385,7 +2867,7 @@ export default function FinanceApp() {
                 {tab === "goals" && "Tus metas"}
                 {tab === "stats" && "Estadísticas"}
               </h1>
-              {["dashboard", "annual", "stats"].includes(tab) ? (
+              {["dashboard", "annual", "stats", "incomes", "expenses", "savings"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => setYear((y) => y - 1)}
@@ -2419,10 +2901,10 @@ export default function FinanceApp() {
               {tab === "stats" && <StatsView fmt={format} yearData={yearData} />}
             </>
           )}
-          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} />}
-          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} />}
+          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} />}
+          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} />}
           {tab === "budgets" && <BudgetsView fmt={format} />}
-          {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} />}
+          {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} />}
           {tab === "goals" && <GoalsView fmt={format} />}
         </main>
         {monthOpen !== null && yearData && (
