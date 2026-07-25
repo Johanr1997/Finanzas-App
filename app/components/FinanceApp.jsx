@@ -40,14 +40,17 @@ const CURRENCIES = {
 /* ---------------------------------------------------------------
    DATOS REALES — agrupa incomes/expenses/savings por mes
 ------------------------------------------------------------------ */
-// Genera, solo para el año pedido, una entrada virtual por cada mes en que
-// un ítem "fijo" (plan de pago con total_months, o gasto/ingreso fijo sin
-// fecha de fin) aplica. Nunca se guarda como fila real en expenses/incomes.
+// Genera, solo para el año pedido, una entrada virtual por cada mes (o cada
+// quincena, si item.frequency === "quincenal") en que un ítem "fijo" (plan
+// de pago con total_months, o gasto/ingreso fijo sin fecha de fin) aplica.
+// Nunca se guarda como fila real en expenses/incomes.
 function synthesizeRecurringEntries(item, year, { totalMonths } = {}) {
   const out = [];
-  const cap = totalMonths ?? 1200; // 1200 = 100 años, tope de seguridad para ítems sin fin
+  const isQuincenal = !totalMonths && item.frequency === "quincenal";
+  // 1200 meses / 2400 quincenas = 100 años, tope de seguridad para ítems sin fin
+  const cap = totalMonths ?? (isQuincenal ? 2400 : 1200);
   for (let i = 0; i < cap; i++) {
-    const d = addMonthsToDateString(item.start_date, i);
+    const d = isQuincenal ? addDaysToDateString(item.start_date, i * 15) : addMonthsToDateString(item.start_date, i);
     const dy = Number(d.slice(0, 4));
     if (dy > year) break;
     if (dy === year) out.push({ date: d, index: i });
@@ -99,12 +102,13 @@ async function fetchYearData(year) {
   // sin fecha de fin (se repiten indefinidamente desde start_date).
   const recurringExpenseEntries = [];
   (recExpenses || []).forEach((r) => {
+    const freqLabel = r.frequency === "quincenal" ? "quincenal" : "fijo";
     synthesizeRecurringEntries(r, year).forEach(({ date, index }) => {
       recurringExpenseEntries.push({
         id: `recexp-${r.id}-${index}`,
         amount: Number(r.amount),
         date,
-        description: `${r.description || "Gasto fijo"} (fijo)`,
+        description: `${r.description || "Gasto fijo"} (${freqLabel})`,
         is_recurring: true,
         categories: r.categories,
       });
@@ -112,13 +116,14 @@ async function fetchYearData(year) {
   });
   const recurringIncomeEntries = [];
   (recIncomes || []).forEach((r) => {
+    const freqLabel = r.frequency === "quincenal" ? "quincenal" : "fijo";
     synthesizeRecurringEntries(r, year).forEach(({ date, index }) => {
       recurringIncomeEntries.push({
         id: `recinc-${r.id}-${index}`,
         amount: Number(r.amount),
         date,
         type: r.type || "Ingreso fijo",
-        description: r.description ? `${r.description} (fijo)` : "(fijo)",
+        description: r.description ? `${r.description} (${freqLabel})` : `(${freqLabel})`,
       });
     });
   });
@@ -209,6 +214,13 @@ function addMonthsToDateString(dateStr, monthsToAdd) {
   const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
   const targetDay = Math.min(d, lastDayOfTargetMonth);
   return `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
+}
+// Suma días de calendario a una fecha "YYYY-MM-DD" (se usa para lo quincenal).
+function addDaysToDateString(dateStr, daysToAdd) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + daysToAdd);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 // A partir de la fecha real de una compra con tarjeta de crédito, calcula la
 // fecha en la que realmente toca pagarla (según el día de corte y el día de
@@ -1233,25 +1245,30 @@ function IncomesView({ fmt, onDataChanged, year }) {
       </Card>
       {recurring.length > 0 && (
         <Card className="p-5">
-          <Eyebrow>Ingresos fijos mensuales</Eyebrow>
+          <Eyebrow>Ingresos fijos</Eyebrow>
           <p className="mt-1 text-xs text-slate-400">
-            Salario u otro ingreso fijo. Se cuenta automáticamente cada mes desde su fecha de inicio, sin tener que volver a registrarlo.
+            Salario u otro ingreso fijo. Se cuenta automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlo.
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {recurring.map((r) => (
-              <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
-                    <Repeat size={16} />
+            {recurring.map((r) => {
+              const isQuincenal = r.frequency === "quincenal";
+              return (
+                <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
+                      <Repeat size={16} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.type || "Ingreso fijo"}</p>
+                      <p className="text-xs text-slate-400">
+                        {r.type} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.type || "Ingreso fijo"}</p>
-                    <p className="text-xs text-slate-400">{r.type} · {fmt(r.amount)}/mes · desde {r.start_date}</p>
-                  </div>
+                  <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
                 </div>
-                <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       )}
@@ -1431,8 +1448,10 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
   const [description, setDescription] = useState(item?.description || "");
   const [amount, setAmount] = useState(item ? String(item.amount) : "");
   const [startDate, setStartDate] = useState(item?.start_date || today);
+  const [frequency, setFrequency] = useState(item?.frequency || "mensual");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const isQuincenal = frequency === "quincenal";
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -1442,10 +1461,9 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
     }
     setSaving(true);
     setErrorMsg("");
+    const payload = { type, description, amount: Number(amount), start_date: startDate, frequency };
     if (isEditing) {
-      const { error } = await supabase.from("recurring_incomes").update({
-        type, description, amount: Number(amount), start_date: startDate,
-      }).eq("id", item.id);
+      const { error } = await supabase.from("recurring_incomes").update(payload).eq("id", item.id);
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -1459,7 +1477,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
     const userId = userData?.user?.id;
     const { error } = await supabase.from("recurring_incomes").insert({
       user_id: userId || null,
-      type, description, amount: Number(amount), start_date: startDate,
+      ...payload,
     });
     setSaving(false);
     if (error) {
@@ -1477,7 +1495,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
         </div>
         <p className="mb-4 text-xs text-slate-400">
-          Para un salario u otro ingreso que se repite cada mes por tiempo indefinido. Se cuenta automáticamente cada mes desde la fecha de inicio, hasta que lo elimines.
+          Para un salario u otro ingreso que se repite por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
         </p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -1496,9 +1514,19 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             />
           </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
+            <select
+              value={frequency} onChange={(e) => setFrequency(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              <option value="mensual">Mensual</option>
+              <option value="quincenal">Quincenal (cada 15 días)</option>
+            </select>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto mensual</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="500000"
@@ -1506,13 +1534,18 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Empieza el</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "1ª quincena el" : "Empieza el"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>
           </div>
+          {isQuincenal && (
+            <p className="text-xs text-slate-400">
+              Se va a contar cada 15 días a partir de esa fecha (aprox. 2 veces al mes), no necesariamente los mismos días cada mes.
+            </p>
+          )}
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
           <button
             type="submit" disabled={saving}
@@ -1697,13 +1730,14 @@ function ExpensesView({ fmt, onDataChanged, year }) {
       </Card>
       {recurring.length > 0 && (
         <Card className="p-5">
-          <Eyebrow>Gastos fijos mensuales</Eyebrow>
+          <Eyebrow>Gastos fijos</Eyebrow>
           <p className="mt-1 text-xs text-slate-400">
-            Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes desde su fecha de inicio, sin tener que volver a registrarlos.
+            Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlos.
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {recurring.map((r) => {
               const color = r.categories?.color || "#64748B";
+              const isQuincenal = r.frequency === "quincenal";
               return (
                 <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
                   <div className="flex items-center gap-3">
@@ -1715,7 +1749,9 @@ function ExpensesView({ fmt, onDataChanged, year }) {
                     </div>
                     <div>
                       <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
-                      <p className="text-xs text-slate-400">{r.categories?.name} · {fmt(r.amount)}/mes · desde {r.start_date}</p>
+                      <p className="text-xs text-slate-400">
+                        {r.categories?.name} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
+                      </p>
                     </div>
                   </div>
                   <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
@@ -2374,8 +2410,10 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
   const [description, setDescription] = useState(item?.description || "");
   const [amount, setAmount] = useState(item ? String(item.amount) : "");
   const [startDate, setStartDate] = useState(item?.start_date || today);
+  const [frequency, setFrequency] = useState(item?.frequency || "mensual");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const isQuincenal = frequency === "quincenal";
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -2385,13 +2423,15 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
     }
     setSaving(true);
     setErrorMsg("");
+    const payload = {
+      category_id: categoryId,
+      description,
+      amount: Number(amount),
+      start_date: startDate,
+      frequency,
+    };
     if (isEditing) {
-      const { error } = await supabase.from("recurring_expenses").update({
-        category_id: categoryId,
-        description,
-        amount: Number(amount),
-        start_date: startDate,
-      }).eq("id", item.id);
+      const { error } = await supabase.from("recurring_expenses").update(payload).eq("id", item.id);
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -2405,10 +2445,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
     const userId = userData?.user?.id;
     const { error } = await supabase.from("recurring_expenses").insert({
       user_id: userId || null,
-      category_id: categoryId,
-      description,
-      amount: Number(amount),
-      start_date: startDate,
+      ...payload,
     });
     setSaving(false);
     if (error) {
@@ -2426,7 +2463,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
         </div>
         <p className="mb-4 text-xs text-slate-400">
-          Para alquiler, suscripciones, gimnasio y otros pagos que se repiten cada mes por tiempo indefinido. Se cuenta automáticamente cada mes desde la fecha de inicio, hasta que lo elimines.
+          Para alquiler, suscripciones, gimnasio y otros pagos que se repiten por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
         </p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -2448,9 +2485,19 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             />
           </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
+            <select
+              value={frequency} onChange={(e) => setFrequency(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              <option value="mensual">Mensual</option>
+              <option value="quincenal">Quincenal (cada 15 días)</option>
+            </select>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto mensual</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="150000"
@@ -2458,13 +2505,18 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Empieza el</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "1ª quincena el" : "Empieza el"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>
           </div>
+          {isQuincenal && (
+            <p className="text-xs text-slate-400">
+              Se va a contar cada 15 días a partir de esa fecha (aprox. 2 veces al mes), no necesariamente los mismos días cada mes.
+            </p>
+          )}
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
           <button
             type="submit" disabled={saving}
