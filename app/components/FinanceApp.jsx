@@ -68,7 +68,7 @@ async function fetchYearData(year) {
     supabase.from("incomes").select("*").gte("date", start).lte("date", end),
     supabase.from("expenses").select("*, categories(name, color, icon), credit_cards(name)").gte("date", start).lte("date", end),
     supabase.from("savings").select("*").gte("date", start).lte("date", end),
-    supabase.from("installment_plans").select("*, categories(name, color, icon)"),
+    supabase.from("installment_plans").select("*, categories(name, color, icon), credit_cards(name, cutoff_day, payment_day)"),
     supabase.from("recurring_expenses").select("*, categories(name, color, icon)"),
     supabase.from("recurring_incomes").select("*"),
   ]);
@@ -83,7 +83,8 @@ async function fetchYearData(year) {
   const planExpenses = [];
   (plans || []).forEach((p) => {
     const totalMonths = Number(p.total_months) || 0;
-    synthesizeRecurringEntries(p, year, { totalMonths }).forEach(({ date, index }) => {
+    const anchoredPlan = { ...p, start_date: planAnchorDate(p) };
+    synthesizeRecurringEntries(anchoredPlan, year, { totalMonths }).forEach(({ date, index }) => {
       planExpenses.push({
         id: `plan-${p.id}-${index}`,
         amount: Number(p.monthly_amount),
@@ -229,10 +230,21 @@ function computeCardPaymentDate(purchaseDateStr, cutoffDay, paymentDay) {
   const day = Math.min(paymentDay, lastDay);
   return `${paymentYear}-${String(paymentMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
+// Fecha real desde la que corre el plan. Si el plan está vinculado a una
+// tarjeta de crédito, "start_date" es la fecha de la compra y aquí se
+// calcula la fecha real de la 1ª cuota según el corte/pago de esa tarjeta
+// (las cuotas siguientes simplemente siguen ese mismo día cada mes, como en
+// cualquier estado de cuenta). Si no hay tarjeta, se usa "start_date" tal cual.
+function planAnchorDate(plan) {
+  if (plan.card_id && plan.credit_cards) {
+    return computeCardPaymentDate(plan.start_date, Number(plan.credit_cards.cutoff_day), Number(plan.credit_cards.payment_day));
+  }
+  return plan.start_date;
+}
 // Cuántas cuotas de un plan de pago ya se cumplieron a la fecha de hoy.
 // 0 = aún no empieza a correr ninguna cuota completa; clamp a total_months.
 function planElapsedMonths(plan) {
-  const [sy, sm] = plan.start_date.split("-").map(Number);
+  const [sy, sm] = planAnchorDate(plan).split("-").map(Number);
   const now = new Date();
   let elapsed = (now.getFullYear() - sy) * 12 + (now.getMonth() + 1 - sm);
   if (elapsed < 0) elapsed = 0;
@@ -1553,7 +1565,7 @@ function ExpensesView({ fmt, onDataChanged, year }) {
   async function refetchPlans() {
     const { data } = await supabase
       .from("installment_plans")
-      .select("*, categories(name, color, icon)")
+      .select("*, categories(name, color, icon), credit_cards(name, cutoff_day, payment_day)")
       .order("start_date", { ascending: false });
     setPlans(data || []);
     if (onDataChanged) onDataChanged();
@@ -1585,7 +1597,7 @@ function ExpensesView({ fmt, onDataChanged, year }) {
           .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
           .order("date", { ascending: false }),
         supabase.from("categories").select("*"),
-        supabase.from("installment_plans").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
+        supabase.from("installment_plans").select("*, categories(name, color, icon), credit_cards(name, cutoff_day, payment_day)").order("start_date", { ascending: false }),
         supabase.from("installment_payment_status").select("*"),
         supabase.from("recurring_expenses").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
         supabase.from("credit_cards").select("*").order("name", { ascending: true }),
@@ -1741,7 +1753,10 @@ function ExpensesView({ fmt, onDataChanged, year }) {
                       </div>
                       <div>
                         <p className="text-sm font-medium text-slate-800 dark:text-white">{p.description || p.categories?.name || "Plan de pago"}</p>
-                        <p className="text-xs text-slate-400">{p.categories?.name} · {fmt(p.monthly_amount)}/mes</p>
+                        <p className="text-xs text-slate-400">
+                          {p.categories?.name} · {fmt(p.monthly_amount)}/mes
+                          {p.credit_cards?.name && ` · ${p.credit_cards.name}`}
+                        </p>
                       </div>
                     </div>
                     <RowActions onEdit={() => setEditingPlan(p)} onDelete={() => setDeletingPlan(p)} />
@@ -1845,11 +1860,12 @@ function ExpensesView({ fmt, onDataChanged, year }) {
         />
       )}
       {showPlanModal && (
-        <PlanModal categories={categories} onClose={() => setShowPlanModal(false)} onSaved={refetchPlans} />
+        <PlanModal categories={categories} cards={cards} onClose={() => setShowPlanModal(false)} onSaved={refetchPlans} />
       )}
       {editingPlan && (
         <PlanModal
           categories={categories}
+          cards={cards}
           plan={editingPlan}
           onClose={() => setEditingPlan(null)}
           onSaved={refetchPlans}
@@ -2198,7 +2214,8 @@ function CreditCardModal({ card, onClose, onSaved }) {
     </div>
   );
 }
-function PlanModal({ categories, plan, onClose, onSaved }) {
+function PlanModal({ categories, cards, plan, onClose, onSaved }) {
+  const cardsList = cards || [];
   const isEditing = Boolean(plan);
   const today = new Date().toISOString().slice(0, 10);
   const [categoryId, setCategoryId] = useState(plan?.category_id || categories[0]?.id || "");
@@ -2206,8 +2223,14 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
   const [monthlyAmount, setMonthlyAmount] = useState(plan ? String(plan.monthly_amount) : "");
   const [startDate, setStartDate] = useState(plan?.start_date || today);
   const [totalMonths, setTotalMonths] = useState(plan ? String(plan.total_months) : "12");
+  const [cardId, setCardId] = useState(plan?.card_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const selectedCard = cardsList.find((c) => c.id === cardId) || null;
+  const anchorDate = selectedCard && startDate
+    ? computeCardPaymentDate(startDate, Number(selectedCard.cutoff_day), Number(selectedCard.payment_day))
+    : null;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -2217,14 +2240,16 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
     }
     setSaving(true);
     setErrorMsg("");
+    const payload = {
+      category_id: categoryId,
+      description,
+      monthly_amount: Number(monthlyAmount),
+      start_date: startDate,
+      total_months: Number(totalMonths),
+      card_id: selectedCard ? selectedCard.id : null,
+    };
     if (isEditing) {
-      const { error } = await supabase.from("installment_plans").update({
-        category_id: categoryId,
-        description,
-        monthly_amount: Number(monthlyAmount),
-        start_date: startDate,
-        total_months: Number(totalMonths),
-      }).eq("id", plan.id);
+      const { error } = await supabase.from("installment_plans").update(payload).eq("id", plan.id);
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -2238,11 +2263,7 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
     const userId = userData?.user?.id;
     const { error } = await supabase.from("installment_plans").insert({
       user_id: userId || null,
-      category_id: categoryId,
-      description,
-      monthly_amount: Number(monthlyAmount),
-      start_date: startDate,
-      total_months: Number(totalMonths),
+      ...payload,
     });
     setSaving(false);
     if (error) {
@@ -2282,6 +2303,23 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             />
           </div>
+          {cardsList.length > 0 && (
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tarjeta asociada</label>
+              <select
+                value={cardId} onChange={(e) => setCardId(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              >
+                <option value="">Ninguna / pago directo</option>
+                {cardsList.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-xs text-slate-400">
+                Elige una tarjeta si esto es una compra a plazos que se cobra en el estado de cuenta (como Conape, elige "Ninguna").
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto de la cuota mensual</label>
@@ -2292,7 +2330,7 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha de la 1ª cuota</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha de la 1ª cuota"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -2306,9 +2344,14 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
               placeholder="72"
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             />
-            {monthlyAmount && totalMonths && Number(totalMonths) > 0 && (
+            {monthlyAmount && totalMonths && Number(totalMonths) > 0 && !selectedCard && (
               <p className="mt-1.5 text-xs text-slate-400">
                 Se cobrará {Number(monthlyAmount).toLocaleString("es-CR")} cada mes durante {totalMonths} meses, empezando el {startDate}.
+              </p>
+            )}
+            {monthlyAmount && totalMonths && Number(totalMonths) > 0 && selectedCard && anchorDate && (
+              <p className="mt-1.5 text-xs text-slate-400">
+                Corte el día {selectedCard.cutoff_day} y pago el día {selectedCard.payment_day}: la 1ª cuota se contará con fecha de pago <span className="font-medium text-slate-600 dark:text-slate-300">{anchorDate}</span>, y las siguientes {Number(totalMonths) - 1} cuotas seguirán ese mismo día cada mes.
               </p>
             )}
           </div>
@@ -2489,7 +2532,7 @@ function PlanPaymentsModal({ plan, overrides, fmt, onClose, onChanged }) {
         {errorMsg && <p className="mb-3 text-xs text-red-500">{errorMsg}</p>}
         <div className="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
           {cuotas.map((cuotaNumber) => {
-            const cuotaDate = addMonthsToDateString(plan.start_date, cuotaNumber - 1);
+            const cuotaDate = addMonthsToDateString(planAnchorDate(plan), cuotaNumber - 1);
             const status = cuotaStatus(overrides, plan.id, cuotaNumber);
             return (
               <div key={cuotaNumber} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
