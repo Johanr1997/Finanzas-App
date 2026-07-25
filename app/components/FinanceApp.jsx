@@ -675,6 +675,7 @@ function GoalsView({ fmt }) {
   const [showModal, setShowModal] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
   const [deletingGoal, setDeletingGoal] = useState(null);
+  const [contributingGoal, setContributingGoal] = useState(null);
   async function refetchGoals() {
     const { data } = await supabase.from("goals").select("*");
     setGoals(data || []);
@@ -730,6 +731,12 @@ function GoalsView({ fmt }) {
               <span className="font-medium" style={{ color: g.color }}>{pct}% completado</span>
               {pct >= 100 && <span className="inline-flex items-center gap-1 text-emerald-600"><Check size={12} /> Meta alcanzada</span>}
             </div>
+            <button
+              onClick={() => setContributingGoal(g)}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <Plus size={13} /> Agregar aporte
+            </button>
           </Card>
         );
       })}
@@ -754,6 +761,74 @@ function GoalsView({ fmt }) {
           onConfirm={() => handleDelete(deletingGoal.id)}
         />
       )}
+      {contributingGoal && (
+        <GoalContributionModal
+          goal={contributingGoal}
+          fmt={fmt}
+          onClose={() => setContributingGoal(null)}
+          onSaved={refetchGoals}
+        />
+      )}
+    </div>
+  );
+}
+function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const preview = amount && !Number.isNaN(Number(amount))
+    ? Number(goal.current_amount) + Number(amount)
+    : null;
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!amount || Number(amount) === 0) {
+      setErrorMsg("Ingresa un monto distinto de cero.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    const nuevoActual = Number(goal.current_amount) + Number(amount);
+    const { error } = await supabase.from("goals").update({ current_amount: nuevoActual }).eq("id", goal.id);
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Agregar aporte</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          {goal.name} · llevas {fmt(goal.current_amount)} de {fmt(goal.target_amount)}
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto a agregar</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus
+              placeholder="25000"
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+            <p className="mt-1.5 text-xs text-slate-400">
+              Se suma a lo que ya tienes ahorrado para esta meta. Si necesitas restar (por ejemplo, retiraste dinero), ingresa el número en negativo.
+              {preview !== null && <> Nuevo monto actual: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(preview)}</span>.</>}
+            </p>
+          </div>
+          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+          <button
+            type="submit" disabled={saving}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "Guardando..." : "Agregar aporte"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
