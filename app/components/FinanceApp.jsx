@@ -179,6 +179,31 @@ function planCurrentCuota(plan) {
   const elapsed = planElapsedMonths(plan);
   return Math.min(elapsed + 1, total);
 }
+// Monto total del préstamo/plan (todas las cuotas).
+function planTotalAmount(plan) {
+  return Number(plan.monthly_amount) * (Number(plan.total_months) || 0);
+}
+// Cuántas cuotas, de las que ya deberían estar pagadas, se marcaron
+// manualmente como "no_pagada" (las "atrasada" sí cuentan como pagadas,
+// solo quedan marcadas como pago tardío).
+function planUnpaidCount(overrides, planId) {
+  return overrides.filter((o) => o.plan_id === planId && o.status === "no_pagada").length;
+}
+// Saldo pendiente: el cálculo automático por fecha sigue igual (cuántas
+// cuotas ya "tocaba" pagar), y a eso se le resta lo marcado manualmente
+// como no pagado en el checklist de cuotas.
+function planSaldoPendiente(plan, overrides) {
+  const elapsed = planElapsedMonths(plan);
+  const unpaid = planUnpaidCount(overrides, plan.id);
+  const paidCount = Math.max(0, elapsed - unpaid);
+  const total = Number(plan.total_months) || 0;
+  return (total - paidCount) * Number(plan.monthly_amount);
+}
+function cuotaStatus(overrides, planId, cuotaNumber) {
+  const found = overrides.find((o) => o.plan_id === planId && o.cuota_number === cuotaNumber);
+  return found ? found.status : "pagada";
+}
+const CUOTA_STATUS_LABEL = { pagada: "Pagada", atrasada: "Pagada tarde", no_pagada: "No pagada" };
 function statusOf(balance, ingreso) {
   if (ingreso === 0) return "gris";
   const ratio = balance / ingreso;
@@ -1062,6 +1087,7 @@ function ExpensesView({ fmt, onDataChanged }) {
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [paymentOverrides, setPaymentOverrides] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
@@ -1069,6 +1095,7 @@ function ExpensesView({ fmt, onDataChanged }) {
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [editingPlan, setEditingPlan] = useState(null);
   const [deletingPlan, setDeletingPlan] = useState(null);
+  const [viewingPlanPayments, setViewingPlanPayments] = useState(null);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
   async function refetchExpenses() {
@@ -1087,23 +1114,31 @@ function ExpensesView({ fmt, onDataChanged }) {
     setPlans(data || []);
     if (onDataChanged) onDataChanged();
   }
+  async function refetchOverrides() {
+    const { data } = await supabase.from("installment_payment_status").select("*");
+    setPaymentOverrides(data || []);
+  }
   useEffect(() => {
     async function fetchAll() {
       const [
         { data: exp, error: expError },
         { data: cats, error: catError },
         { data: pls, error: planError },
+        { data: overrides, error: overrideError },
       ] = await Promise.all([
         supabase.from("expenses").select("*, categories(name, color, icon)").order("date", { ascending: false }),
         supabase.from("categories").select("*"),
         supabase.from("installment_plans").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
+        supabase.from("installment_payment_status").select("*"),
       ]);
       if (expError) console.error("Error cargando gastos:", expError.message);
       if (catError) console.error("Error cargando categorías:", catError.message);
       if (planError) console.error("Error cargando planes de pago:", planError.message);
+      if (overrideError) console.error("Error cargando estado de cuotas:", overrideError.message);
       setExpenses(exp || []);
       setCategories(sortCategories(cats || []));
       setPlans(pls || []);
+      setPaymentOverrides(overrides || []);
       setLoading(false);
     }
     fetchAll();
@@ -1174,6 +1209,8 @@ function ExpensesView({ fmt, onDataChanged }) {
               const elapsed = planElapsedMonths(p);
               const pct = total > 0 ? Math.min(100, Math.round((elapsed / total) * 100)) : 0;
               const finished = elapsed >= total;
+              const unpaid = planUnpaidCount(paymentOverrides, p.id);
+              const saldoPendiente = planSaldoPendiente(p, paymentOverrides);
               return (
                 <div key={p.id} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
                   <div className="flex items-start justify-between gap-2">
@@ -1197,9 +1234,23 @@ function ExpensesView({ fmt, onDataChanged }) {
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                  <p className="mt-2 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    {finished ? `Plan finalizado · ${total} de ${total} cuotas` : `Cuota ${cuota} de ${total}`}
-                  </p>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                      {finished ? `Plan finalizado · ${total} de ${total} cuotas` : `Cuota ${cuota} de ${total}`}
+                    </p>
+                    {unpaid > 0 && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-500">
+                        <AlertTriangle size={11} /> {unpaid} sin pagar
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">Saldo pendiente: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(saldoPendiente)}</span></p>
+                  <button
+                    onClick={() => setViewingPlanPayments(p)}
+                    className="mt-3 w-full rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    Ver cuotas
+                  </button>
                 </div>
               );
             })}
@@ -1287,6 +1338,15 @@ function ExpensesView({ fmt, onDataChanged }) {
           message={`¿Seguro que quieres eliminar el plan "${deletingPlan.description || deletingPlan.categories?.name || "sin descripción"}"? Las cuotas ya no se contarán en tus gastos futuros. Esta acción no se puede deshacer.`}
           onCancel={() => setDeletingPlan(null)}
           onConfirm={() => handleDeletePlan(deletingPlan.id)}
+        />
+      )}
+      {viewingPlanPayments && (
+        <PlanPaymentsModal
+          plan={viewingPlanPayments}
+          overrides={paymentOverrides}
+          fmt={fmt}
+          onClose={() => setViewingPlanPayments(null)}
+          onChanged={refetchOverrides}
         />
       )}
     </div>
@@ -1528,6 +1588,96 @@ function PlanModal({ categories, plan, onClose, onSaved }) {
             {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear plan de pago"}
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+// Checklist de cuotas de un plan: el cálculo automático por fecha (cuota
+// actual, progreso, gastos mensuales) no cambia. Esto solo permite marcar
+// manualmente si una cuota puntual se pagó tarde o no se pagó, para que el
+// saldo pendiente refleje la realidad y no solo la fecha.
+function PlanPaymentsModal({ plan, overrides, fmt, onClose, onChanged }) {
+  const [updatingCuota, setUpdatingCuota] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const total = Number(plan.total_months) || 0;
+  const cuotasAVencer = planCurrentCuota(plan); // 1..cuotasAVencer ya deberían estar pagándose
+  const cuotas = Array.from({ length: cuotasAVencer }, (_, i) => i + 1).reverse();
+
+  async function handleSetStatus(cuotaNumber, status) {
+    setUpdatingCuota(cuotaNumber);
+    setErrorMsg("");
+    try {
+      if (status === "pagada") {
+        const { error } = await supabase
+          .from("installment_payment_status")
+          .delete()
+          .eq("plan_id", plan.id)
+          .eq("cuota_number", cuotaNumber);
+        if (error) throw error;
+      } else {
+        const { data: userData } = await supabase.auth.getUser();
+        const userId = userData?.user?.id;
+        const { error } = await supabase
+          .from("installment_payment_status")
+          .upsert(
+            { user_id: userId || null, plan_id: plan.id, cuota_number: cuotaNumber, status },
+            { onConflict: "plan_id,cuota_number" }
+          );
+        if (error) throw error;
+      }
+      onChanged();
+    } catch (err) {
+      setErrorMsg("Error al actualizar: " + (err?.message || "intenta de nuevo."));
+    }
+    setUpdatingCuota(null);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+            Cuotas · {plan.description || plan.categories?.name || "Plan de pago"}
+          </h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          El número de cuota y el progreso se siguen calculando solos por fecha. Marca aquí una cuota si se pagó tarde o si no se pagó.
+        </p>
+        {errorMsg && <p className="mb-3 text-xs text-red-500">{errorMsg}</p>}
+        <div className="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          {cuotas.map((cuotaNumber) => {
+            const cuotaDate = addMonthsToDateString(plan.start_date, cuotaNumber - 1);
+            const status = cuotaStatus(overrides, plan.id, cuotaNumber);
+            return (
+              <div key={cuotaNumber} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+                <div>
+                  <p className="font-medium text-slate-700 dark:text-slate-200">Cuota {cuotaNumber} de {total}</p>
+                  <p className="text-xs text-slate-400">{cuotaDate} · {fmt(plan.monthly_amount)}</p>
+                </div>
+                <select
+                  value={status}
+                  disabled={updatingCuota === cuotaNumber}
+                  onChange={(e) => handleSetStatus(cuotaNumber, e.target.value)}
+                  className={`rounded-lg border px-2 py-1.5 text-xs outline-none disabled:opacity-50 dark:bg-slate-800 dark:text-white ${
+                    status === "pagada"
+                      ? "border-emerald-200 text-emerald-600 dark:border-emerald-800"
+                      : status === "atrasada"
+                      ? "border-amber-200 text-amber-600 dark:border-amber-800"
+                      : "border-red-200 text-red-500 dark:border-red-800"
+                  }`}
+                >
+                  <option value="pagada">{CUOTA_STATUS_LABEL.pagada}</option>
+                  <option value="atrasada">{CUOTA_STATUS_LABEL.atrasada}</option>
+                  <option value="no_pagada">{CUOTA_STATUS_LABEL.no_pagada}</option>
+                </select>
+              </div>
+            );
+          })}
+          {cuotas.length === 0 && (
+            <p className="px-4 py-6 text-center text-sm text-slate-400">Todavía no hay cuotas que deberían haberse pagado.</p>
+          )}
+        </div>
       </div>
     </div>
   );
