@@ -614,10 +614,17 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   }, [yearData]);
   const now = new Date();
   const isCurrentYear = year === now.getFullYear();
-  const currentIdx = isCurrentYear ? now.getMonth() : 11;
+  // La tarjeta "Tu mes" y su frase destacada ahora siguen el mes elegido en
+  // el selector del encabezado (compartido con Ingresos/Gastos/Ahorros/
+  // Presupuestos), no siempre el mes real de hoy — así se ve la información
+  // del mes que la persona realmente está mirando. "isRealCurrentMonth"
+  // distingue si ese mes elegido coincide con hoy, solo para decidir si la
+  // frase dice "Este mes..." o "En {mes}..." (y el título de la tarjeta).
+  const currentIdx = month;
   const prevIdx = Math.max(0, currentIdx - 1);
   const currentMonth = yearData[currentIdx];
   const prevMonth = yearData[prevIdx];
+  const isRealCurrentMonth = isCurrentYear && month === now.getMonth();
   const insights = [];
   if (prevMonth.gastoTotal > 0) {
     const pct = Math.abs(Math.round((1 - currentMonth.gastoTotal / prevMonth.gastoTotal) * 100));
@@ -630,10 +637,13 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
     if (top) insights.push(`Tu categoría con mayor gasto en ${year} fue ${top[0]}.`);
   }
   if (currentMonth.ingresoTotal > 0) {
-    insights.push(`${isCurrentYear ? "Este mes has" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorrado un ${Math.round((currentMonth.ahorroTotal / currentMonth.ingresoTotal) * 100)}% de tus ingresos.`);
+    insights.push(`${isRealCurrentMonth ? "Este mes has" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorrado un ${Math.round((currentMonth.ahorroTotal / currentMonth.ingresoTotal) * 100)}% de tus ingresos.`);
   }
+  // Este cálculo de ritmo de ahorro es sobre el AÑO real transcurrido hasta
+  // hoy (no sobre el mes elegido en la tarjeta de arriba), así que usa
+  // now.getMonth() directo en vez de currentIdx.
   if (isCurrentYear && totals.ahorros > 0 && totalMetaObjetivo > totalMetaActual) {
-    const promedioMensual = totals.ahorros / (currentIdx + 1);
+    const promedioMensual = totals.ahorros / (now.getMonth() + 1);
     if (promedioMensual > 0) {
       insights.push(`Si mantienes este ritmo de ahorro, alcanzarías tus metas pendientes en ${Math.max(1, Math.ceil((totalMetaObjetivo - totalMetaActual) / promedioMensual))} meses.`);
     }
@@ -643,26 +653,27 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   }
   // Frase corta destacada arriba de todo, tipo "esto te lo cuento en una
   // línea" — se enfoca en el ahorro porque suele ser el número que más
-  // engancha ("ahorré más/menos que el mes pasado").
+  // engancha ("ahorré más/menos que el mes pasado"). Sigue al mes elegido,
+  // igual que el resto de la tarjeta.
   let headline = null;
   if (prevMonth.ahorroTotal > 0) {
     const delta = Math.round(((currentMonth.ahorroTotal - prevMonth.ahorroTotal) / prevMonth.ahorroTotal) * 100);
-    headline = `${isCurrentYear ? "Este mes" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorraste un ${Math.abs(delta)}% ${delta >= 0 ? "más" : "menos"} que el mes anterior.`;
+    headline = `${isRealCurrentMonth ? "Este mes" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorraste un ${Math.abs(delta)}% ${delta >= 0 ? "más" : "menos"} que el mes anterior.`;
   } else if (currentMonth.ahorroTotal > 0) {
-    headline = `${isCurrentYear ? "Este mes empezaste a ahorrar" : `En ${currentMonth.mesFull.toLowerCase()} empezaste a ahorrar`}: ${fmt(currentMonth.ahorroTotal)}.`;
+    headline = `${isRealCurrentMonth ? "Este mes empezaste a ahorrar" : `En ${currentMonth.mesFull.toLowerCase()} empezaste a ahorrar`}: ${fmt(currentMonth.ahorroTotal)}.`;
   }
   return (
     <div className="space-y-6">
       <Card className="p-5">
         <div className="flex items-center gap-2">
           <Sparkles size={16} className="text-amber-500" />
-          <Eyebrow>{isCurrentYear ? `Tu mes: ${currentMonth.mesFull}` : `Resumen de ${currentMonth.mesFull} ${year}`}</Eyebrow>
+          <Eyebrow>{isRealCurrentMonth ? `Tu mes: ${currentMonth.mesFull}` : `Resumen de ${currentMonth.mesFull} ${year}`}</Eyebrow>
         </div>
         {headline && (
           <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{headline}</p>
         )}
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <MiniStat label="Ingresaste este mes" value={fmt(currentMonth.ingresoTotal)} tone="green" />
+          <MiniStat label="Ingresaste" value={fmt(currentMonth.ingresoTotal)} tone="green" />
           <MiniStat label="Gastaste" value={fmt(currentMonth.gastoTotal)} tone="red" />
           <MiniStat label="Ahorraste" value={fmt(currentMonth.ahorroTotal)} tone="blue" />
           <MiniStat label="Te quedan" value={fmt(currentMonth.balance)} tone={currentMonth.balance >= 0 ? "green" : "red"} />
