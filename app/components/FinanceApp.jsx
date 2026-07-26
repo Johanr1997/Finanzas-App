@@ -2635,6 +2635,7 @@ function SavingsView({ fmt, onDataChanged, year }) {
   const [editingSaving, setEditingSaving] = useState(null);
   const [deletingSaving, setDeletingSaving] = useState(null);
   const [typeFilter, setTypeFilter] = useState("Todos");
+  const [viewingTypeReport, setViewingTypeReport] = useState(null);
   async function refetchSavings() {
     const { data } = await supabase
       .from("savings")
@@ -2671,6 +2672,10 @@ function SavingsView({ fmt, onDataChanged, year }) {
   }
   const total = savings.reduce((a, s) => a + Number(s.amount), 0);
   const filteredSavings = savings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
+  const totalsByType = SAVINGS_TYPES.map((t) => {
+    const items = savings.filter((s) => s.type === t.value);
+    return { ...t, items, total: items.reduce((a, s) => a + Number(s.amount), 0) };
+  });
   if (loading) {
     return <p className="text-sm text-slate-400">Cargando ahorros...</p>;
   }
@@ -2695,6 +2700,23 @@ function SavingsView({ fmt, onDataChanged, year }) {
           >
             <Plus size={15} /> Agregar ahorro
           </button>
+        </div>
+      </Card>
+      <Card className="p-5">
+        <Eyebrow>Resumen por tipo en {year}</Eyebrow>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {totalsByType.map((t) => (
+            <div key={t.value} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+              <p className="text-xs font-medium text-slate-400">{t.label}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums text-blue-500">{fmt(t.total)}</p>
+              <button
+                onClick={() => setViewingTypeReport(t)}
+                className="mt-3 w-full rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Ver reporte
+              </button>
+            </div>
+          ))}
         </div>
       </Card>
       <Card className="overflow-hidden">
@@ -2751,6 +2773,76 @@ function SavingsView({ fmt, onDataChanged, year }) {
           onConfirm={() => handleDelete(deletingSaving)}
         />
       )}
+      {viewingTypeReport && (
+        <SavingsTypeReportModal
+          type={viewingTypeReport}
+          year={year}
+          fmt={fmt}
+          onClose={() => setViewingTypeReport(null)}
+        />
+      )}
+    </div>
+  );
+}
+// Solo lectura: reporte de un tipo de ahorro (Fondo de emergencia,
+// Inversiones, Ahorro libre) para el año seleccionado — cuánto se ahorró
+// cada mes y el detalle de cada aporte. Para editar o eliminar alguno, se
+// hace desde la lista normal de Ahorros.
+function SavingsTypeReportModal({ type, year, fmt, onClose }) {
+  const total = type.items.reduce((a, s) => a + Number(s.amount), 0);
+  const monthlyTotals = MONTHS.map((m, i) => {
+    const monthNum = i + 1;
+    const monthTotal = type.items
+      .filter((s) => new Date(s.date).getMonth() + 1 === monthNum)
+      .reduce((a, s) => a + Number(s.amount), 0);
+    return { mes: m, total: monthTotal };
+  });
+  const maxMonthTotal = Math.max(1, ...monthlyTotals.map((m) => m.total));
+  const sortedItems = [...type.items].sort((a, b) => b.date.localeCompare(a.date));
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Reporte · {type.label}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          Cuánto ahorraste en "{type.label}" mes a mes durante {year}, y el detalle de cada aporte.
+        </p>
+        <div className="space-y-1.5">
+          {monthlyTotals.map((m) => (
+            <div key={m.mes} className="flex items-center gap-3 text-xs">
+              <span className="w-8 shrink-0 text-slate-400">{m.mes}</span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                <div
+                  className="h-full rounded-full bg-blue-500 transition-all duration-700 ease-out"
+                  style={{ width: `${Math.round((m.total / maxMonthTotal) * 100)}%` }}
+                />
+              </div>
+              <span className="w-24 shrink-0 text-right font-medium text-slate-600 dark:text-slate-300">{fmt(m.total)}</span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 mb-2 text-xs font-medium uppercase tracking-wider text-slate-400">Detalle de aportes</p>
+        <div className="max-h-[35vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          {sortedItems.map((s) => (
+            <div key={s.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+              <div>
+                <p className="text-xs text-slate-400">{s.date}</p>
+              </div>
+              <span className="tabular-nums font-medium text-blue-500">{fmt(s.amount)}</span>
+            </div>
+          ))}
+          {sortedItems.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-slate-400">Aún no has registrado ahorros de este tipo en {year}.</p>
+          )}
+        </div>
+        {sortedItems.length > 0 && (
+          <p className="mt-3 text-right text-xs text-slate-400">
+            Total del año: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(total)}</span>
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -2895,23 +2987,33 @@ function BudgetsView({ fmt }) {
   const [loading, setLoading] = useState(true);
   const [editingBudget, setEditingBudget] = useState(null);
   const [deletingBudget, setDeletingBudget] = useState(null);
+  const [viewingCategoryExpenses, setViewingCategoryExpenses] = useState(null);
 
   async function refetch() {
     const now = new Date();
-    const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const last = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
     const [{ data: cats, error: catError }, { data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
       supabase.from("categories").select("*"),
       supabase.from("budgets").select("*"),
-      supabase.from("expenses").select("amount, category_id").gte("date", first).lte("date", last),
+      // Se trae sin filtrar por fecha en la consulta: un gasto con tarjeta de
+      // crédito guarda en "date" la fecha de PAGO (puede caer el mes
+      // siguiente), no la fecha en que realmente se compró. Para el
+      // presupuesto lo que importa es cuándo se gastó de verdad, así que se
+      // filtra abajo por "purchase_date" (si existe) o por "date".
+      supabase.from("expenses").select("id, amount, category_id, date, purchase_date, description, credit_cards(name)"),
     ]);
     if (catError) console.error("Error cargando categorías:", catError.message);
     if (budError) console.error("Error cargando presupuestos:", budError.message);
     if (expError) console.error("Error cargando gastos del mes:", expError.message);
+    const thisMonth = (exps || []).filter((e) => {
+      const effective = e.purchase_date || e.date;
+      const d = new Date(effective);
+      return d.getFullYear() === year && d.getMonth() + 1 === month;
+    });
     setCategories(cats || []);
     setBudgets(buds || []);
-    setMonthExpenses(exps || []);
+    setMonthExpenses(thisMonth);
     setLoading(false);
   }
   useEffect(() => {
@@ -2931,9 +3033,10 @@ function BudgetsView({ fmt }) {
 
   const rows = categories.map((c) => {
     const budget = budgets.find((b) => b.category_id === c.id);
-    const spent = monthExpenses.filter((e) => e.category_id === c.id).reduce((a, e) => a + Number(e.amount), 0);
+    const categoryExpenses = monthExpenses.filter((e) => e.category_id === c.id);
+    const spent = categoryExpenses.reduce((a, e) => a + Number(e.amount), 0);
     const pct = budget ? Math.round((spent / Number(budget.monthly_amount)) * 100) : null;
-    return { category: c, budget, spent, pct };
+    return { category: c, budget, spent, pct, categoryExpenses };
   });
 
   return (
@@ -2943,7 +3046,7 @@ function BudgetsView({ fmt }) {
         <p className="mt-1 text-sm text-slate-400">Define un límite mensual por categoría y sigue tu progreso en tiempo real.</p>
       </Card>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {rows.map(({ category, budget, spent, pct }) => {
+        {rows.map(({ category, budget, spent, pct, categoryExpenses }) => {
           const color = category.color || "#64748B";
           const over = pct !== null && pct >= 100;
           const near = pct !== null && pct >= 80 && pct < 100;
@@ -2991,6 +3094,12 @@ function BudgetsView({ fmt }) {
                   </div>
                 </>
               )}
+              <button
+                onClick={() => setViewingCategoryExpenses({ category, expenses: categoryExpenses })}
+                className="mt-3 w-full rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Ver gastos del mes
+              </button>
             </Card>
           );
         })}
@@ -3014,6 +3123,57 @@ function BudgetsView({ fmt }) {
           onConfirm={() => handleDelete(deletingBudget.id)}
         />
       )}
+      {viewingCategoryExpenses && (
+        <CategoryExpensesListModal
+          category={viewingCategoryExpenses.category}
+          expenses={viewingCategoryExpenses.expenses}
+          fmt={fmt}
+          onClose={() => setViewingCategoryExpenses(null)}
+        />
+      )}
+    </div>
+  );
+}
+// Solo lectura: qué gastos de este mes componen el "gastado" de una
+// categoría, contados por la fecha en que realmente se hicieron (no la
+// fecha de pago de una tarjeta). Para editar o eliminar alguno, se hace
+// desde Gastos.
+function CategoryExpensesListModal({ category, expenses, fmt, onClose }) {
+  const total = expenses.reduce((a, e) => a + Number(e.amount), 0);
+  const sorted = [...expenses].sort((a, b) => (b.purchase_date || b.date).localeCompare(a.purchase_date || a.date));
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Gastos del mes · {category.name}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          Se cuentan por la fecha real de la compra, no por la fecha de pago de la tarjeta. Para editar o eliminar alguno, hazlo desde Gastos.
+        </p>
+        <div className="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          {sorted.map((e) => (
+            <div key={e.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+              <div>
+                <p className="font-medium text-slate-700 dark:text-slate-200">{e.description || category.name}</p>
+                <p className="text-xs text-slate-400">
+                  {e.purchase_date || e.date}
+                  {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
+                </p>
+              </div>
+              <span className="tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
+            </div>
+          ))}
+          {sorted.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-slate-400">Aún no has registrado gastos en esta categoría este mes.</p>
+          )}
+        </div>
+        {sorted.length > 0 && (
+          <p className="mt-3 text-right text-xs text-slate-400">
+            Total del mes: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(total)}</span>
+          </p>
+        )}
+      </div>
     </div>
   );
 }
