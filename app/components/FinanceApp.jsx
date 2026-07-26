@@ -385,6 +385,26 @@ function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
     </Card>
   );
 }
+// Tarjetita compacta para el resumen "de un vistazo" del mes (Resumen). A
+// diferencia de StatCard (pensada para un solo número grande), esta admite
+// una segunda línea de contexto ("sub"), por eso se usa para cosas como
+// "Meta más cercana" o "Próximo pago" que no son solo un monto.
+function MiniStat({ label, value, sub, tone = "slate" }) {
+  const toneClasses = {
+    slate: "text-slate-900 dark:text-white",
+    green: "text-emerald-600 dark:text-emerald-400",
+    red: "text-red-600 dark:text-red-400",
+    blue: "text-blue-600 dark:text-blue-400",
+    amber: "text-amber-600 dark:text-amber-400",
+  };
+  return (
+    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
+      <p className="text-[11px] font-medium leading-tight text-slate-400">{label}</p>
+      <p className={`mt-1 truncate text-base font-semibold tabular-nums ${toneClasses[tone]}`}>{value}</p>
+      {sub && <p className="mt-0.5 truncate text-[11px] text-slate-400">{sub}</p>}
+    </div>
+  );
+}
 function ProgressRing({ percent, color, size = 56 }) {
   const r = (size - 8) / 2;
   const c = 2 * Math.PI * r;
@@ -510,6 +530,40 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
       setGoals(data || []);
     });
   }, []);
+  // Cumplimiento del presupuesto del mes real actual (no del año/mes que se
+  // esté viendo aquí) — se trae aparte de yearData porque necesita cruzar
+  // presupuestos por categoría con los gastos de este mes, igual que hace
+  // BudgetsView, para dar un solo número de "qué tan bien vas" en Resumen.
+  const [budgetSummary, setBudgetSummary] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchBudgetSummary() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = now.getMonth() + 1;
+      const [{ data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
+        supabase.from("budgets").select("*"),
+        supabase.from("expenses").select("amount, category_id, date, purchase_date"),
+      ]);
+      if (budError) console.error("Error cargando presupuestos:", budError.message);
+      if (expError) console.error("Error cargando gastos para presupuesto:", expError.message);
+      const budgetedIds = new Set((buds || []).map((b) => b.category_id));
+      const totalBudgeted = (buds || []).reduce((a, b) => a + Number(b.monthly_amount), 0);
+      const totalSpent = (exps || [])
+        .filter((e) => budgetedIds.has(e.category_id))
+        .filter((e) => {
+          const eff = e.purchase_date || e.date;
+          const d = new Date(eff);
+          return d.getFullYear() === y && d.getMonth() + 1 === m;
+        })
+        .reduce((a, e) => a + Number(e.amount), 0);
+      if (!cancelled) {
+        setBudgetSummary(totalBudgeted > 0 ? { pct: Math.round((totalSpent / totalBudgeted) * 100), spent: totalSpent, budgeted: totalBudgeted } : null);
+      }
+    }
+    fetchBudgetSummary();
+    return () => { cancelled = true; };
+  }, []);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -556,8 +610,74 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
   if (insights.length === 0) {
     insights.push("Registra ingresos, gastos y ahorros para ver análisis automáticos aquí.");
   }
+  // Frase corta destacada arriba de todo, tipo "esto te lo cuento en una
+  // línea" — se enfoca en el ahorro porque suele ser el número que más
+  // engancha ("ahorré más/menos que el mes pasado").
+  let headline = null;
+  if (prevMonth.ahorroTotal > 0) {
+    const delta = Math.round(((currentMonth.ahorroTotal - prevMonth.ahorroTotal) / prevMonth.ahorroTotal) * 100);
+    headline = `${isCurrentYear ? "Este mes" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorraste un ${Math.abs(delta)}% ${delta >= 0 ? "más" : "menos"} que el mes anterior.`;
+  } else if (currentMonth.ahorroTotal > 0) {
+    headline = `${isCurrentYear ? "Este mes empezaste a ahorrar" : `En ${currentMonth.mesFull.toLowerCase()} empezaste a ahorrar`}: ${fmt(currentMonth.ahorroTotal)}.`;
+  }
+  // La meta que está más cerca de completarse (mayor % de avance, sin llegar
+  // al 100%) — para destacar en el resumen cuál va a punto de lograrse.
+  const closestGoal = useMemo(() => {
+    const withProgress = goals
+      .filter((g) => Number(g.target_amount) > 0)
+      .map((g) => ({ ...g, pct: Math.min(100, Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100)) }))
+      .filter((g) => g.pct < 100);
+    if (withProgress.length === 0) return null;
+    return withProgress.sort((a, b) => b.pct - a.pct)[0];
+  }, [goals]);
+  // El próximo compromiso programado (cuota de un plan de pago o gasto
+  // fijo) con fecha de hoy en adelante, buscando entre lo ya sintetizado en
+  // yearData. Solo tiene sentido si se está viendo el año real actual — si
+  // se navegó a otro año, no hay un "hoy" dentro de ese año.
+  const proximoPago = useMemo(() => {
+    if (!isCurrentYear) return null;
+    const todayStr = now.toISOString().slice(0, 10);
+    const upcoming = yearData
+      .flatMap((m) => m.gastos)
+      .filter((g) => (String(g.id).startsWith("plan-") || String(g.id).startsWith("recexp-")) && g.fecha >= todayStr)
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return upcoming[0] || null;
+  }, [yearData, isCurrentYear]);
   return (
     <div className="space-y-6">
+      <Card className="p-5">
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} className="text-amber-500" />
+          <Eyebrow>{isCurrentYear ? `Tu mes: ${currentMonth.mesFull}` : `Resumen de ${currentMonth.mesFull} ${year}`}</Eyebrow>
+        </div>
+        {headline && (
+          <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{headline}</p>
+        )}
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <MiniStat label="Ingresaste este mes" value={fmt(currentMonth.ingresoTotal)} tone="green" />
+          <MiniStat label="Gastaste" value={fmt(currentMonth.gastoTotal)} tone="red" />
+          <MiniStat label="Ahorraste" value={fmt(currentMonth.ahorroTotal)} tone="blue" />
+          <MiniStat label="Te quedan" value={fmt(currentMonth.balance)} tone={currentMonth.balance >= 0 ? "green" : "red"} />
+          <MiniStat
+            label="Cumplimiento del presupuesto"
+            value={budgetSummary ? `${budgetSummary.pct}%` : "Sin definir"}
+            sub={budgetSummary ? "usado este mes" : "Defínelo en Presupuestos"}
+            tone={!budgetSummary ? "slate" : budgetSummary.pct >= 100 ? "red" : budgetSummary.pct >= 80 ? "amber" : "green"}
+          />
+          <MiniStat
+            label="Meta más cercana"
+            value={closestGoal ? closestGoal.name : "—"}
+            sub={closestGoal ? `${closestGoal.pct}% completada` : "Crea una meta para verla aquí"}
+            tone="amber"
+          />
+          <MiniStat
+            label="Próximo pago"
+            value={proximoPago ? fmt(proximoPago.monto) : "—"}
+            sub={proximoPago ? `${proximoPago.descripcion} · ${proximoPago.fecha}` : "No hay pagos programados próximamente"}
+            tone="slate"
+          />
+        </div>
+      </Card>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard label="Saldo disponible" value={fmt(totals.saldo)} icon={Wallet} accent="slate" />
         <StatCard label="Ingresos del año" value={fmt(totals.ingresos)} icon={TrendingUp} accent="green" />
@@ -3125,6 +3245,10 @@ function BudgetsView({ fmt }) {
     const pct = budget ? Math.round((spent / Number(budget.monthly_amount)) * 100) : null;
     return { category: c, budget, spent, pct, categoryExpenses };
   });
+  // Días que quedan del mes en curso — igual para todas las tarjetas, así que
+  // se calcula una sola vez en vez de por categoría.
+  const now = new Date();
+  const daysLeftInMonth = Math.max(0, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate());
 
   return (
     <div className="space-y-4">
@@ -3171,14 +3295,27 @@ function BudgetsView({ fmt }) {
                       style={{ width: `${Math.min(100, pct)}%` }}
                     />
                   </div>
-                  <div className="mt-2 flex items-center justify-between text-xs">
-                    <span className={`font-medium ${over ? "text-red-500" : near ? "text-amber-500" : "text-emerald-600"}`}>{pct}% usado</span>
-                    {over && (
-                      <span className="inline-flex items-center gap-1 text-red-500">
-                        <AlertTriangle size={12} /> Pasaste el límite
-                      </span>
-                    )}
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className={`text-sm font-semibold tabular-nums ${over ? "text-red-500" : near ? "text-amber-500" : "text-emerald-600"}`}>{pct}%</p>
+                      <p className="text-[11px] text-slate-400">usado</p>
+                    </div>
+                    <div>
+                      <p className={`text-sm font-semibold tabular-nums ${over ? "text-red-500" : "text-slate-700 dark:text-slate-200"}`}>
+                        {fmt(Math.abs(Number(budget.monthly_amount) - spent))}
+                      </p>
+                      <p className="text-[11px] text-slate-400">{over ? "te pasaste" : "te quedan"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{daysLeftInMonth}</p>
+                      <p className="text-[11px] text-slate-400">{daysLeftInMonth === 1 ? "día restante" : "días restantes"}</p>
+                    </div>
                   </div>
+                  {over && (
+                    <p className="mt-2 flex items-center gap-1 text-xs text-red-500">
+                      <AlertTriangle size={12} /> Pasaste el límite
+                    </p>
+                  )}
                 </>
               )}
               <button
