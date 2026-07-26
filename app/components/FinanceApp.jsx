@@ -182,9 +182,9 @@ async function fetchYearData(year) {
   const allIncomes = [...(incomes || []), ...recurringIncomeEntries];
   const monthsData = MONTHS.map((m, i) => {
     const monthNum = i + 1;
-    const monthIncomes = allIncomes.filter((r) => new Date(r.date).getMonth() + 1 === monthNum);
-    const monthExpenses = allExpenses.filter((r) => new Date(r.date).getMonth() + 1 === monthNum);
-    const monthSavings = (savings || []).filter((r) => new Date(r.date).getMonth() + 1 === monthNum);
+    const monthIncomes = allIncomes.filter((r) => dateStringMonth(r.date) === monthNum);
+    const monthExpenses = allExpenses.filter((r) => dateStringMonth(r.date) === monthNum);
+    const monthSavings = (savings || []).filter((r) => dateStringMonth(r.date) === monthNum);
     const ingresoTotal = monthIncomes.reduce((a, r) => a + Number(r.amount), 0);
     const gastoTotal = monthExpenses.reduce((a, r) => a + Number(r.amount), 0);
     const ahorroTotal = monthSavings.reduce((a, r) => a + Number(r.amount), 0);
@@ -257,6 +257,29 @@ function sortCategories(cats) {
   };
   return [...cats].sort((a, b) => rank(a.name) - rank(b.name));
 }
+// Sacan año/mes de un string de fecha "YYYY-MM-DD" (lo que guarda Supabase
+// en las columnas de fecha) sin pasar nunca por un objeto Date. Hacerlo con
+// `new Date(str).getMonth()` es una trampa clásica de JavaScript: un string
+// de solo fecha se interpreta como medianoche UTC, y getMonth()/getDate()/
+// getFullYear() la convierten después a la hora LOCAL del navegador — en
+// Costa Rica (UTC-6) eso resta 6 horas y empuja la fecha un día atrás, así
+// que un ahorro fechado el 1 de agosto terminaba contado en julio. Parsear
+// el string directo evita el problema por completo.
+function dateStringYear(dateStr) {
+  return Number(String(dateStr).slice(0, 4));
+}
+function dateStringMonth(dateStr) {
+  // 1-12
+  return Number(String(dateStr).slice(5, 7));
+}
+// Fecha de HOY en el calendario LOCAL (no UTC) como "YYYY-MM-DD". Evita el
+// mismo problema pero al revés: `new Date().toISOString()` convierte la
+// hora actual a UTC antes de cortarla, así que en la noche (hora de Costa
+// Rica) ya cuenta como el día siguiente en UTC.
+function localDateString(d) {
+  const dt = d || new Date();
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
 function addMonthsToDateString(dateStr, monthsToAdd) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const targetIndex = m - 1 + monthsToAdd;
@@ -301,7 +324,7 @@ function computeCardPaymentDate(purchaseDateStr, cutoffDay, paymentDay) {
 function defaultDateForMonth(month, year) {
   const now = new Date();
   if (month === now.getMonth() && year === now.getFullYear()) {
-    return now.toISOString().slice(0, 10);
+    return localDateString(now);
   }
   return `${year}-${String(month + 1).padStart(2, "0")}-01`;
 }
@@ -1492,7 +1515,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     if (onDataChanged) onDataChanged();
     setDeletingRecurring(null);
   }
-  const monthIncomes = incomes.filter((i) => new Date(i.date).getMonth() === month);
+  const monthIncomes = incomes.filter((i) => dateStringMonth(i.date) - 1 === month);
   const total = monthIncomes.reduce((a, i) => a + Number(i.amount), 0);
   const filteredIncomes = monthIncomes.filter((i) =>
     `${i.type || ""} ${i.description || ""}`.toLowerCase().includes(search.toLowerCase())
@@ -1621,7 +1644,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
 }
 function IncomeModal({ income, onClose, onSaved, defaultDate }) {
   const isEditing = Boolean(income);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const [type, setType] = useState(income?.type || "");
   const [description, setDescription] = useState(income?.description || "");
   const [amount, setAmount] = useState(income ? String(income.amount) : "");
@@ -1636,11 +1659,10 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
     }
     setSaving(true);
     setErrorMsg("");
-    const dateObj = new Date(date);
     if (isEditing) {
       const { error } = await supabase.from("incomes").update({
-        year: dateObj.getFullYear(),
-        month: dateObj.getMonth() + 1,
+        year: dateStringYear(date),
+        month: dateStringMonth(date),
         type,
         description,
         amount: Number(amount),
@@ -1659,8 +1681,8 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
     const userId = userData?.user?.id;
     const { error } = await supabase.from("incomes").insert({
       user_id: userId || null,
-      year: dateObj.getFullYear(),
-      month: dateObj.getMonth() + 1,
+      year: dateStringYear(date),
+      month: dateStringMonth(date),
       type,
       description,
       amount: Number(amount),
@@ -1729,7 +1751,7 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
 }
 function RecurringIncomeModal({ item, onClose, onSaved }) {
   const isEditing = Boolean(item);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const [type, setType] = useState(item?.type || "");
   const [description, setDescription] = useState(item?.description || "");
   const [amount, setAmount] = useState(item ? String(item.amount) : "");
@@ -1964,7 +1986,7 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
     setCards((prev) => prev.filter((c) => c.id !== id));
     refetchExpenses();
   }
-  const monthExpenses = expenses.filter((e) => new Date(e.date).getMonth() === month);
+  const monthExpenses = expenses.filter((e) => dateStringMonth(e.date) - 1 === month);
   const total = monthExpenses.reduce((a, e) => a + Number(e.amount), 0);
   const categoriasDisponibles = [...new Set(monthExpenses.map((e) => e.categories?.name).filter(Boolean))];
   const filteredExpenses = monthExpenses.filter((e) =>
@@ -2244,7 +2266,7 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
 function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDate }) {
   const cardsList = cards || [];
   const isEditing = Boolean(expense);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const [categoryId, setCategoryId] = useState(expense?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(expense?.description || "");
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
@@ -2540,7 +2562,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
 function PlanModal({ categories, cards, plan, onClose, onSaved }) {
   const cardsList = cards || [];
   const isEditing = Boolean(plan);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const [categoryId, setCategoryId] = useState(plan?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(plan?.description || "");
   const [monthlyAmount, setMonthlyAmount] = useState(plan ? String(plan.monthly_amount) : "");
@@ -2692,7 +2714,7 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
 }
 function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
   const isEditing = Boolean(item);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const [categoryId, setCategoryId] = useState(item?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(item?.description || "");
   const [amount, setAmount] = useState(item ? String(item.amount) : "");
@@ -2957,7 +2979,7 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
     if (onDataChanged) onDataChanged();
     setDeletingSaving(null);
   }
-  const monthSavings = savings.filter((s) => new Date(s.date).getMonth() === month);
+  const monthSavings = savings.filter((s) => dateStringMonth(s.date) - 1 === month);
   const total = monthSavings.reduce((a, s) => a + Number(s.amount), 0);
   const filteredSavings = monthSavings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
   const totalsByType = SAVINGS_TYPES.map((t) => {
@@ -3081,7 +3103,7 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
   const monthlyTotals = MONTHS.map((m, i) => {
     const monthNum = i + 1;
     const monthTotal = type.items
-      .filter((s) => new Date(s.date).getMonth() + 1 === monthNum)
+      .filter((s) => dateStringMonth(s.date) === monthNum)
       .reduce((a, s) => a + Number(s.amount), 0);
     return { mes: m, total: monthTotal };
   });
@@ -3136,7 +3158,7 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
 }
 function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDate }) {
   const isEditing = Boolean(savingRecord);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateString();
   const [type, setType] = useState(savingRecord?.type || "libre");
   const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
@@ -3151,7 +3173,6 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
     }
     setSaving(true);
     setErrorMsg("");
-    const dateObj = new Date(date);
     const newGoalId = goalId || null;
     const newAmount = Number(amount);
     if (isEditing) {
@@ -3160,8 +3181,8 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
         goal_id: newGoalId,
         amount: newAmount,
         date,
-        year: dateObj.getFullYear(),
-        month: dateObj.getMonth() + 1,
+        year: dateStringYear(date),
+        month: dateStringMonth(date),
       }).eq("id", savingRecord.id);
       if (!error) {
         const oldGoalId = savingRecord.goal_id || null;
@@ -3190,8 +3211,8 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
       goal_id: newGoalId,
       amount: newAmount,
       date,
-      year: dateObj.getFullYear(),
-      month: dateObj.getMonth() + 1,
+      year: dateStringYear(date),
+      month: dateStringMonth(date),
     });
     if (!error && newGoalId) await adjustGoalAmount(newGoalId, newAmount);
     setSaving(false);
@@ -3293,8 +3314,7 @@ function BudgetsView({ fmt, year, month }) {
     if (expError) console.error("Error cargando gastos del mes:", expError.message);
     const thisMonth = (exps || []).filter((e) => {
       const effective = e.purchase_date || e.date;
-      const d = new Date(effective);
-      return d.getFullYear() === year && d.getMonth() + 1 === month + 1;
+      return dateStringYear(effective) === year && dateStringMonth(effective) === month + 1;
     });
     setCategories(cats || []);
     setBudgets(buds || []);
