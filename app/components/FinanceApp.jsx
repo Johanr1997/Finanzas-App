@@ -269,21 +269,34 @@ function planAnchorDate(plan) {
   }
   return plan.start_date;
 }
-// Cuántas cuotas de un plan de pago ya se cumplieron a la fecha de hoy.
+// Cuántas cuotas de un plan de pago ya se cumplieron a una fecha de
+// referencia. Por defecto usa la fecha real de hoy (así se sigue calculando
+// el checklist de cuotas realmente pagadas, en "Ver cuotas"). Si se pasan
+// refYear/refMonth (0-indexed, igual que Date.getMonth()), se usa esa fecha
+// en su lugar — así, en la lista de Gastos, el número de cuota puede seguir
+// el mes que se está viendo con las flechitas en vez de la fecha real de hoy.
 // 0 = aún no empieza a correr ninguna cuota completa; clamp a total_months.
-function planElapsedMonths(plan) {
+function planElapsedMonths(plan, refYear, refMonth) {
   const [sy, sm] = planAnchorDate(plan).split("-").map(Number);
-  const now = new Date();
-  let elapsed = (now.getFullYear() - sy) * 12 + (now.getMonth() + 1 - sm);
+  let ry, rm;
+  if (refYear != null && refMonth != null) {
+    ry = refYear;
+    rm = refMonth + 1;
+  } else {
+    const now = new Date();
+    ry = now.getFullYear();
+    rm = now.getMonth() + 1;
+  }
+  let elapsed = (ry - sy) * 12 + (rm - sm);
   if (elapsed < 0) elapsed = 0;
   const total = Number(plan.total_months) || 0;
   if (elapsed > total) elapsed = total;
   return elapsed;
 }
 // Número de cuota actual (1-indexed), sin pasarse del total.
-function planCurrentCuota(plan) {
+function planCurrentCuota(plan, refYear, refMonth) {
   const total = Number(plan.total_months) || 0;
-  const elapsed = planElapsedMonths(plan);
+  const elapsed = planElapsedMonths(plan, refYear, refMonth);
   return Math.min(elapsed + 1, total);
 }
 // Monto total del préstamo/plan (todas las cuotas).
@@ -299,8 +312,8 @@ function planUnpaidCount(overrides, planId) {
 // Saldo pendiente: el cálculo automático por fecha sigue igual (cuántas
 // cuotas ya "tocaba" pagar), y a eso se le resta lo marcado manualmente
 // como no pagado en el checklist de cuotas.
-function planSaldoPendiente(plan, overrides) {
-  const elapsed = planElapsedMonths(plan);
+function planSaldoPendiente(plan, overrides, refYear, refMonth) {
+  const elapsed = planElapsedMonths(plan, refYear, refMonth);
   const unpaid = planUnpaidCount(overrides, plan.id);
   const paidCount = Math.max(0, elapsed - unpaid);
   const total = Number(plan.total_months) || 0;
@@ -472,7 +485,7 @@ function MonthNavBar({ month, year, onPrev, onNext }) {
       >
         <ChevronLeft size={15} />
       </button>
-      <span className="min-w-[104px] text-center text-xs font-medium text-slate-600 dark:text-slate-300">
+      <span className="w-[136px] shrink-0 text-center text-xs font-medium text-slate-600 dark:text-slate-300">
         {MONTHS_FULL[month]} {year}
       </span>
       <button
@@ -1830,18 +1843,18 @@ function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
         <Card className="p-5">
           <Eyebrow>Planes de pago activos</Eyebrow>
           <p className="mt-1 text-xs text-slate-400">
-            Préstamos y compras a plazos. La cuota del mes actual se suma automáticamente a tus gastos, sin llenar esta lista de filas repetidas.
+            Préstamos y compras a plazos. La cuota del mes que estás viendo arriba se suma automáticamente a tus gastos, sin llenar esta lista de filas repetidas.
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {plans.map((p) => {
               const color = p.categories?.color || "#64748B";
               const total = Number(p.total_months) || 0;
-              const cuota = planCurrentCuota(p);
-              const elapsed = planElapsedMonths(p);
+              const cuota = planCurrentCuota(p, year, month);
+              const elapsed = planElapsedMonths(p, year, month);
               const pct = total > 0 ? Math.min(100, Math.round((elapsed / total) * 100)) : 0;
               const finished = elapsed >= total;
               const unpaid = planUnpaidCount(paymentOverrides, p.id);
-              const saldoPendiente = planSaldoPendiente(p, paymentOverrides);
+              const saldoPendiente = planSaldoPendiente(p, paymentOverrides, year, month);
               return (
                 <div key={p.id} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
                   <div className="flex items-start justify-between gap-2">
