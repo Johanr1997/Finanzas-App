@@ -63,7 +63,7 @@ const CURRENCIES = {
 // partir de todas las filas de "budgets" de una categoría, esto resuelve
 // cuál aplica de verdad para el año/mes pedido: el específico gana si
 // existe; si no, se usa el de por defecto. Se comparte entre Presupuestos y
-// el resumen de Resumen para no repetir esta lógica dos veces. (Se usa 0 en
+// los consejos del detalle mensual para no repetir esta lógica dos veces. (Se usa 0 en
 // vez de null para year/month porque así el UNIQUE + upsert de Supabase es
 // trivial — con null, dos presupuestos "por defecto" de la misma categoría
 // no chocarían entre sí en la base de datos.)
@@ -434,8 +434,7 @@ function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
 }
 // Tarjetita compacta para el resumen "de un vistazo" del mes (Resumen). A
 // diferencia de StatCard (pensada para un solo número grande), esta admite
-// una segunda línea de contexto ("sub"), por eso se usa para cosas como
-// "Meta más cercana" o "Próximo pago" que no son solo un monto.
+// una segunda línea de contexto opcional ("sub").
 function MiniStat({ label, value, sub, tone = "slate" }) {
   const toneClasses = {
     slate: "text-slate-900 dark:text-white",
@@ -567,44 +566,6 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
       setGoals(data || []);
     });
   }, []);
-  // Cumplimiento del presupuesto del mes real actual (no del año/mes que se
-  // esté viendo aquí) — se trae aparte de yearData porque necesita cruzar
-  // presupuestos por categoría con los gastos de este mes, igual que hace
-  // BudgetsView, para dar un solo número de "qué tan bien vas" en Resumen.
-  const [budgetSummary, setBudgetSummary] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchBudgetSummary() {
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = now.getMonth() + 1;
-      const [{ data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
-        supabase.from("budgets").select("*"),
-        supabase.from("expenses").select("amount, category_id, date, purchase_date"),
-      ]);
-      if (budError) console.error("Error cargando presupuestos:", budError.message);
-      if (expError) console.error("Error cargando gastos para presupuesto:", expError.message);
-      // Cada categoría puede tener un presupuesto "de siempre" y uno especial
-      // para este mes puntual — resolver cuál aplica de verdad para no
-      // contar dos veces la misma categoría.
-      const effective = resolveEffectiveBudgets(buds, y, m);
-      const budgetedIds = new Set(Object.keys(effective));
-      const totalBudgeted = Object.values(effective).reduce((a, { row }) => a + Number(row.monthly_amount), 0);
-      const totalSpent = (exps || [])
-        .filter((e) => budgetedIds.has(String(e.category_id)))
-        .filter((e) => {
-          const eff = e.purchase_date || e.date;
-          const d = new Date(eff);
-          return d.getFullYear() === y && d.getMonth() + 1 === m;
-        })
-        .reduce((a, e) => a + Number(e.amount), 0);
-      if (!cancelled) {
-        setBudgetSummary(totalBudgeted > 0 ? { pct: Math.round((totalSpent / totalBudgeted) * 100), spent: totalSpent, budgeted: totalBudgeted } : null);
-      }
-    }
-    fetchBudgetSummary();
-    return () => { cancelled = true; };
-  }, []);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -661,31 +622,6 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
   } else if (currentMonth.ahorroTotal > 0) {
     headline = `${isCurrentYear ? "Este mes empezaste a ahorrar" : `En ${currentMonth.mesFull.toLowerCase()} empezaste a ahorrar`}: ${fmt(currentMonth.ahorroTotal)}.`;
   }
-  // La meta que está más cerca de completarse: mayor % de avance, pero SOLO
-  // entre las que ya tienen algún aporte real (pct > 0) — una meta en 0% no
-  // está "cerca" de nada, así que no califica aunque sea la única que existe.
-  const closestGoal = useMemo(() => {
-    const withProgress = goals
-      .filter((g) => Number(g.target_amount) > 0)
-      .map((g) => ({ ...g, pct: Math.min(100, Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100)) }))
-      .filter((g) => g.pct > 0 && g.pct < 100);
-    if (withProgress.length === 0) return null;
-    return withProgress.sort((a, b) => b.pct - a.pct)[0];
-  }, [goals]);
-  const goalsAllComplete = goals.length > 0 && goals.every((g) => Number(g.target_amount) > 0 && Number(g.current_amount) >= Number(g.target_amount));
-  // El próximo compromiso programado (cuota de un plan de pago o gasto
-  // fijo) con fecha de hoy en adelante, buscando entre lo ya sintetizado en
-  // yearData. Solo tiene sentido si se está viendo el año real actual — si
-  // se navegó a otro año, no hay un "hoy" dentro de ese año.
-  const proximoPago = useMemo(() => {
-    if (!isCurrentYear) return null;
-    const todayStr = now.toISOString().slice(0, 10);
-    const upcoming = yearData
-      .flatMap((m) => m.gastos)
-      .filter((g) => (String(g.id).startsWith("plan-") || String(g.id).startsWith("recexp-")) && g.fecha >= todayStr)
-      .sort((a, b) => a.fecha.localeCompare(b.fecha));
-    return upcoming[0] || null;
-  }, [yearData, isCurrentYear]);
   return (
     <div className="space-y-6">
       <Card className="p-5">
@@ -696,45 +632,11 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
         {headline && (
           <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{headline}</p>
         )}
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <MiniStat label="Ingresaste este mes" value={fmt(currentMonth.ingresoTotal)} tone="green" />
           <MiniStat label="Gastaste" value={fmt(currentMonth.gastoTotal)} tone="red" />
           <MiniStat label="Ahorraste" value={fmt(currentMonth.ahorroTotal)} tone="blue" />
           <MiniStat label="Te quedan" value={fmt(currentMonth.balance)} tone={currentMonth.balance >= 0 ? "green" : "red"} />
-          <MiniStat
-            label="Cumplimiento del presupuesto"
-            value={budgetSummary ? `${budgetSummary.pct}%` : "Sin definir"}
-            sub={
-              !budgetSummary
-                ? "Defínelo en Presupuestos"
-                : budgetSummary.pct >= 100
-                ? `Te pasaste por ${fmt(budgetSummary.spent - budgetSummary.budgeted)}`
-                : budgetSummary.pct >= 80
-                ? `Cuidado, quedan ${fmt(budgetSummary.budgeted - budgetSummary.spent)}`
-                : `Vas bien, quedan ${fmt(budgetSummary.budgeted - budgetSummary.spent)}`
-            }
-            tone={!budgetSummary ? "slate" : budgetSummary.pct >= 100 ? "red" : budgetSummary.pct >= 80 ? "amber" : "green"}
-          />
-          <MiniStat
-            label="Meta más cercana"
-            value={closestGoal ? closestGoal.name : goalsAllComplete ? "¡Completas!" : "—"}
-            sub={
-              closestGoal
-                ? `${closestGoal.pct}% completada`
-                : goals.length === 0
-                ? "Crea una meta para verla aquí"
-                : goalsAllComplete
-                ? "Ya completaste todas tus metas"
-                : "Aún no tienes avance en tus metas"
-            }
-            tone={goalsAllComplete ? "green" : "amber"}
-          />
-          <MiniStat
-            label="Próximo pago"
-            value={proximoPago ? fmt(proximoPago.monto) : "—"}
-            sub={proximoPago ? `${proximoPago.descripcion} · ${proximoPago.fecha}` : "No hay pagos programados próximamente"}
-            tone="slate"
-          />
         </div>
       </Card>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -972,7 +874,7 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
   const m = yearData[index];
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
-  const [tipsOpen, setTipsOpen] = useState(true);
+  const [tipsOpen, setTipsOpen] = useState(false);
   // Presupuestos por nombre de categoría, para poder avisar si este mes se
   // pasó del límite. Un presupuesto puede tener un monto específico para
   // ESTE año/mes (ver Presupuestos → "presupuestos por mes") o usar el monto
