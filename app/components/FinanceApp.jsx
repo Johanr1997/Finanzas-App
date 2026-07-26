@@ -560,17 +560,21 @@ function RowActions({ onEdit, onDelete }) {
     </div>
   );
 }
-// Selector de mes minimalista, pegado al título de la página (junto a "Tus
-// ingresos"/"Tus gastos"/"Tus ahorros"/"Presupuestos"). Reemplaza la barra de
-// flechitas "‹ Mes Año ›" que vivía dentro de cada pestaña — el mes ahora es
-// un solo estado compartido (ver FinanceApp), igual que ya pasa con el año.
+// Selector de mes minimalista, fijo arriba en el encabezado (junto al
+// selector de moneda), no pegado al título de cada pestaña — así se ve
+// siempre en el mismo lugar sin importar en qué pestaña estés, y se siente
+// como un solo control global en vez de algo distinto por pantalla. Solo se
+// muestra en las pestañas que lo usan (Ingresos/Gastos/Ahorros/Presupuestos);
+// el mes es un estado compartido (ver FinanceApp), igual que ya pasa con el
+// año. Reemplaza la barra de flechitas "‹ Mes Año ›" que antes vivía dentro
+// de cada pestaña.
 function MonthTitleSelect({ month, onChange }) {
   return (
     <select
       value={month}
       onChange={(e) => onChange(Number(e.target.value))}
       aria-label="Cambiar de mes"
-      className="rounded-md border-none bg-slate-100 px-2 py-1 text-sm font-medium text-slate-600 outline-none hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
     >
       {MONTHS_FULL.map((m, i) => (
         <option key={m} value={i}>{m}</option>
@@ -3732,9 +3736,10 @@ export default function FinanceApp() {
   const realCurrentYear = new Date().getFullYear();
   const [year, setYear] = useState(realCurrentYear);
   // Mes compartido por Ingresos/Gastos/Ahorros/Presupuestos (0 = enero). Vive
-  // aquí, junto al año, porque ahora se elige directo desde el encabezado
-  // (junto al título "Tus ingresos"/"Tus gastos"/etc.), no con flechitas
-  // dentro de cada pestaña.
+  // aquí, junto al año, y se elige desde un único selector fijo en la parte
+  // de arriba del encabezado (junto a la moneda) — no pegado al título de
+  // cada pestaña, para que se sienta como un control global y no como algo
+  // distinto en cada pantalla.
   const [month, setMonth] = useState(() => new Date().getMonth());
 
   async function loadYearData(y = year) {
@@ -3782,6 +3787,9 @@ export default function FinanceApp() {
               })}
             </div>
             <div className="flex items-center gap-2">
+              {["incomes", "expenses", "savings", "budgets"].includes(tab) && (
+                <MonthTitleSelect month={month} onChange={setMonth} />
+              )}
               <select
                 value={code} onChange={(e) => setCode(e.target.value)}
                 className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium outline-none dark:border-slate-800 dark:bg-slate-900"
@@ -3817,20 +3825,15 @@ export default function FinanceApp() {
         <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
           <div className="mb-5 flex items-center justify-between">
             <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-xl font-semibold">
-                  {tab === "dashboard" && "Resumen del año"}
-                  {tab === "incomes" && "Tus ingresos"}
-                  {tab === "expenses" && "Tus gastos"}
-                  {tab === "budgets" && "Presupuestos"}
-                  {tab === "savings" && "Tus ahorros"}
-                  {tab === "goals" && "Tus metas"}
-                  {tab === "stats" && "Estadísticas"}
-                </h1>
-                {["incomes", "expenses", "savings", "budgets"].includes(tab) && (
-                  <MonthTitleSelect month={month} onChange={setMonth} />
-                )}
-              </div>
+              <h1 className="text-xl font-semibold">
+                {tab === "dashboard" && "Resumen del año"}
+                {tab === "incomes" && "Tus ingresos"}
+                {tab === "expenses" && "Tus gastos"}
+                {tab === "budgets" && "Presupuestos"}
+                {tab === "savings" && "Tus ahorros"}
+                {tab === "goals" && "Tus metas"}
+                {tab === "stats" && "Estadísticas"}
+              </h1>
               {["dashboard", "stats", "incomes", "expenses", "savings", "budgets"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
