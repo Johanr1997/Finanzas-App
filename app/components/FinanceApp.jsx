@@ -2018,6 +2018,68 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
     (catFilter === "Todas" || e.categories?.name === catFilter) &&
     `${e.description || ""} ${e.categories?.name || ""}`.toLowerCase().includes(search.toLowerCase())
   );
+  // Un plan pasa a "Planes pagados" cuando, para el mes que se está viendo
+  // arriba, ya no le queda ninguna cuota pendiente (elapsed >= total_months).
+  // Como esto se calcula contra el mes elegido (no la fecha real de hoy), un
+  // plan puede ir y venir entre las dos listas según el mes que se navegue —
+  // eso es intencional, para que se vea "como estaba" en cualquier momento.
+  const activePlans = plans.filter((p) => planElapsedMonths(p, year, month) < (Number(p.total_months) || 0));
+  const finishedPlans = plans.filter((p) => planElapsedMonths(p, year, month) >= (Number(p.total_months) || 0));
+  function renderPlanCard(p) {
+    const color = p.categories?.color || "#64748B";
+    const total = Number(p.total_months) || 0;
+    const cuota = planCurrentCuota(p, year, month);
+    const elapsed = planElapsedMonths(p, year, month);
+    const pct = total > 0 ? Math.min(100, Math.round((elapsed / total) * 100)) : 0;
+    const finished = elapsed >= total;
+    const unpaid = planUnpaidCount(paymentOverrides, p.id);
+    const saldoPendiente = planSaldoPendiente(p, paymentOverrides, year, month);
+    return (
+      <div key={p.id} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
+              style={{ backgroundColor: `${color}1a`, color }}
+            >
+              <CreditCard size={16} />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-slate-800 dark:text-white">{p.description || p.categories?.name || "Plan de pago"}</p>
+              <p className="text-xs text-slate-400">
+                {p.categories?.name} · {fmt(p.monthly_amount)}/mes
+                {p.credit_cards?.name && ` · ${p.credit_cards.name}`}
+              </p>
+            </div>
+          </div>
+          <RowActions onEdit={() => setEditingPlan(p)} onDelete={() => setDeletingPlan(p)} />
+        </div>
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ease-out ${finished ? "bg-emerald-500" : "bg-blue-500"}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            {finished ? `Plan finalizado · ${total} de ${total} cuotas` : `Cuota ${cuota} de ${total}`}
+          </p>
+          {unpaid > 0 && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-500">
+              <AlertTriangle size={11} /> {unpaid} sin pagar
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-slate-400">Saldo pendiente: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(saldoPendiente)}</span></p>
+        <button
+          onClick={() => setViewingPlanPayments(p)}
+          className="mt-3 w-full rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          Ver cuotas
+        </button>
+      </div>
+    );
+  }
   if (loading) {
     return <p className="text-sm text-slate-400">Cargando gastos...</p>;
   }
@@ -2095,68 +2157,25 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
           </div>
         </Card>
       )}
-      {plans.length > 0 && (
+      {activePlans.length > 0 && (
         <Card className="p-5">
           <Eyebrow>Planes de pago activos</Eyebrow>
           <p className="mt-1 text-xs text-slate-400">
             Préstamos y compras a plazos. La cuota del mes que estás viendo arriba se suma automáticamente a tus gastos, sin llenar esta lista de filas repetidas.
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {plans.map((p) => {
-              const color = p.categories?.color || "#64748B";
-              const total = Number(p.total_months) || 0;
-              const cuota = planCurrentCuota(p, year, month);
-              const elapsed = planElapsedMonths(p, year, month);
-              const pct = total > 0 ? Math.min(100, Math.round((elapsed / total) * 100)) : 0;
-              const finished = elapsed >= total;
-              const unpaid = planUnpaidCount(paymentOverrides, p.id);
-              const saldoPendiente = planSaldoPendiente(p, paymentOverrides, year, month);
-              return (
-                <div key={p.id} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
-                        style={{ backgroundColor: `${color}1a`, color }}
-                      >
-                        <CreditCard size={16} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-800 dark:text-white">{p.description || p.categories?.name || "Plan de pago"}</p>
-                        <p className="text-xs text-slate-400">
-                          {p.categories?.name} · {fmt(p.monthly_amount)}/mes
-                          {p.credit_cards?.name && ` · ${p.credit_cards.name}`}
-                        </p>
-                      </div>
-                    </div>
-                    <RowActions onEdit={() => setEditingPlan(p)} onDelete={() => setDeletingPlan(p)} />
-                  </div>
-                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ease-out ${finished ? "bg-emerald-500" : "bg-blue-500"}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                      {finished ? `Plan finalizado · ${total} de ${total} cuotas` : `Cuota ${cuota} de ${total}`}
-                    </p>
-                    {unpaid > 0 && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-500">
-                        <AlertTriangle size={11} /> {unpaid} sin pagar
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-400">Saldo pendiente: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(saldoPendiente)}</span></p>
-                  <button
-                    onClick={() => setViewingPlanPayments(p)}
-                    className="mt-3 w-full rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                  >
-                    Ver cuotas
-                  </button>
-                </div>
-              );
-            })}
+            {activePlans.map(renderPlanCard)}
+          </div>
+        </Card>
+      )}
+      {finishedPlans.length > 0 && (
+        <Card className="p-5">
+          <Eyebrow>Planes pagados</Eyebrow>
+          <p className="mt-1 text-xs text-slate-400">
+            Ya no les queda ninguna cuota pendiente en {MONTHS_FULL[month]} {year}. Puedes eliminarlos de tu lista cuando quieras.
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {finishedPlans.map(renderPlanCard)}
           </div>
         </Card>
       )}
