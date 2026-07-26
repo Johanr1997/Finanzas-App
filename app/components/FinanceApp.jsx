@@ -545,6 +545,9 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
             );
           })}
         </div>
+        <div className="mt-4">
+          <AnnualTable fmt={fmt} onSelectMonth={onSelectMonth} yearData={yearData} />
+        </div>
       </Card>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-5">
@@ -3323,7 +3326,6 @@ function StatsView({ fmt, yearData }) {
 ------------------------------------------------------------------ */
 const TABS = [
   { id: "dashboard", label: "Resumen", icon: Wallet },
-  { id: "annual", label: "Vista anual", icon: Calendar },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
   { id: "budgets", label: "Presupuestos", icon: Coins },
@@ -3421,7 +3423,6 @@ export default function FinanceApp() {
             <div>
               <h1 className="text-xl font-semibold">
                 {tab === "dashboard" && "Resumen del año"}
-                {tab === "annual" && "Vista anual"}
                 {tab === "incomes" && "Tus ingresos"}
                 {tab === "expenses" && "Tus gastos"}
                 {tab === "budgets" && "Presupuestos"}
@@ -3429,7 +3430,7 @@ export default function FinanceApp() {
                 {tab === "goals" && "Tus metas"}
                 {tab === "stats" && "Estadísticas"}
               </h1>
-              {["dashboard", "annual", "stats", "incomes", "expenses", "savings"].includes(tab) ? (
+              {["dashboard", "stats", "incomes", "expenses", "savings"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => setYear((y) => y - 1)}
@@ -3459,7 +3460,6 @@ export default function FinanceApp() {
           ) : (
             <>
               {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} />}
-              {tab === "annual" && <AnnualTable fmt={format} onSelectMonth={openMonth} yearData={yearData} />}
               {tab === "stats" && <StatsView fmt={format} yearData={yearData} />}
             </>
           )}
