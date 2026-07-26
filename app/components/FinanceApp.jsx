@@ -18,6 +18,10 @@ import { supabase } from "../../lib/supabase";
 ------------------------------------------------------------------ */
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MONTHS_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+// Cuántos años hacia el futuro se puede navegar desde Resumen/Ingresos/Gastos/
+// Ahorros/Estadísticas — para ver de antemano ingresos fijos, gastos fijos y
+// planes de pago que ya están programados para esos años.
+const MAX_FUTURE_YEARS = 10;
 const CATEGORY_META = {
   Vivienda: { icon: Home, color: "#EF4444" },
   Alimentación: { icon: Utensils, color: "#F97316" },
@@ -438,6 +442,34 @@ function RowActions({ onEdit, onDelete }) {
         className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-400"
       >
         <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
+// Barra "‹ Mes Año ›" para moverse un mes a la vez dentro de Ingresos, Gastos
+// y Ahorros. Al pasar de Enero hacia atrás o de Diciembre hacia adelante,
+// onPrev/onNext ya se encargan de cambiar también el año (ver onYearChange).
+function MonthNavBar({ month, year, onPrev, onNext }) {
+  return (
+    <div className="flex items-center gap-1 rounded-lg border border-slate-200 px-1 py-1 dark:border-slate-700">
+      <button
+        type="button"
+        onClick={onPrev}
+        aria-label="Mes anterior"
+        className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+      >
+        <ChevronLeft size={15} />
+      </button>
+      <span className="min-w-[104px] text-center text-xs font-medium text-slate-600 dark:text-slate-300">
+        {MONTHS_FULL[month]} {year}
+      </span>
+      <button
+        type="button"
+        onClick={onNext}
+        aria-label="Mes siguiente"
+        className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+      >
+        <ChevronRight size={15} />
       </button>
     </div>
   );
@@ -1156,7 +1188,7 @@ function GoalModal({ goal, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    INGRESOS
 ------------------------------------------------------------------ */
-function IncomesView({ fmt, onDataChanged, year }) {
+function IncomesView({ fmt, onDataChanged, year, onYearChange }) {
   const [incomes, setIncomes] = useState([]);
   const [recurring, setRecurring] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1167,6 +1199,13 @@ function IncomesView({ fmt, onDataChanged, year }) {
   const [editingRecurring, setEditingRecurring] = useState(null);
   const [deletingRecurring, setDeletingRecurring] = useState(null);
   const [search, setSearch] = useState("");
+  const [month, setMonth] = useState(() => new Date().getMonth());
+  function handlePrevMonth() {
+    if (month === 0) { onYearChange(year - 1); setMonth(11); } else { setMonth((m) => m - 1); }
+  }
+  function handleNextMonth() {
+    if (month === 11) { onYearChange(year + 1); setMonth(0); } else { setMonth((m) => m + 1); }
+  }
   async function refetchIncomes() {
     const { data } = await supabase.from("incomes").select("*")
       .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
@@ -1210,8 +1249,9 @@ function IncomesView({ fmt, onDataChanged, year }) {
     if (onDataChanged) onDataChanged();
     setDeletingRecurring(null);
   }
-  const total = incomes.reduce((a, i) => a + Number(i.amount), 0);
-  const filteredIncomes = incomes.filter((i) =>
+  const monthIncomes = incomes.filter((i) => new Date(i.date).getMonth() === month);
+  const total = monthIncomes.reduce((a, i) => a + Number(i.amount), 0);
+  const filteredIncomes = monthIncomes.filter((i) =>
     `${i.type || ""} ${i.description || ""}`.toLowerCase().includes(search.toLowerCase())
   );
   if (loading) {
@@ -1221,10 +1261,11 @@ function IncomesView({ fmt, onDataChanged, year }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total de ingresos en {year}</Eyebrow>
+          <Eyebrow>Total de ingresos en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <MonthNavBar month={month} year={year} onPrev={handlePrevMonth} onNext={handleNextMonth} />
           <button
             onClick={() => exportToCSV("ingresos.csv", filteredIncomes.map((i) => ({ Tipo: i.type, Descripcion: i.description || "", Monto: i.amount, Fecha: i.date })))}
             disabled={filteredIncomes.length === 0}
@@ -1300,7 +1341,7 @@ function IncomesView({ fmt, onDataChanged, year }) {
           ))}
           {filteredIncomes.length === 0 && (
             <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {incomes.length === 0 ? `Aún no has registrado ingresos en ${year}.` : "Sin resultados para tu búsqueda."}
+              {monthIncomes.length === 0 ? `Aún no has registrado ingresos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
             </p>
           )}
         </div>
@@ -1564,7 +1605,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    GASTOS
 ------------------------------------------------------------------ */
-function ExpensesView({ fmt, onDataChanged, year }) {
+function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -1585,6 +1626,13 @@ function ExpensesView({ fmt, onDataChanged, year }) {
   const [showCardsManager, setShowCardsManager] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
+  const [month, setMonth] = useState(() => new Date().getMonth());
+  function handlePrevMonth() {
+    if (month === 0) { onYearChange(year - 1); setMonth(11); } else { setMonth((m) => m - 1); }
+  }
+  function handleNextMonth() {
+    if (month === 11) { onYearChange(year + 1); setMonth(0); } else { setMonth((m) => m + 1); }
+  }
   async function refetchExpenses() {
     const { data } = await supabase
       .from("expenses")
@@ -1681,9 +1729,10 @@ function ExpensesView({ fmt, onDataChanged, year }) {
     setCards((prev) => prev.filter((c) => c.id !== id));
     refetchExpenses();
   }
-  const total = expenses.reduce((a, e) => a + Number(e.amount), 0);
-  const categoriasDisponibles = [...new Set(expenses.map((e) => e.categories?.name).filter(Boolean))];
-  const filteredExpenses = expenses.filter((e) =>
+  const monthExpenses = expenses.filter((e) => new Date(e.date).getMonth() === month);
+  const total = monthExpenses.reduce((a, e) => a + Number(e.amount), 0);
+  const categoriasDisponibles = [...new Set(monthExpenses.map((e) => e.categories?.name).filter(Boolean))];
+  const filteredExpenses = monthExpenses.filter((e) =>
     (catFilter === "Todas" || e.categories?.name === catFilter) &&
     `${e.description || ""} ${e.categories?.name || ""}`.toLowerCase().includes(search.toLowerCase())
   );
@@ -1694,10 +1743,11 @@ function ExpensesView({ fmt, onDataChanged, year }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total de gastos en {year}</Eyebrow>
+          <Eyebrow>Total de gastos en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <MonthNavBar month={month} year={year} onPrev={handlePrevMonth} onNext={handleNextMonth} />
           <button
             onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date, FechaCompra: e.purchase_date || "", Tarjeta: e.credit_cards?.name || "" })))}
             disabled={filteredExpenses.length === 0}
@@ -1873,7 +1923,7 @@ function ExpensesView({ fmt, onDataChanged, year }) {
           ))}
           {filteredExpenses.length === 0 && (
             <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {expenses.length === 0 ? "Aún no has registrado gastos." : "Sin resultados para tu búsqueda."}
+              {monthExpenses.length === 0 ? `Aún no has registrado gastos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
             </p>
           )}
         </div>
@@ -2630,7 +2680,7 @@ const SAVINGS_TYPES = [
   { value: "inversiones", label: "Inversiones" },
   { value: "libre", label: "Ahorro libre" },
 ];
-function SavingsView({ fmt, onDataChanged, year }) {
+function SavingsView({ fmt, onDataChanged, year, onYearChange }) {
   const [savings, setSavings] = useState([]);
   const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2639,6 +2689,13 @@ function SavingsView({ fmt, onDataChanged, year }) {
   const [deletingSaving, setDeletingSaving] = useState(null);
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [viewingTypeReport, setViewingTypeReport] = useState(null);
+  const [month, setMonth] = useState(() => new Date().getMonth());
+  function handlePrevMonth() {
+    if (month === 0) { onYearChange(year - 1); setMonth(11); } else { setMonth((m) => m - 1); }
+  }
+  function handleNextMonth() {
+    if (month === 11) { onYearChange(year + 1); setMonth(0); } else { setMonth((m) => m + 1); }
+  }
   async function refetchSavings() {
     const { data } = await supabase
       .from("savings")
@@ -2673,8 +2730,9 @@ function SavingsView({ fmt, onDataChanged, year }) {
     if (onDataChanged) onDataChanged();
     setDeletingSaving(null);
   }
-  const total = savings.reduce((a, s) => a + Number(s.amount), 0);
-  const filteredSavings = savings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
+  const monthSavings = savings.filter((s) => new Date(s.date).getMonth() === month);
+  const total = monthSavings.reduce((a, s) => a + Number(s.amount), 0);
+  const filteredSavings = monthSavings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
   const totalsByType = SAVINGS_TYPES.map((t) => {
     const items = savings.filter((s) => s.type === t.value);
     return { ...t, items, total: items.reduce((a, s) => a + Number(s.amount), 0) };
@@ -2686,10 +2744,11 @@ function SavingsView({ fmt, onDataChanged, year }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total ahorrado en {year}</Eyebrow>
+          <Eyebrow>Total ahorrado en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-blue-500">{fmt(total)}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <MonthNavBar month={month} year={year} onPrev={handlePrevMonth} onNext={handleNextMonth} />
           <button
             onClick={() => exportToCSV("ahorros.csv", filteredSavings.map((s) => ({ Tipo: SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type, Meta: s.goals?.name || "", Monto: s.amount, Fecha: s.date })))}
             disabled={filteredSavings.length === 0}
@@ -2757,7 +2816,7 @@ function SavingsView({ fmt, onDataChanged, year }) {
           })}
           {filteredSavings.length === 0 && (
             <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {savings.length === 0 ? `Aún no has registrado ahorros en ${year}.` : "No hay ahorros de este tipo."}
+              {monthSavings.length === 0 ? `Aún no has registrado ahorros en ${MONTHS_FULL[month]} ${year}.` : "No hay ahorros de este tipo."}
             </p>
           )}
         </div>
@@ -3357,6 +3416,10 @@ export default function FinanceApp() {
   }
   const openMonth = (i) => setMonthOpen(i);
   const navMonth = (delta) => setMonthOpen((i) => Math.min(11, Math.max(0, i + delta)));
+  // Compartido entre las flechitas de año del header y la navegación mes a
+  // mes de Ingresos/Gastos/Ahorros (cuando esa navegación cruza de Diciembre
+  // a Enero o viceversa, también cambia el año).
+  const goToYear = (y) => setYear(Math.min(realCurrentYear + MAX_FUTURE_YEARS, y));
   return (
     <div>
       <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-[#0B1220] dark:text-slate-100">
@@ -3433,7 +3496,7 @@ export default function FinanceApp() {
               {["dashboard", "stats", "incomes", "expenses", "savings"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
-                    onClick={() => setYear((y) => y - 1)}
+                    onClick={() => goToYear(year - 1)}
                     className="rounded-md p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800"
                     aria-label="Año anterior"
                   >
@@ -3441,8 +3504,8 @@ export default function FinanceApp() {
                   </button>
                   <span className="tabular-nums font-medium text-slate-600 dark:text-slate-300">{year}</span>
                   <button
-                    onClick={() => setYear((y) => Math.min(realCurrentYear, y + 1))}
-                    disabled={year >= realCurrentYear}
+                    onClick={() => goToYear(year + 1)}
+                    disabled={year >= realCurrentYear + MAX_FUTURE_YEARS}
                     className="rounded-md p-0.5 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
                     aria-label="Año siguiente"
                   >
@@ -3463,10 +3526,10 @@ export default function FinanceApp() {
               {tab === "stats" && <StatsView fmt={format} yearData={yearData} />}
             </>
           )}
-          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} />}
-          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} />}
+          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} onYearChange={goToYear} />}
+          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} onYearChange={goToYear} />}
           {tab === "budgets" && <BudgetsView fmt={format} />}
-          {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} />}
+          {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} onYearChange={goToYear} />}
           {tab === "goals" && <GoalsView fmt={format} />}
         </main>
         {monthOpen !== null && yearData && (
