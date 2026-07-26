@@ -58,6 +58,36 @@ const CURRENCIES = {
   USD: { symbol: "$", rate: 1 / 520, locale: "en-US" },
   EUR: { symbol: "€", rate: 1 / 560, locale: "es-ES" },
 };
+// Un presupuesto puede ser "por defecto" (year=0, month=0 → aplica a todos
+// los meses) o "específico" de un mes puntual (year real, month 1-12). A
+// partir de todas las filas de "budgets" de una categoría, esto resuelve
+// cuál aplica de verdad para el año/mes pedido: el específico gana si
+// existe; si no, se usa el de por defecto. Se comparte entre Presupuestos y
+// el resumen de Resumen para no repetir esta lógica dos veces. (Se usa 0 en
+// vez de null para year/month porque así el UNIQUE + upsert de Supabase es
+// trivial — con null, dos presupuestos "por defecto" de la misma categoría
+// no chocarían entre sí en la base de datos.)
+function resolveEffectiveBudgets(allBudgets, year, month1to12) {
+  const byCategory = {};
+  (allBudgets || []).forEach((b) => {
+    const by = Number(b.year) || 0;
+    const bm = Number(b.month) || 0;
+    const isDefault = by === 0 && bm === 0;
+    const isSpecific = by === year && bm === month1to12;
+    if (!isDefault && !isSpecific) return;
+    const entry = byCategory[b.category_id] || {};
+    if (isDefault) entry.default = b;
+    if (isSpecific) entry.specific = b;
+    byCategory[b.category_id] = entry;
+  });
+  const result = {};
+  Object.entries(byCategory).forEach(([catId, entry]) => {
+    result[catId] = entry.specific
+      ? { row: entry.specific, isOverride: true }
+      : { row: entry.default, isOverride: false };
+  });
+  return result;
+}
 /* ---------------------------------------------------------------
    DATOS REALES — agrupa incomes/expenses/savings por mes
 ------------------------------------------------------------------ */
@@ -508,32 +538,22 @@ function RowActions({ onEdit, onDelete }) {
     </div>
   );
 }
-// Barra "‹ Mes Año ›" para moverse un mes a la vez dentro de Ingresos, Gastos
-// y Ahorros. Al pasar de Enero hacia atrás o de Diciembre hacia adelante,
-// onPrev/onNext ya se encargan de cambiar también el año (ver onYearChange).
-function MonthNavBar({ month, year, onPrev, onNext }) {
+// Selector de mes minimalista, pegado al título de la página (junto a "Tus
+// ingresos"/"Tus gastos"/"Tus ahorros"/"Presupuestos"). Reemplaza la barra de
+// flechitas "‹ Mes Año ›" que vivía dentro de cada pestaña — el mes ahora es
+// un solo estado compartido (ver FinanceApp), igual que ya pasa con el año.
+function MonthTitleSelect({ month, onChange }) {
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-slate-200 px-1 py-1 dark:border-slate-700">
-      <button
-        type="button"
-        onClick={onPrev}
-        aria-label="Mes anterior"
-        className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-      >
-        <ChevronLeft size={15} />
-      </button>
-      <span className="w-[136px] shrink-0 text-center text-xs font-medium text-slate-600 dark:text-slate-300">
-        {MONTHS_FULL[month]} {year}
-      </span>
-      <button
-        type="button"
-        onClick={onNext}
-        aria-label="Mes siguiente"
-        className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-      >
-        <ChevronRight size={15} />
-      </button>
-    </div>
+    <select
+      value={month}
+      onChange={(e) => onChange(Number(e.target.value))}
+      aria-label="Cambiar de mes"
+      className="rounded-md border-none bg-slate-100 px-2 py-1 text-sm font-medium text-slate-600 outline-none hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+    >
+      {MONTHS_FULL.map((m, i) => (
+        <option key={m} value={i}>{m}</option>
+      ))}
+    </select>
   );
 }
 /* ---------------------------------------------------------------
@@ -564,10 +584,14 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
       ]);
       if (budError) console.error("Error cargando presupuestos:", budError.message);
       if (expError) console.error("Error cargando gastos para presupuesto:", expError.message);
-      const budgetedIds = new Set((buds || []).map((b) => b.category_id));
-      const totalBudgeted = (buds || []).reduce((a, b) => a + Number(b.monthly_amount), 0);
+      // Cada categoría puede tener un presupuesto "de siempre" y uno especial
+      // para este mes puntual — resolver cuál aplica de verdad para no
+      // contar dos veces la misma categoría.
+      const effective = resolveEffectiveBudgets(buds, y, m);
+      const budgetedIds = new Set(Object.keys(effective));
+      const totalBudgeted = Object.values(effective).reduce((a, { row }) => a + Number(row.monthly_amount), 0);
       const totalSpent = (exps || [])
-        .filter((e) => budgetedIds.has(e.category_id))
+        .filter((e) => budgetedIds.has(String(e.category_id)))
         .filter((e) => {
           const eff = e.purchase_date || e.date;
           const d = new Date(eff);
@@ -637,16 +661,18 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
   } else if (currentMonth.ahorroTotal > 0) {
     headline = `${isCurrentYear ? "Este mes empezaste a ahorrar" : `En ${currentMonth.mesFull.toLowerCase()} empezaste a ahorrar`}: ${fmt(currentMonth.ahorroTotal)}.`;
   }
-  // La meta que está más cerca de completarse (mayor % de avance, sin llegar
-  // al 100%) — para destacar en el resumen cuál va a punto de lograrse.
+  // La meta que está más cerca de completarse: mayor % de avance, pero SOLO
+  // entre las que ya tienen algún aporte real (pct > 0) — una meta en 0% no
+  // está "cerca" de nada, así que no califica aunque sea la única que existe.
   const closestGoal = useMemo(() => {
     const withProgress = goals
       .filter((g) => Number(g.target_amount) > 0)
       .map((g) => ({ ...g, pct: Math.min(100, Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100)) }))
-      .filter((g) => g.pct < 100);
+      .filter((g) => g.pct > 0 && g.pct < 100);
     if (withProgress.length === 0) return null;
     return withProgress.sort((a, b) => b.pct - a.pct)[0];
   }, [goals]);
+  const goalsAllComplete = goals.length > 0 && goals.every((g) => Number(g.target_amount) > 0 && Number(g.current_amount) >= Number(g.target_amount));
   // El próximo compromiso programado (cuota de un plan de pago o gasto
   // fijo) con fecha de hoy en adelante, buscando entre lo ya sintetizado en
   // yearData. Solo tiene sentido si se está viendo el año real actual — si
@@ -678,14 +704,30 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
           <MiniStat
             label="Cumplimiento del presupuesto"
             value={budgetSummary ? `${budgetSummary.pct}%` : "Sin definir"}
-            sub={budgetSummary ? "usado este mes" : "Defínelo en Presupuestos"}
+            sub={
+              !budgetSummary
+                ? "Defínelo en Presupuestos"
+                : budgetSummary.pct >= 100
+                ? `Te pasaste por ${fmt(budgetSummary.spent - budgetSummary.budgeted)}`
+                : budgetSummary.pct >= 80
+                ? `Cuidado, quedan ${fmt(budgetSummary.budgeted - budgetSummary.spent)}`
+                : `Vas bien, quedan ${fmt(budgetSummary.budgeted - budgetSummary.spent)}`
+            }
             tone={!budgetSummary ? "slate" : budgetSummary.pct >= 100 ? "red" : budgetSummary.pct >= 80 ? "amber" : "green"}
           />
           <MiniStat
             label="Meta más cercana"
-            value={closestGoal ? closestGoal.name : "—"}
-            sub={closestGoal ? `${closestGoal.pct}% completada` : "Crea una meta para verla aquí"}
-            tone="amber"
+            value={closestGoal ? closestGoal.name : goalsAllComplete ? "¡Completas!" : "—"}
+            sub={
+              closestGoal
+                ? `${closestGoal.pct}% completada`
+                : goals.length === 0
+                ? "Crea una meta para verla aquí"
+                : goalsAllComplete
+                ? "Ya completaste todas tus metas"
+                : "Aún no tienes avance en tus metas"
+            }
+            tone={goalsAllComplete ? "green" : "amber"}
           />
           <MiniStat
             label="Próximo pago"
@@ -870,6 +912,18 @@ function buildMonthlyTips(month, prevMonth, budgetsByCategoryName, fmt) {
     }
   }
 
+  // Regla general de endeudamiento: las cuotas de planes de pago (préstamos,
+  // compras a plazos) no deberían superar ~35% de los ingresos del mes.
+  if (ingresoTotal > 0) {
+    const deudaTotal = gastos
+      .filter((g) => String(g.id).startsWith("plan-"))
+      .reduce((a, g) => a + g.monto, 0);
+    const deudaPct = Math.round((deudaTotal / ingresoTotal) * 100);
+    if (deudaPct > 35) {
+      tips.push({ level: "red", text: `Tus cuotas de planes de pago representaron el ${deudaPct}% de tus ingresos este mes (regla general: no más de 35%). Evita sumar más deudas por ahora.` });
+    }
+  }
+
   if (ingresoTotal > 0) {
     const necesidadTotal = gastos
       .filter((g) => (CATEGORY_BUDGET_BUCKET[g.categoria] || "gusto") === "necesidad")
@@ -914,14 +968,16 @@ function buildMonthlyTips(month, prevMonth, budgetsByCategoryName, fmt) {
   tips.sort((a, b) => severity[a.level] - severity[b.level]);
   return tips.slice(0, 3);
 }
-function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
+function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
   const m = yearData[index];
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
+  const [tipsOpen, setTipsOpen] = useState(true);
   // Presupuestos por nombre de categoría, para poder avisar si este mes se
-  // pasó del límite. Los presupuestos no guardan historial por mes — se usa
-  // siempre la definición actual, así que para meses ya pasados es una
-  // comparación aproximada (con el límite de hoy), no la que regía en ese momento.
+  // pasó del límite. Un presupuesto puede tener un monto específico para
+  // ESTE año/mes (ver Presupuestos → "presupuestos por mes") o usar el monto
+  // por defecto — se resuelve con resolveEffectiveBudgets, igual que en
+  // Presupuestos, así ambos lados de la app concuerdan.
   const [budgetsByCategoryName, setBudgetsByCategoryName] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -933,16 +989,17 @@ function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
       if (cancelled) return;
       const catNameById = {};
       (cats || []).forEach((c) => { catNameById[c.id] = c.name; });
+      const effective = resolveEffectiveBudgets(buds, year, index + 1);
       const map = {};
-      (buds || []).forEach((b) => {
-        const name = catNameById[b.category_id];
-        if (name) map[name] = Number(b.monthly_amount);
+      Object.entries(effective).forEach(([catId, { row }]) => {
+        const name = catNameById[catId];
+        if (name) map[name] = Number(row.monthly_amount);
       });
       setBudgetsByCategoryName(map);
     }
     fetchBudgets();
     return () => { cancelled = true; };
-  }, []);
+  }, [year, index]);
   const prevMonthData = index > 0 ? yearData[index - 1] : null;
   const tips = useMemo(
     () => buildMonthlyTips(m, prevMonthData, budgetsByCategoryName, fmt),
@@ -986,17 +1043,26 @@ function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
           </div>
           {tips.length > 0 && (
             <div>
-              <div className="mb-2 flex items-center gap-2">
-                <Sparkles size={16} className="text-amber-500" />
-                <Eyebrow>Consejos para este mes</Eyebrow>
-              </div>
-              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {tips.map((t, i) => (
-                  <li key={i} className={`rounded-xl px-4 py-3 text-sm ${tipToneClasses[t.level]}`}>
-                    {t.text}
-                  </li>
-                ))}
-              </ul>
+              <button
+                type="button"
+                onClick={() => setTipsOpen((v) => !v)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg py-1 text-left hover:opacity-80"
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles size={16} className="text-amber-500" />
+                  <Eyebrow>Consejos para este mes</Eyebrow>
+                </span>
+                <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${tipsOpen ? "rotate-90" : ""}`} />
+              </button>
+              {tipsOpen && (
+                <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {tips.map((t, i) => (
+                    <li key={i} className={`rounded-xl px-4 py-3 text-sm ${tipToneClasses[t.level]}`}>
+                      {t.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -1470,7 +1536,7 @@ function GoalModal({ goal, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    INGRESOS
 ------------------------------------------------------------------ */
-function IncomesView({ fmt, onDataChanged, year, onYearChange }) {
+function IncomesView({ fmt, onDataChanged, year, month }) {
   const [incomes, setIncomes] = useState([]);
   const [recurring, setRecurring] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1481,13 +1547,6 @@ function IncomesView({ fmt, onDataChanged, year, onYearChange }) {
   const [editingRecurring, setEditingRecurring] = useState(null);
   const [deletingRecurring, setDeletingRecurring] = useState(null);
   const [search, setSearch] = useState("");
-  const [month, setMonth] = useState(() => new Date().getMonth());
-  function handlePrevMonth() {
-    if (month === 0) { onYearChange(year - 1); setMonth(11); } else { setMonth((m) => m - 1); }
-  }
-  function handleNextMonth() {
-    if (month === 11) { onYearChange(year + 1); setMonth(0); } else { setMonth((m) => m + 1); }
-  }
   async function refetchIncomes() {
     const { data } = await supabase.from("incomes").select("*")
       .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
@@ -1547,7 +1606,6 @@ function IncomesView({ fmt, onDataChanged, year, onYearChange }) {
           <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <MonthNavBar month={month} year={year} onPrev={handlePrevMonth} onNext={handleNextMonth} />
           <button
             onClick={() => exportToCSV("ingresos.csv", filteredIncomes.map((i) => ({ Tipo: i.type, Descripcion: i.description || "", Monto: i.amount, Fecha: i.date })))}
             disabled={filteredIncomes.length === 0}
@@ -1887,7 +1945,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    GASTOS
 ------------------------------------------------------------------ */
-function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
+function ExpensesView({ fmt, onDataChanged, year, month }) {
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -1908,13 +1966,6 @@ function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
   const [showCardsManager, setShowCardsManager] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
-  const [month, setMonth] = useState(() => new Date().getMonth());
-  function handlePrevMonth() {
-    if (month === 0) { onYearChange(year - 1); setMonth(11); } else { setMonth((m) => m - 1); }
-  }
-  function handleNextMonth() {
-    if (month === 11) { onYearChange(year + 1); setMonth(0); } else { setMonth((m) => m + 1); }
-  }
   async function refetchExpenses() {
     const { data } = await supabase
       .from("expenses")
@@ -2029,7 +2080,6 @@ function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
           <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <MonthNavBar month={month} year={year} onPrev={handlePrevMonth} onNext={handleNextMonth} />
           <button
             onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date, FechaCompra: e.purchase_date || "", Tarjeta: e.credit_cards?.name || "" })))}
             disabled={filteredExpenses.length === 0}
@@ -2962,7 +3012,7 @@ const SAVINGS_TYPES = [
   { value: "inversiones", label: "Inversiones" },
   { value: "libre", label: "Ahorro libre" },
 ];
-function SavingsView({ fmt, onDataChanged, year, onYearChange }) {
+function SavingsView({ fmt, onDataChanged, year, month }) {
   const [savings, setSavings] = useState([]);
   const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2971,13 +3021,6 @@ function SavingsView({ fmt, onDataChanged, year, onYearChange }) {
   const [deletingSaving, setDeletingSaving] = useState(null);
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [viewingTypeReport, setViewingTypeReport] = useState(null);
-  const [month, setMonth] = useState(() => new Date().getMonth());
-  function handlePrevMonth() {
-    if (month === 0) { onYearChange(year - 1); setMonth(11); } else { setMonth((m) => m - 1); }
-  }
-  function handleNextMonth() {
-    if (month === 11) { onYearChange(year + 1); setMonth(0); } else { setMonth((m) => m + 1); }
-  }
   async function refetchSavings() {
     const { data } = await supabase
       .from("savings")
@@ -3030,7 +3073,6 @@ function SavingsView({ fmt, onDataChanged, year, onYearChange }) {
           <p className="mt-1 text-2xl font-semibold tabular-nums text-blue-500">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <MonthNavBar month={month} year={year} onPrev={handlePrevMonth} onNext={handleNextMonth} />
           <button
             onClick={() => exportToCSV("ahorros.csv", filteredSavings.map((s) => ({ Tipo: SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type, Meta: s.goals?.name || "", Monto: s.amount, Fecha: s.date })))}
             disabled={filteredSavings.length === 0}
@@ -3324,7 +3366,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
 /* ---------------------------------------------------------------
    PRESUPUESTOS
 ------------------------------------------------------------------ */
-function BudgetsView({ fmt }) {
+function BudgetsView({ fmt, year, month }) {
   const [categories, setCategories] = useState([]);
   const [budgets, setBudgets] = useState([]);
   const [monthExpenses, setMonthExpenses] = useState([]);
@@ -3334,9 +3376,6 @@ function BudgetsView({ fmt }) {
   const [viewingCategoryExpenses, setViewingCategoryExpenses] = useState(null);
 
   async function refetch() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
     const [{ data: cats, error: catError }, { data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
       supabase.from("categories").select("*"),
       supabase.from("budgets").select("*"),
@@ -3353,7 +3392,7 @@ function BudgetsView({ fmt }) {
     const thisMonth = (exps || []).filter((e) => {
       const effective = e.purchase_date || e.date;
       const d = new Date(effective);
-      return d.getFullYear() === year && d.getMonth() + 1 === month;
+      return d.getFullYear() === year && d.getMonth() + 1 === month + 1;
     });
     setCategories(cats || []);
     setBudgets(buds || []);
@@ -3362,7 +3401,8 @@ function BudgetsView({ fmt }) {
   }
   useEffect(() => {
     refetch();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month]);
 
   async function handleDelete(id) {
     const { error } = await supabase.from("budgets").delete().eq("id", id);
@@ -3375,26 +3415,37 @@ function BudgetsView({ fmt }) {
     return <p className="text-sm text-slate-400">Cargando presupuestos...</p>;
   }
 
+  // Presupuestos por mes: cada categoría puede tener un monto "por defecto"
+  // (aplica siempre) y, opcionalmente, uno específico para el mes que se
+  // está viendo, que gana si existe (ver resolveEffectiveBudgets).
+  const effectiveByCategory = resolveEffectiveBudgets(budgets, year, month + 1);
   const rows = categories.map((c) => {
-    const budget = budgets.find((b) => b.category_id === c.id);
+    const entry = effectiveByCategory[c.id] || null;
+    const budget = entry?.row || null;
+    const isOverride = entry?.isOverride || false;
     const categoryExpenses = monthExpenses.filter((e) => e.category_id === c.id);
     const spent = categoryExpenses.reduce((a, e) => a + Number(e.amount), 0);
     const pct = budget ? Math.round((spent / Number(budget.monthly_amount)) * 100) : null;
-    return { category: c, budget, spent, pct, categoryExpenses };
+    return { category: c, budget, isOverride, spent, pct, categoryExpenses };
   });
-  // Días que quedan del mes en curso — igual para todas las tarjetas, así que
-  // se calcula una sola vez en vez de por categoría.
+  // Días que quedan del mes que se está viendo — solo tiene sentido si es el
+  // mes real actual; si es un mes pasado o futuro, se indica en vez de
+  // mostrar un número de días que no significaría nada.
   const now = new Date();
-  const daysLeftInMonth = Math.max(0, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate());
+  const isCurrentRealMonth = year === now.getFullYear() && month === now.getMonth();
+  const isPastMonth = year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth());
+  const daysLeftInMonth = isCurrentRealMonth
+    ? Math.max(0, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate())
+    : null;
 
   return (
     <div className="space-y-4">
       <Card className="p-5">
-        <Eyebrow>Presupuestos del mes actual</Eyebrow>
-        <p className="mt-1 text-sm text-slate-400">Define un límite mensual por categoría y sigue tu progreso en tiempo real.</p>
+        <Eyebrow>Presupuestos de {MONTHS_FULL[month]} {year}</Eyebrow>
+        <p className="mt-1 text-sm text-slate-400">Define un límite mensual por categoría y sigue tu progreso en tiempo real. Puedes usar el mismo monto todos los meses, o uno especial solo para el mes que estás viendo.</p>
       </Card>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {rows.map(({ category, budget, spent, pct, categoryExpenses }) => {
+        {rows.map(({ category, budget, isOverride, spent, pct, categoryExpenses }) => {
           const color = category.color || "#64748B";
           const over = pct !== null && pct >= 100;
           const near = pct !== null && pct >= 80 && pct < 100;
@@ -3410,13 +3461,16 @@ function BudgetsView({ fmt }) {
                     <p className="text-xs text-slate-400">
                       {budget ? `${fmt(spent)} de ${fmt(budget.monthly_amount)}` : "Sin presupuesto definido"}
                     </p>
+                    {budget && isOverride && (
+                      <p className="mt-0.5 text-[11px] font-medium text-amber-500">Especial de {MONTHS_FULL[month]}</p>
+                    )}
                   </div>
                 </div>
                 {budget ? (
-                  <RowActions onEdit={() => setEditingBudget({ category, budget })} onDelete={() => setDeletingBudget(budget)} />
+                  <RowActions onEdit={() => setEditingBudget({ category, budget, isOverride })} onDelete={() => setDeletingBudget({ ...budget, isOverride })} />
                 ) : (
                   <button
-                    onClick={() => setEditingBudget({ category, budget: null })}
+                    onClick={() => setEditingBudget({ category, budget: null, isOverride: false })}
                     className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                     aria-label="Definir presupuesto"
                   >
@@ -3444,8 +3498,10 @@ function BudgetsView({ fmt }) {
                       <p className="text-[11px] text-slate-400">{over ? "te pasaste" : "te quedan"}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{daysLeftInMonth}</p>
-                      <p className="text-[11px] text-slate-400">{daysLeftInMonth === 1 ? "día restante" : "días restantes"}</p>
+                      <p className="text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{daysLeftInMonth ?? "—"}</p>
+                      <p className="text-[11px] text-slate-400">
+                        {isCurrentRealMonth ? (daysLeftInMonth === 1 ? "día restante" : "días restantes") : isPastMonth ? "mes cerrado" : "mes futuro"}
+                      </p>
                     </div>
                   </div>
                   {over && (
@@ -3454,6 +3510,14 @@ function BudgetsView({ fmt }) {
                     </p>
                   )}
                 </>
+              )}
+              {budget && !isOverride && (
+                <button
+                  onClick={() => setEditingBudget({ category, budget: null, isOverride: false, forceScope: "specific" })}
+                  className="mt-3 w-full rounded-lg border border-dashed border-slate-200 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                >
+                  Definir monto especial para {MONTHS_FULL[month]}
+                </button>
               )}
               <button
                 onClick={() => setViewingCategoryExpenses({ category, expenses: categoryExpenses })}
@@ -3472,6 +3536,10 @@ function BudgetsView({ fmt }) {
         <BudgetModal
           category={editingBudget.category}
           budget={editingBudget.budget}
+          forceScope={editingBudget.forceScope}
+          year={year}
+          month={month + 1}
+          monthLabel={`${MONTHS_FULL[month]} ${year}`}
           onClose={() => setEditingBudget(null)}
           onSaved={refetch}
         />
@@ -3479,7 +3547,11 @@ function BudgetsView({ fmt }) {
       {deletingBudget && (
         <ConfirmDeleteModal
           title="Eliminar presupuesto"
-          message="¿Seguro que quieres quitar el presupuesto de esta categoría? Puedes volver a definirlo cuando quieras."
+          message={
+            deletingBudget.isOverride
+              ? `¿Seguro que quieres quitar el presupuesto especial de ${MONTHS_FULL[month]}? Ese mes volverá a usar el presupuesto de siempre para esta categoría.`
+              : "¿Seguro que quieres quitar el presupuesto de esta categoría? Puedes volver a definirlo cuando quieras."
+          }
           onCancel={() => setDeletingBudget(null)}
           onConfirm={() => handleDelete(deletingBudget.id)}
         />
@@ -3538,8 +3610,17 @@ function CategoryExpensesListModal({ category, expenses, fmt, onClose }) {
     </div>
   );
 }
-function BudgetModal({ category, budget, onClose, onSaved }) {
+// year/month acá son el año y el número de mes (1-12) que se está viendo en
+// Presupuestos — se usan para guardar un presupuesto "especial" solo para
+// ese mes. forceScope="specific" se usa cuando se abre desde el botón
+// "Definir monto especial para {mes}" (salta el selector, ya se sabe que es
+// para este mes puntual). Si se está EDITANDO un presupuesto existente, no
+// se deja cambiar su alcance (evita convertir sin querer un presupuesto de
+// siempre en uno de un solo mes, o viceversa) — para eso existe el botón
+// aparte de "Definir monto especial".
+function BudgetModal({ category, budget, forceScope, year, month, monthLabel, onClose, onSaved }) {
   const isEditing = Boolean(budget);
+  const [scope, setScope] = useState(forceScope || (isEditing && budget.year ? "specific" : "default"));
   const [amount, setAmount] = useState(budget ? String(budget.monthly_amount) : "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -3565,11 +3646,16 @@ function BudgetModal({ category, budget, onClose, onSaved }) {
     }
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData?.user?.id;
-    const { error } = await supabase.from("budgets").insert({
-      user_id: userId || null,
-      category_id: category.id,
-      monthly_amount: Number(amount),
-    });
+    const { error } = await supabase.from("budgets").upsert(
+      {
+        user_id: userId || null,
+        category_id: category.id,
+        monthly_amount: Number(amount),
+        year: scope === "specific" ? year : 0,
+        month: scope === "specific" ? month : 0,
+      },
+      { onConflict: "user_id,category_id,year,month" }
+    );
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
@@ -3589,6 +3675,30 @@ function BudgetModal({ category, budget, onClose, onSaved }) {
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {!isEditing && !forceScope && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿Para cuándo aplica?</label>
+              <div className="grid grid-cols-1 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setScope("default")}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm ${scope === "default" ? "border-slate-900 bg-slate-50 dark:border-white dark:bg-slate-800" : "border-slate-200 dark:border-slate-700"}`}
+                >
+                  Todos los meses (por defecto)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScope("specific")}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm ${scope === "specific" ? "border-slate-900 bg-slate-50 dark:border-white dark:bg-slate-800" : "border-slate-200 dark:border-slate-700"}`}
+                >
+                  Solo {monthLabel}
+                </button>
+              </div>
+            </div>
+          )}
+          {!isEditing && forceScope === "specific" && (
+            <p className="text-xs text-slate-400">Este monto solo aplicará a <span className="font-medium text-slate-600 dark:text-slate-300">{monthLabel}</span>. El presupuesto de siempre para esta categoría no cambia.</p>
+          )}
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Límite mensual</label>
             <input
@@ -3699,6 +3809,11 @@ export default function FinanceApp() {
   const [dataLoading, setDataLoading] = useState(true);
   const realCurrentYear = new Date().getFullYear();
   const [year, setYear] = useState(realCurrentYear);
+  // Mes compartido por Ingresos/Gastos/Ahorros/Presupuestos (0 = enero). Vive
+  // aquí, junto al año, porque ahora se elige directo desde el encabezado
+  // (junto al título "Tus ingresos"/"Tus gastos"/etc.), no con flechitas
+  // dentro de cada pestaña.
+  const [month, setMonth] = useState(() => new Date().getMonth());
 
   async function loadYearData(y = year) {
     setDataLoading(true);
@@ -3715,9 +3830,6 @@ export default function FinanceApp() {
   }
   const openMonth = (i) => setMonthOpen(i);
   const navMonth = (delta) => setMonthOpen((i) => Math.min(11, Math.max(0, i + delta)));
-  // Compartido entre las flechitas de año del header y la navegación mes a
-  // mes de Ingresos/Gastos/Ahorros (cuando esa navegación cruza de Diciembre
-  // a Enero o viceversa, también cambia el año).
   const goToYear = (y) => setYear(Math.min(realCurrentYear + MAX_FUTURE_YEARS, y));
   return (
     <div>
@@ -3783,16 +3895,21 @@ export default function FinanceApp() {
         <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
           <div className="mb-5 flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-semibold">
-                {tab === "dashboard" && "Resumen del año"}
-                {tab === "incomes" && "Tus ingresos"}
-                {tab === "expenses" && "Tus gastos"}
-                {tab === "budgets" && "Presupuestos"}
-                {tab === "savings" && "Tus ahorros"}
-                {tab === "goals" && "Tus metas"}
-                {tab === "stats" && "Estadísticas"}
-              </h1>
-              {["dashboard", "stats", "incomes", "expenses", "savings"].includes(tab) ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl font-semibold">
+                  {tab === "dashboard" && "Resumen del año"}
+                  {tab === "incomes" && "Tus ingresos"}
+                  {tab === "expenses" && "Tus gastos"}
+                  {tab === "budgets" && "Presupuestos"}
+                  {tab === "savings" && "Tus ahorros"}
+                  {tab === "goals" && "Tus metas"}
+                  {tab === "stats" && "Estadísticas"}
+                </h1>
+                {["incomes", "expenses", "savings", "budgets"].includes(tab) && (
+                  <MonthTitleSelect month={month} onChange={setMonth} />
+                )}
+              </div>
+              {["dashboard", "stats", "incomes", "expenses", "savings", "budgets"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToYear(year - 1)}
@@ -3825,14 +3942,14 @@ export default function FinanceApp() {
               {tab === "stats" && <StatsView fmt={format} yearData={yearData} />}
             </>
           )}
-          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} onYearChange={goToYear} />}
-          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} onYearChange={goToYear} />}
-          {tab === "budgets" && <BudgetsView fmt={format} />}
-          {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} onYearChange={goToYear} />}
+          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
+          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
+          {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} />}
+          {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
           {tab === "goals" && <GoalsView fmt={format} />}
         </main>
         {monthOpen !== null && yearData && (
-          <MonthDetail index={monthOpen} fmt={format} onClose={() => setMonthOpen(null)} onNav={navMonth} yearData={yearData} />
+          <MonthDetail index={monthOpen} year={year} fmt={format} onClose={() => setMonthOpen(null)} onNav={navMonth} yearData={yearData} />
         )}
       </div>
     </div>
