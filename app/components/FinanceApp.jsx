@@ -36,6 +36,23 @@ const CATEGORY_META = {
   Otros: { icon: MoreHorizontal, color: "#64748B" },
 };
 const CATEGORY_NAMES = Object.keys(CATEGORY_META);
+// Clasificación por defecto de cada categoría para la regla 50/30/20
+// (necesidades básicas vs. gustos personales). Es una guía general para dar
+// consejos aproximados, no algo que la persona haya configurado — por eso
+// "Compras a plazos" y "Otros" quedan del lado de "gusto" por precaución.
+const CATEGORY_BUDGET_BUCKET = {
+  Vivienda: "necesidad",
+  Alimentación: "necesidad",
+  Transporte: "necesidad",
+  Servicios: "necesidad",
+  Salud: "necesidad",
+  Educación: "necesidad",
+  Entretenimiento: "gusto",
+  Compras: "gusto",
+  Suscripciones: "gusto",
+  "Compras a plazos": "gusto",
+  Otros: "gusto",
+};
 const CURRENCIES = {
   CRC: { symbol: "₡", rate: 1, locale: "es-CR" },
   USD: { symbol: "$", rate: 1 / 520, locale: "en-US" },
@@ -827,10 +844,110 @@ function AnnualTable({ fmt, onSelectMonth, yearData }) {
 /* ---------------------------------------------------------------
    VISTA MENSUAL
 ------------------------------------------------------------------ */
+// Genera hasta 3 consejos financieros para un mes concreto, priorizando lo
+// más urgente primero (balance negativo, presupuesto excedido, desviaciones
+// de la regla 50/30/20, una categoría muy concentrada, ahorro en cero, y
+// comparación contra el mes anterior). No es una lista fija de tips: cambia
+// según los números reales de ESE mes, por eso vive junto al detalle mensual.
+function buildMonthlyTips(month, prevMonth, budgetsByCategoryName, fmt) {
+  const tips = [];
+  const { ingresoTotal, gastoTotal, ahorroTotal, balance, gastos } = month;
+
+  if (balance < 0) {
+    tips.push({ level: "red", text: `Este mes gastaste y ahorraste más de lo que ingresó: te faltaron ${fmt(Math.abs(balance))}.` });
+  }
+
+  if (budgetsByCategoryName) {
+    const overBudget = Object.entries(budgetsByCategoryName)
+      .map(([catName, budgetAmount]) => {
+        const spent = gastos.filter((g) => g.categoria === catName).reduce((a, g) => a + g.monto, 0);
+        return { catName, over: spent - budgetAmount };
+      })
+      .filter((r) => r.over > 0)
+      .sort((a, b) => b.over - a.over);
+    if (overBudget.length > 0) {
+      tips.push({ level: "red", text: `Te pasaste del presupuesto de ${overBudget[0].catName} por ${fmt(overBudget[0].over)}.` });
+    }
+  }
+
+  if (ingresoTotal > 0) {
+    const necesidadTotal = gastos
+      .filter((g) => (CATEGORY_BUDGET_BUCKET[g.categoria] || "gusto") === "necesidad")
+      .reduce((a, g) => a + g.monto, 0);
+    const necesidadPct = Math.round((necesidadTotal / ingresoTotal) * 100);
+    const ahorroPct = Math.round((ahorroTotal / ingresoTotal) * 100);
+    if (necesidadPct > 55) {
+      tips.push({ level: "amber", text: `Destinaste ${necesidadPct}% de tus ingresos a necesidades básicas (la regla 50/30/20 recomienda 50%). Revisa si hay algo ajustable ahí.` });
+    }
+    if (ahorroPct < 15) {
+      tips.push({ level: "amber", text: `Ahorraste ${ahorroPct}% de tus ingresos este mes (la regla 50/30/20 recomienda 20%). Intenta subirlo el próximo mes.` });
+    } else if (ahorroPct >= 20) {
+      tips.push({ level: "green", text: `Ahorraste ${ahorroPct}% de tus ingresos, cumpliendo la regla 50/30/20 (20%). ¡Sigue así!` });
+    }
+  }
+
+  if (gastoTotal > 0) {
+    const byCat = {};
+    gastos.forEach((g) => { byCat[g.categoria] = (byCat[g.categoria] || 0) + g.monto; });
+    const [topCat, topAmount] = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
+    const topPct = Math.round((topAmount / gastoTotal) * 100);
+    if (topPct >= 40) {
+      tips.push({ level: "amber", text: `${topCat} representó el ${topPct}% de tus gastos este mes — la categoría con más peso, de lejos.` });
+    }
+  }
+
+  if (ingresoTotal > 0 && ahorroTotal === 0) {
+    tips.push({ level: "amber", text: "No registraste ahorro este mes — considera apartar aunque sea un poco, incluso si es pequeño." });
+  }
+
+  if (prevMonth && prevMonth.gastoTotal > 0) {
+    const pct = Math.round(((gastoTotal - prevMonth.gastoTotal) / prevMonth.gastoTotal) * 100);
+    if (Math.abs(pct) >= 15) {
+      tips.push({ level: pct > 0 ? "amber" : "green", text: `Gastaste ${Math.abs(pct)}% ${pct > 0 ? "más" : "menos"} que en ${prevMonth.mesFull}.` });
+    }
+  }
+
+  if (tips.length === 0) {
+    tips.push({ level: "green", text: "Tus finanzas este mes se ven equilibradas. ¡Sigue así!" });
+  }
+  const severity = { red: 0, amber: 1, green: 2 };
+  tips.sort((a, b) => severity[a.level] - severity[b.level]);
+  return tips.slice(0, 3);
+}
 function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
   const m = yearData[index];
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
+  // Presupuestos por nombre de categoría, para poder avisar si este mes se
+  // pasó del límite. Los presupuestos no guardan historial por mes — se usa
+  // siempre la definición actual, así que para meses ya pasados es una
+  // comparación aproximada (con el límite de hoy), no la que regía en ese momento.
+  const [budgetsByCategoryName, setBudgetsByCategoryName] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchBudgets() {
+      const [{ data: buds }, { data: cats }] = await Promise.all([
+        supabase.from("budgets").select("*"),
+        supabase.from("categories").select("id, name"),
+      ]);
+      if (cancelled) return;
+      const catNameById = {};
+      (cats || []).forEach((c) => { catNameById[c.id] = c.name; });
+      const map = {};
+      (buds || []).forEach((b) => {
+        const name = catNameById[b.category_id];
+        if (name) map[name] = Number(b.monthly_amount);
+      });
+      setBudgetsByCategoryName(map);
+    }
+    fetchBudgets();
+    return () => { cancelled = true; };
+  }, []);
+  const prevMonthData = index > 0 ? yearData[index - 1] : null;
+  const tips = useMemo(
+    () => buildMonthlyTips(m, prevMonthData, budgetsByCategoryName, fmt),
+    [m, prevMonthData, budgetsByCategoryName, fmt]
+  );
   const filteredExpenses = m.gastos.filter((e) =>
     (catFilter === "Todas" || e.categoria === catFilter) &&
     e.descripcion.toLowerCase().includes(search.toLowerCase())
@@ -841,6 +958,11 @@ function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
     value: m.gastos.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
     color: CATEGORY_META[cat]?.color || "#64748B",
   })).filter((d) => d.value > 0);
+  const tipToneClasses = {
+    red: "bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300",
+    amber: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+    green: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
       <div
@@ -862,6 +984,21 @@ function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
             <StatMini label="Ahorros" value={fmt(m.ahorroTotal)} color="text-blue-500" />
             <StatMini label="Balance" value={fmt(m.balance)} color={m.balance >= 0 ? "text-emerald-600" : "text-red-500"} />
           </div>
+          {tips.length > 0 && (
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <Sparkles size={16} className="text-amber-500" />
+                <Eyebrow>Consejos para este mes</Eyebrow>
+              </div>
+              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {tips.map((t, i) => (
+                  <li key={i} className={`rounded-xl px-4 py-3 text-sm ${tipToneClasses[t.level]}`}>
+                    {t.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div>
               <Eyebrow>Ingresos del mes</Eyebrow>
