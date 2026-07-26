@@ -564,8 +564,10 @@ function RowActions({ onEdit, onDelete }) {
 // selector de moneda), no pegado al título de cada pestaña — así se ve
 // siempre en el mismo lugar sin importar en qué pestaña estés, y se siente
 // como un solo control global en vez de algo distinto por pantalla. Solo se
-// muestra en las pestañas que lo usan (Ingresos/Gastos/Ahorros/Presupuestos);
-// el mes es un estado compartido (ver FinanceApp), igual que ya pasa con el
+// muestra en las pestañas donde tiene sentido: Resumen (solo para resaltar
+// el mes en "Panorama del año", el dato en sí sigue siendo anual), Ingresos,
+// Gastos, Ahorros y Presupuestos (ahí sí filtra los datos). No aparece en
+// Estadísticas ni en Metas. El mes es un estado compartido (ver FinanceApp), igual que ya pasa con el
 // año. Reemplaza la barra de flechitas "‹ Mes Año ›" que antes vivía dentro
 // de cada pestaña.
 function MonthTitleSelect({ month, onChange }) {
@@ -585,7 +587,7 @@ function MonthTitleSelect({ month, onChange }) {
 /* ---------------------------------------------------------------
    DASHBOARD
 ------------------------------------------------------------------ */
-function Dashboard({ fmt, onSelectMonth, yearData, year }) {
+function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const [goals, setGoals] = useState([]);
   useEffect(() => {
     supabase.from("goals").select("*").then(({ data, error }) => {
@@ -698,14 +700,22 @@ function Dashboard({ fmt, onSelectMonth, yearData, year }) {
         <div className="grid grid-cols-6 gap-2 sm:grid-cols-12">
           {yearData.map((m, i) => {
             const st = statusOf(m.balance, m.ingresoTotal);
+            // El mes elegido en el selector del encabezado se resalta con un
+            // anillo alrededor del cuadrito — el cuadrito en sí (su color de
+            // semáforo) no cambia, solo se le agrega este borde para indicar
+            // "estás viendo este mes", sin tocar el código de colores que ya
+            // indica el estado del mes (verde/ámbar/rojo/gris).
+            const isSelectedMonth = i === month;
             return (
               <button
                 key={m.mes}
                 onClick={() => onSelectMonth(i)}
-                className="group flex flex-col items-center gap-2 rounded-xl p-2 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
+                className={`group flex flex-col items-center gap-2 rounded-xl p-2 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                  isSelectedMonth ? "ring-2 ring-slate-900 ring-offset-2 ring-offset-white dark:ring-white dark:ring-offset-slate-900" : ""
+                }`}
               >
                 <div className={`h-16 w-full rounded-lg ${STATUS_COLOR[st]} opacity-80 transition-all duration-300 group-hover:opacity-100 group-hover:-translate-y-0.5`} />
-                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{m.mes}</span>
+                <span className={`text-xs ${isSelectedMonth ? "font-semibold text-slate-900 dark:text-white" : "font-medium text-slate-500 dark:text-slate-400"}`}>{m.mes}</span>
               </button>
             );
           })}
@@ -3739,7 +3749,9 @@ export default function FinanceApp() {
   // aquí, junto al año, y se elige desde un único selector fijo en la parte
   // de arriba del encabezado (junto a la moneda) — no pegado al título de
   // cada pestaña, para que se sienta como un control global y no como algo
-  // distinto en cada pantalla.
+  // distinto en cada pantalla. También se muestra en Resumen: ahí no filtra
+  // nada (esa vista siempre es anual), solo se usa para resaltar el mes
+  // elegido dentro de "Panorama del año".
   const [month, setMonth] = useState(() => new Date().getMonth());
 
   async function loadYearData(y = year) {
@@ -3787,7 +3799,7 @@ export default function FinanceApp() {
               })}
             </div>
             <div className="flex items-center gap-2">
-              {["incomes", "expenses", "savings", "budgets"].includes(tab) && (
+              {["dashboard", "incomes", "expenses", "savings", "budgets"].includes(tab) && (
                 <MonthTitleSelect month={month} onChange={setMonth} />
               )}
               <select
@@ -3863,7 +3875,7 @@ export default function FinanceApp() {
             <p className="text-sm text-slate-400">Cargando tus datos...</p>
           ) : (
             <>
-              {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} />}
+              {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} />}
               {tab === "stats" && <StatsView fmt={format} yearData={yearData} />}
             </>
           )}
