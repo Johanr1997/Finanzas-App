@@ -246,6 +246,18 @@ function computeCardPaymentDate(purchaseDateStr, cutoffDay, paymentDay) {
   const day = Math.min(paymentDay, lastDay);
   return `${paymentYear}-${String(paymentMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
+// Fecha por defecto para prellenar el formulario de "Agregar" (gasto/
+// ingreso/ahorro) según el mes que la persona ya tiene seleccionado con las
+// flechitas de navegación: si es el mes real actual, usa el día de hoy; si
+// es otro mes (pasado o futuro), usa el día 1 de ese mes. Así el formulario
+// no pide una fecha desconectada del mes que se está viendo.
+function defaultDateForMonth(month, year) {
+  const now = new Date();
+  if (month === now.getMonth() && year === now.getFullYear()) {
+    return now.toISOString().slice(0, 10);
+  }
+  return `${year}-${String(month + 1).padStart(2, "0")}-01`;
+}
 // Fecha real desde la que corre el plan. Si el plan está vinculado a una
 // tarjeta de crédito, "start_date" es la fecha de la compra y aquí se
 // calcula la fecha real de la 1ª cuota según el corte/pago de esa tarjeta
@@ -788,8 +800,8 @@ function MonthDetail({ index, fmt, onClose, onNav, yearData }) {
                       <div>
                         <p className="font-medium text-slate-700 dark:text-slate-200">{e.descripcion}</p>
                         <p className="text-xs text-slate-400">
-                          {e.categoria} · {e.fecha}
-                          {e.fechaCompra && e.fechaCompra !== e.fecha && ` · compra: ${e.fechaCompra}`}
+                          {e.categoria} · {e.fechaCompra || e.fecha}
+                          {e.fechaCompra && e.fechaCompra !== e.fecha && ` · pago: ${e.fecha}`}
                           {e.tarjeta && ` · ${e.tarjeta}`}
                         </p>
                       </div>
@@ -1347,7 +1359,7 @@ function IncomesView({ fmt, onDataChanged, year, onYearChange }) {
         </div>
       </Card>
       {showModal && (
-        <IncomeModal onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
+        <IncomeModal defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
       )}
       {editingIncome && (
         <IncomeModal income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} />
@@ -1377,13 +1389,13 @@ function IncomesView({ fmt, onDataChanged, year, onYearChange }) {
     </div>
   );
 }
-function IncomeModal({ income, onClose, onSaved }) {
+function IncomeModal({ income, onClose, onSaved, defaultDate }) {
   const isEditing = Boolean(income);
   const today = new Date().toISOString().slice(0, 10);
   const [type, setType] = useState(income?.type || "");
   const [description, setDescription] = useState(income?.description || "");
   const [amount, setAmount] = useState(income ? String(income.amount) : "");
-  const [date, setDate] = useState(income?.date || today);
+  const [date, setDate] = useState(income?.date || defaultDate || today);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   async function handleSubmit(e) {
@@ -1909,8 +1921,8 @@ function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
                 <div>
                   <p className="font-medium text-slate-700 dark:text-slate-200">{e.description || e.categories?.name}</p>
                   <p className="text-xs text-slate-400">
-                    {e.categories?.name} · {e.date}
-                    {e.purchase_date && e.purchase_date !== e.date && ` · compra: ${e.purchase_date}`}
+                    {e.categories?.name} · {e.purchase_date || e.date}
+                    {e.purchase_date && e.purchase_date !== e.date && ` · pago: ${e.date}`}
                     {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
                   </p>
                 </div>
@@ -1929,7 +1941,7 @@ function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
         </div>
       </Card>
       {showModal && (
-        <ExpenseModal categories={categories} cards={cards} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
+        <ExpenseModal categories={categories} cards={cards} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
       )}
       {editingExpense && (
         <ExpenseModal
@@ -2007,14 +2019,14 @@ function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
     </div>
   );
 }
-function ExpenseModal({ categories, cards, expense, onClose, onSaved }) {
+function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDate }) {
   const cardsList = cards || [];
   const isEditing = Boolean(expense);
   const today = new Date().toISOString().slice(0, 10);
   const [categoryId, setCategoryId] = useState(expense?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(expense?.description || "");
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
-  const [date, setDate] = useState(expense?.purchase_date || expense?.date || today);
+  const [date, setDate] = useState(expense?.purchase_date || expense?.date || defaultDate || today);
   const [cardId, setCardId] = useState(expense?.card_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -2822,7 +2834,7 @@ function SavingsView({ fmt, onDataChanged, year, onYearChange }) {
         </div>
       </Card>
       {showModal && (
-        <SavingModal goals={goals} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
+        <SavingModal goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
       )}
       {editingSaving && (
         <SavingModal goals={goals} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} />
@@ -2908,13 +2920,13 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
     </div>
   );
 }
-function SavingModal({ saving: savingRecord, goals, onClose, onSaved }) {
+function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDate }) {
   const isEditing = Boolean(savingRecord);
   const today = new Date().toISOString().slice(0, 10);
   const [type, setType] = useState(savingRecord?.type || "libre");
   const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
-  const [date, setDate] = useState(savingRecord?.date || today);
+  const [date, setDate] = useState(savingRecord?.date || defaultDate || today);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   async function handleSubmit(e) {
