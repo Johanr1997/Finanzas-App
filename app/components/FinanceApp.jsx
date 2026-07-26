@@ -1286,7 +1286,7 @@ function IncomesView({ fmt, onDataChanged, year, onYearChange }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total de ingresos en {MONTHS_FULL[month]} {year}</Eyebrow>
+          <Eyebrow>Ingresos en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1768,7 +1768,7 @@ function ExpensesView({ fmt, onDataChanged, year, onYearChange }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total de gastos en {MONTHS_FULL[month]} {year}</Eyebrow>
+          <Eyebrow>Gastos en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -2769,7 +2769,7 @@ function SavingsView({ fmt, onDataChanged, year, onYearChange }) {
     <div className="space-y-4">
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Eyebrow>Total ahorrado en {MONTHS_FULL[month]} {year}</Eyebrow>
+          <Eyebrow>Ahorrado en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-blue-500">{fmt(total)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
