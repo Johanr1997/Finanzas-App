@@ -455,25 +455,6 @@ function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
     </Card>
   );
 }
-// Tarjetita compacta para el resumen "de un vistazo" del mes (Resumen). A
-// diferencia de StatCard (pensada para un solo número grande), esta admite
-// una segunda línea de contexto opcional ("sub").
-function MiniStat({ label, value, sub, tone = "slate" }) {
-  const toneClasses = {
-    slate: "text-slate-900 dark:text-white",
-    green: "text-emerald-600 dark:text-emerald-400",
-    red: "text-red-600 dark:text-red-400",
-    blue: "text-blue-600 dark:text-blue-400",
-    amber: "text-amber-600 dark:text-amber-400",
-  };
-  return (
-    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
-      <p className="text-[11px] font-medium leading-tight text-slate-400">{label}</p>
-      <p className={`mt-1 truncate text-base font-semibold tabular-nums ${toneClasses[tone]}`}>{value}</p>
-      {sub && <p className="mt-0.5 truncate text-[11px] text-slate-400">{sub}</p>}
-    </div>
-  );
-}
 function ProgressRing({ percent, color, size = 56 }) {
   const r = (size - 8) / 2;
   const c = 2 * Math.PI * r;
@@ -651,34 +632,8 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   if (insights.length === 0) {
     insights.push("Registra ingresos, gastos y ahorros para ver análisis automáticos aquí.");
   }
-  // Frase corta destacada arriba de todo, tipo "esto te lo cuento en una
-  // línea" — se enfoca en el ahorro porque suele ser el número que más
-  // engancha ("ahorré más/menos que el mes pasado"). Sigue al mes elegido,
-  // igual que el resto de la tarjeta.
-  let headline = null;
-  if (prevMonth.ahorroTotal > 0) {
-    const delta = Math.round(((currentMonth.ahorroTotal - prevMonth.ahorroTotal) / prevMonth.ahorroTotal) * 100);
-    headline = `${isRealCurrentMonth ? "Este mes" : `En ${currentMonth.mesFull.toLowerCase()}`} ahorraste un ${Math.abs(delta)}% ${delta >= 0 ? "más" : "menos"} que el mes anterior.`;
-  } else if (currentMonth.ahorroTotal > 0) {
-    headline = `${isRealCurrentMonth ? "Este mes empezaste a ahorrar" : `En ${currentMonth.mesFull.toLowerCase()} empezaste a ahorrar`}: ${fmt(currentMonth.ahorroTotal)}.`;
-  }
   return (
     <div className="space-y-6">
-      <Card className="p-5">
-        <div className="flex items-center gap-2">
-          <Sparkles size={16} className="text-amber-500" />
-          <Eyebrow>{isRealCurrentMonth ? `Tu mes: ${currentMonth.mesFull}` : `Resumen de ${currentMonth.mesFull} ${year}`}</Eyebrow>
-        </div>
-        {headline && (
-          <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{headline}</p>
-        )}
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <MiniStat label="Ingresaste" value={fmt(currentMonth.ingresoTotal)} tone="green" />
-          <MiniStat label="Gastaste" value={fmt(currentMonth.gastoTotal)} tone="red" />
-          <MiniStat label="Ahorraste" value={fmt(currentMonth.ahorroTotal)} tone="blue" />
-          <MiniStat label="Te quedan" value={fmt(currentMonth.balance)} tone={currentMonth.balance >= 0 ? "green" : "red"} />
-        </div>
-      </Card>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard label="Saldo disponible" value={fmt(totals.saldo)} icon={Wallet} accent="slate" />
         <StatCard label="Ingresos del año" value={fmt(totals.ingresos)} icon={TrendingUp} accent="green" />
@@ -711,28 +666,17 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
         <div className="grid grid-cols-6 gap-2 sm:grid-cols-12">
           {yearData.map((m, i) => {
             const st = statusOf(m.balance, m.ingresoTotal);
-            // El mes elegido en el selector del encabezado se resalta con un
-            // anillo alrededor del cuadrito — el cuadrito en sí (su color de
-            // semáforo) no cambia, solo se le agrega este borde para indicar
-            // "estás viendo este mes", sin tocar el código de colores que ya
-            // indica el estado del mes (verde/ámbar/rojo/gris).
-            const isSelectedMonth = i === month;
             return (
               <button
                 key={m.mes}
                 onClick={() => onSelectMonth(i)}
-                className={`group flex flex-col items-center gap-2 rounded-xl p-2 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 ${
-                  isSelectedMonth ? "ring-2 ring-slate-900 ring-offset-2 ring-offset-white dark:ring-white dark:ring-offset-slate-900" : ""
-                }`}
+                className="group flex flex-col items-center gap-2 rounded-xl p-2 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
               >
                 <div className={`h-16 w-full rounded-lg ${STATUS_COLOR[st]} opacity-80 transition-all duration-300 group-hover:opacity-100 group-hover:-translate-y-0.5`} />
-                <span className={`text-xs ${isSelectedMonth ? "font-semibold text-slate-900 dark:text-white" : "font-medium text-slate-500 dark:text-slate-400"}`}>{m.mes}</span>
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{m.mes}</span>
               </button>
             );
           })}
-        </div>
-        <div className="mt-4">
-          <AnnualTable fmt={fmt} onSelectMonth={onSelectMonth} yearData={yearData} />
         </div>
       </Card>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -785,52 +729,6 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
         </ul>
       </Card>
     </div>
-  );
-}
-/* ---------------------------------------------------------------
-   VISTA ANUAL
------------------------------------------------------------------- */
-function AnnualTable({ fmt, onSelectMonth, yearData }) {
-  return (
-    <Card className="overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-400 dark:border-slate-800">
-              <th className="px-5 py-3 font-medium">Mes</th>
-              <th className="px-5 py-3 font-medium">Ingresos</th>
-              <th className="px-5 py-3 font-medium">Gastos</th>
-              <th className="px-5 py-3 font-medium">Ahorros</th>
-              <th className="px-5 py-3 font-medium">Balance</th>
-              <th className="px-5 py-3 font-medium">Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {yearData.map((m, i) => {
-              const st = statusOf(m.balance, m.ingresoTotal);
-              return (
-                <tr
-                  key={m.mes}
-                  onClick={() => onSelectMonth(i)}
-                  className="cursor-pointer border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50 dark:border-slate-800/60 dark:hover:bg-slate-800/50"
-                >
-                  <td className="px-5 py-3 font-medium text-slate-900 dark:text-white">{m.mesFull}</td>
-                  <td className="px-5 py-3 tabular-nums text-emerald-600">{fmt(m.ingresoTotal)}</td>
-                  <td className="px-5 py-3 tabular-nums text-red-500">{fmt(m.gastoTotal)}</td>
-                  <td className="px-5 py-3 tabular-nums text-blue-500">{fmt(m.ahorroTotal)}</td>
-                  <td className={`px-5 py-3 tabular-nums font-medium ${m.balance >= 0 ? "text-emerald-600" : "text-red-500"}`}>{fmt(m.balance)}</td>
-                  <td className="px-5 py-3">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-white ${STATUS_COLOR[st]}`}>
-                      {STATUS_LABEL[st]}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Card>
   );
 }
 /* ---------------------------------------------------------------
@@ -1496,6 +1394,9 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
   const [showRecurringModal, setShowRecurringModal] = useState(false);
   const [editingRecurring, setEditingRecurring] = useState(null);
   const [deletingRecurring, setDeletingRecurring] = useState(null);
+  // La lista de "Ingresos fijos" es retráctil (empieza cerrada) para no
+  // ocupar espacio de entrada — mismo patrón que "Consejos para este mes".
+  const [recurringOpen, setRecurringOpen] = useState(false);
   const [search, setSearch] = useState("");
   async function refetchIncomes() {
     const { data } = await supabase.from("incomes").select("*")
@@ -1579,31 +1480,42 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
       </Card>
       {recurring.length > 0 && (
         <Card className="p-5">
-          <Eyebrow>Ingresos fijos</Eyebrow>
-          <p className="mt-1 text-xs text-slate-400">
-            Salario u otro ingreso fijo. Se cuenta automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlo.
-          </p>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {recurring.map((r) => {
-              const isQuincenal = r.frequency === "quincenal";
-              return (
-                <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
-                      <Repeat size={16} />
+          <button
+            type="button"
+            onClick={() => setRecurringOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+          >
+            <div>
+              <Eyebrow>Ingresos fijos</Eyebrow>
+              <p className="mt-1 text-xs text-slate-400">
+                Salario u otro ingreso fijo. Se cuenta automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlo.
+              </p>
+            </div>
+            <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${recurringOpen ? "rotate-90" : ""}`} />
+          </button>
+          {recurringOpen && (
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {recurring.map((r) => {
+                const isQuincenal = r.frequency === "quincenal";
+                return (
+                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
+                        <Repeat size={16} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.type || "Ingreso fijo"}</p>
+                        <p className="text-xs text-slate-400">
+                          {r.type} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.type || "Ingreso fijo"}</p>
-                      <p className="text-xs text-slate-400">
-                        {r.type} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
-                      </p>
-                    </div>
+                    <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
                   </div>
-                  <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
       )}
       <Card className="overflow-hidden">
@@ -1911,6 +1823,9 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
   const [showRecurringModal, setShowRecurringModal] = useState(false);
   const [editingRecurring, setEditingRecurring] = useState(null);
   const [deletingRecurring, setDeletingRecurring] = useState(null);
+  // La lista de "Gastos fijos" es retráctil (empieza cerrada) para no
+  // ocupar espacio de entrada — mismo patrón que "Consejos para este mes".
+  const [recurringOpen, setRecurringOpen] = useState(false);
   const [cards, setCards] = useState([]);
   const [showCardsManager, setShowCardsManager] = useState(false);
   const [search, setSearch] = useState("");
@@ -2126,35 +2041,46 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
       </Card>
       {recurring.length > 0 && (
         <Card className="p-5">
-          <Eyebrow>Gastos fijos</Eyebrow>
-          <p className="mt-1 text-xs text-slate-400">
-            Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlos.
-          </p>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {recurring.map((r) => {
-              const color = r.categories?.color || "#64748B";
-              const isQuincenal = r.frequency === "quincenal";
-              return (
-                <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
-                      style={{ backgroundColor: `${color}1a`, color }}
-                    >
-                      <Repeat size={16} />
+          <button
+            type="button"
+            onClick={() => setRecurringOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+          >
+            <div>
+              <Eyebrow>Gastos fijos</Eyebrow>
+              <p className="mt-1 text-xs text-slate-400">
+                Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlos.
+              </p>
+            </div>
+            <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${recurringOpen ? "rotate-90" : ""}`} />
+          </button>
+          {recurringOpen && (
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {recurring.map((r) => {
+                const color = r.categories?.color || "#64748B";
+                const isQuincenal = r.frequency === "quincenal";
+                return (
+                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
+                        style={{ backgroundColor: `${color}1a`, color }}
+                      >
+                        <Repeat size={16} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
+                        <p className="text-xs text-slate-400">
+                          {r.categories?.name} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
-                      <p className="text-xs text-slate-400">
-                        {r.categories?.name} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
-                      </p>
-                    </div>
+                    <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
                   </div>
-                  <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
       )}
       {activePlans.length > 0 && (
@@ -3026,7 +2952,18 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
   const monthSavings = savings.filter((s) => dateStringMonth(s.date) - 1 === month);
   const total = monthSavings.reduce((a, s) => a + Number(s.amount), 0);
   const filteredSavings = monthSavings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
-  const totalsByType = SAVINGS_TYPES.map((t) => {
+  // Además de los 3 tipos fijos, cualquier tipo personalizado que la persona
+  // haya escrito (SavingModal, opción "Otro") también aparece aquí, para que
+  // el resumen por tipo y el filtro lo incluyan igual que a los demás.
+  const knownTypeValues = SAVINGS_TYPES.map((t) => t.value);
+  const customTypeValues = [];
+  savings.forEach((s) => {
+    if (s.type && !knownTypeValues.includes(s.type) && !customTypeValues.includes(s.type)) {
+      customTypeValues.push(s.type);
+    }
+  });
+  const allTypes = [...SAVINGS_TYPES, ...customTypeValues.map((v) => ({ value: v, label: v }))];
+  const totalsByType = allTypes.map((t) => {
     const items = savings.filter((s) => s.type === t.value);
     return { ...t, items, total: items.reduce((a, s) => a + Number(s.amount), 0) };
   });
@@ -3080,7 +3017,7 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
             className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
           >
             <option>Todos</option>
-            {SAVINGS_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            {allTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </div>
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -3200,17 +3137,34 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
     </div>
   );
 }
+// Además de los 3 tipos fijos (Fondo de emergencia, Inversiones, Ahorro
+// libre), se puede elegir "Otro" y escribir el nombre que se quiera —
+// "type" en la base es texto libre (igual que en Ingresos/Gastos fijos),
+// así que un tipo personalizado no requiere ningún cambio de esquema.
+const CUSTOM_TYPE_VALUE = "otro";
 function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDate }) {
   const isEditing = Boolean(savingRecord);
   const today = localDateString();
+  const knownTypeValues = SAVINGS_TYPES.map((t) => t.value);
+  const startsAsCustom = Boolean(savingRecord?.type) && !knownTypeValues.includes(savingRecord.type);
+  const [selectValue, setSelectValue] = useState(startsAsCustom ? CUSTOM_TYPE_VALUE : (savingRecord?.type || "libre"));
   const [type, setType] = useState(savingRecord?.type || "libre");
   const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
   const [date, setDate] = useState(savingRecord?.date || defaultDate || today);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  function handleSelectChange(value) {
+    setSelectValue(value);
+    if (value !== CUSTOM_TYPE_VALUE) setType(value);
+    else if (!startsAsCustom) setType("");
+  }
   async function handleSubmit(e) {
     e.preventDefault();
+    if (selectValue === CUSTOM_TYPE_VALUE && !type.trim()) {
+      setErrorMsg("Escribe un nombre para el tipo de ahorro.");
+      return;
+    }
     if (!amount || !date) {
       setErrorMsg("Completa al menos el monto y la fecha.");
       return;
@@ -3219,9 +3173,10 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
     setErrorMsg("");
     const newGoalId = goalId || null;
     const newAmount = Number(amount);
+    const finalType = type.trim();
     if (isEditing) {
       const { error } = await supabase.from("savings").update({
-        type,
+        type: finalType,
         goal_id: newGoalId,
         amount: newAmount,
         date,
@@ -3251,7 +3206,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
     const userId = userData?.user?.id;
     const { error } = await supabase.from("savings").insert({
       user_id: userId || null,
-      type,
+      type: finalType,
       goal_id: newGoalId,
       amount: newAmount,
       date,
@@ -3278,13 +3233,21 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ahorro</label>
             <select
-              value={type} onChange={(e) => setType(e.target.value)}
+              value={selectValue} onChange={(e) => handleSelectChange(e.target.value)}
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             >
               {SAVINGS_TYPES.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
+              <option value={CUSTOM_TYPE_VALUE}>Otro (escribir nombre)</option>
             </select>
+            {selectValue === CUSTOM_TYPE_VALUE && (
+              <input
+                type="text" value={type} onChange={(e) => setType(e.target.value)}
+                placeholder="Ej. Ahorro para viaje, Colegio de los niños..."
+                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            )}
           </div>
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una meta (opcional)</label>
