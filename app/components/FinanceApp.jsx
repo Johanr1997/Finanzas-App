@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
-  PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis,
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, AreaChart,
 } from "recharts";
 import {
@@ -19,7 +19,7 @@ import { supabase } from "../../lib/supabase";
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MONTHS_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 // Cuántos años hacia el futuro se puede navegar desde Resumen/Ingresos/Gastos/
-// Ahorros/Estadísticas — para ver de antemano ingresos fijos, gastos fijos y
+// Ahorros/Presupuestos — para ver de antemano ingresos fijos, gastos fijos y
 // planes de pago que ya están programados para esos años.
 const MAX_FUTURE_YEARS = 10;
 const CATEGORY_META = {
@@ -544,13 +544,12 @@ function RowActions({ onEdit, onDelete }) {
 // Selector de mes minimalista, fijo arriba en el encabezado (junto al
 // selector de moneda), no pegado al título de cada pestaña — así se ve
 // siempre en el mismo lugar sin importar en qué pestaña estés, y se siente
-// como un solo control global en vez de algo distinto por pantalla. Solo se
-// muestra en las pestañas donde tiene sentido: Resumen (solo para resaltar
-// el mes en "Panorama del año", el dato en sí sigue siendo anual), Ingresos,
-// Gastos, Ahorros y Presupuestos (ahí sí filtra los datos). No aparece en
-// Estadísticas ni en Metas. El mes es un estado compartido (ver FinanceApp), igual que ya pasa con el
-// año. Reemplaza la barra de flechitas "‹ Mes Año ›" que antes vivía dentro
-// de cada pestaña.
+// como un solo control global en vez de algo distinto por pantalla. Se
+// muestra en Resumen, Ingresos, Gastos, Ahorros y Presupuestos (en Ingresos/
+// Gastos/Ahorros/Presupuestos sí filtra los datos; en Resumen no cambia nada
+// todavía, ver el dashboard más abajo). No aparece en Metas. El mes es un
+// estado compartido (ver FinanceApp), igual que ya pasa con el año. Reemplaza
+// la barra de flechitas "‹ Mes Año ›" que antes vivía dentro de cada pestaña.
 function MonthTitleSelect({ month, onChange }) {
   return (
     <select
@@ -593,6 +592,20 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
     let acc = 0;
     return yearData.map((m) => { acc += m.ahorroTotal; return { mes: m.mes, Ahorro: acc }; });
   }, [yearData]);
+  // Estos dos venían de la pestaña "Estadísticas", que se fusionó aquí en
+  // Resumen (2026-07-27) — no se trajo el tercer gráfico de esa pestaña
+  // ("Evolución de ingresos, gastos y ahorro") porque repetía lo mismo que
+  // "Ingresos vs gastos" y "Evolución del ahorro acumulado" de arriba.
+  const catTotalsYear = useMemo(() => {
+    const expensesForCat = yearData.flatMap((m) => m.gastos);
+    const categoriasUsadas = [...new Set(expensesForCat.map((e) => e.categoria))];
+    return categoriasUsadas.map((cat) => ({
+      name: cat,
+      value: expensesForCat.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
+      color: CATEGORY_META[cat]?.color || "#64748B",
+    }));
+  }, [yearData]);
+  const monthCompare = yearData.map((m) => ({ mes: m.mes, Balance: m.balance }));
   const now = new Date();
   const isCurrentYear = year === now.getFullYear();
   // La tarjeta "Tu mes" y su frase destacada ahora siguen el mes elegido en
@@ -713,6 +726,42 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
                 <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
                 <Area type="monotone" dataKey="Ahorro" stroke="#3B82F6" strokeWidth={2} fill="url(#ahorroGrad)" />
               </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card className="p-5">
+          <Eyebrow>Gastos por categoría (año completo)</Eyebrow>
+          <div className="mt-4 h-64">
+            {catTotalsYear.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={catTotalsYear} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={2}>
+                    {catTotalsYear.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} layout="vertical" align="right" verticalAlign="middle" />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-sm text-slate-400">Aún no hay gastos registrados este año.</p>
+            )}
+          </div>
+        </Card>
+        <Card className="p-5">
+          <Eyebrow>Balance mensual (comparación entre meses)</Eyebrow>
+          <div className="mt-4 h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={monthCompare}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                <Bar dataKey="Balance" radius={[4, 4, 0, 0]}>
+                  {monthCompare.map((d, i) => <Cell key={i} fill={d.Balance >= 0 ? "#22C55E" : "#EF4444"} />)}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
@@ -1828,6 +1877,10 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
   const [recurringOpen, setRecurringOpen] = useState(false);
   const [cards, setCards] = useState([]);
   const [showCardsManager, setShowCardsManager] = useState(false);
+  // "Tarjetas" y "Plan de pago" son los botones que menos se usan día a día,
+  // así que quedan escondidos detrás de "Más opciones" (empieza cerrado) —
+  // deja la fila de botones de Gastos menos cargada por defecto.
+  const [moreOpen, setMoreOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
   async function refetchExpenses() {
@@ -2014,23 +2067,33 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
             <Download size={15} /> Exportar CSV
           </button>
           <button
-            onClick={() => setShowCardsManager(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <Landmark size={15} /> Tarjetas
-          </button>
-          <button
             onClick={() => setShowRecurringModal(true)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Repeat size={15} /> Gasto fijo
           </button>
           <button
-            onClick={() => setShowPlanModal(true)}
+            onClick={() => setMoreOpen((v) => !v)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
-            <CreditCard size={15} /> Plan de pago
+            <MoreHorizontal size={15} /> Más opciones
           </button>
+          {moreOpen && (
+            <>
+              <button
+                onClick={() => setShowCardsManager(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <Landmark size={15} /> Tarjetas
+              </button>
+              <button
+                onClick={() => setShowPlanModal(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <CreditCard size={15} /> Plan de pago
+              </button>
+            </>
+          )}
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
@@ -3649,76 +3712,6 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
   );
 }
 /* ---------------------------------------------------------------
-   ESTADÍSTICAS
------------------------------------------------------------------- */
-function StatsView({ fmt, yearData }) {
-  const allExpenses = yearData.flatMap((m) => m.gastos);
-  const categoriasUsadas = [...new Set(allExpenses.map((e) => e.categoria))];
-  const catTotals = categoriasUsadas.map((cat) => ({
-    name: cat,
-    value: allExpenses.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
-    color: CATEGORY_META[cat]?.color || "#64748B",
-  }));
-  const monthCompare = yearData.map((m) => ({ mes: m.mes, Balance: m.balance }));
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="p-5">
-          <Eyebrow>Gastos por categoría (año completo)</Eyebrow>
-          <div className="mt-4 h-72">
-            {catTotals.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={catTotals} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} paddingAngle={2}>
-                    {catTotals.map((d, i) => <Cell key={i} fill={d.color} />)}
-                  </Pie>
-                  <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} layout="vertical" align="right" verticalAlign="middle" />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-sm text-slate-400">Aún no hay gastos registrados este año.</p>
-            )}
-          </div>
-        </Card>
-        <Card className="p-5">
-          <Eyebrow>Balance mensual (comparación entre meses)</Eyebrow>
-          <div className="mt-4 h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthCompare}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-                <Bar dataKey="Balance" radius={[4, 4, 0, 0]}>
-                  {monthCompare.map((d, i) => <Cell key={i} fill={d.Balance >= 0 ? "#22C55E" : "#EF4444"} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-      <Card className="p-5">
-        <Eyebrow>Evolución de ingresos, gastos y ahorro</Eyebrow>
-        <div className="mt-4 h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={yearData.map((m) => ({ mes: m.mes, Ingresos: m.ingresoTotal, Gastos: m.gastoTotal, Ahorro: m.ahorroTotal }))}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="Ingresos" stroke="#22C55E" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Gastos" stroke="#EF4444" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Ahorro" stroke="#3B82F6" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-    </div>
-  );
-}
-/* ---------------------------------------------------------------
    APP SHELL
 ------------------------------------------------------------------ */
 const TABS = [
@@ -3728,7 +3721,6 @@ const TABS = [
   { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "savings", label: "Ahorros", icon: PiggyBank },
   { id: "goals", label: "Metas", icon: Target },
-  { id: "stats", label: "Estadísticas", icon: TrendingUp },
 ];
 export default function FinanceApp() {
   const [tab, setTab] = useState("dashboard");
@@ -3837,9 +3829,8 @@ export default function FinanceApp() {
                 {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && "Tus ahorros"}
                 {tab === "goals" && "Tus metas"}
-                {tab === "stats" && "Estadísticas"}
               </h1>
-              {["dashboard", "stats", "incomes", "expenses", "savings", "budgets"].includes(tab) ? (
+              {["dashboard", "incomes", "expenses", "savings", "budgets"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToYear(year - 1)}
@@ -3869,7 +3860,6 @@ export default function FinanceApp() {
           ) : (
             <>
               {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} />}
-              {tab === "stats" && <StatsView fmt={format} yearData={yearData} />}
             </>
           )}
           {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
