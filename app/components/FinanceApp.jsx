@@ -98,10 +98,36 @@ function resolveEffectiveBudgets(allBudgets, year, month1to12) {
 function synthesizeRecurringEntries(item, year, { totalMonths } = {}) {
   const out = [];
   const isQuincenal = !totalMonths && item.frequency === "quincenal";
-  // 1200 meses / 2400 quincenas = 100 años, tope de seguridad para ítems sin fin
-  const cap = totalMonths ?? (isQuincenal ? 2400 : 1200);
+  if (isQuincenal) {
+    // Lo quincenal SIEMPRE cae en el día 15 y el día 30 de cada mes (o el
+    // último día del mes, en los meses que no llegan a 30, como febrero) —
+    // igual que una planilla real. Antes se sumaban 15 días de calendario a
+    // partir de la fecha de inicio, lo que con el tiempo iba corriendo esa
+    // fecha por todos los días del mes; ahora se ancla siempre al 15/30.
+    // `item.start_date` solo decide desde qué fecha empieza a contar (se
+    // descartan las ocurrencias de 15/30 anteriores a esa fecha).
+    let index = 0;
+    // 1200 meses = 100 años, tope de seguridad para ítems sin fecha de fin
+    for (let i = 0; i < 1200; i++) {
+      const monthAnchor = addMonthsToDateString(item.start_date, i);
+      const [anchorYear, anchorMonth] = monthAnchor.split("-").map(Number);
+      if (anchorYear > year) break;
+      const lastDayOfMonth = new Date(anchorYear, anchorMonth, 0).getDate();
+      const secondDay = Math.min(30, lastDayOfMonth);
+      const mm = String(anchorMonth).padStart(2, "0");
+      const candidates = [`${anchorYear}-${mm}-15`, `${anchorYear}-${mm}-${String(secondDay).padStart(2, "0")}`];
+      candidates.forEach((d) => {
+        if (d < item.start_date) return;
+        if (anchorYear === year) out.push({ date: d, index });
+        index += 1;
+      });
+    }
+    return out;
+  }
+  // 1200 meses = 100 años, tope de seguridad para ítems sin fecha de fin
+  const cap = totalMonths ?? 1200;
   for (let i = 0; i < cap; i++) {
-    const d = isQuincenal ? addDaysToDateString(item.start_date, i * 15) : addMonthsToDateString(item.start_date, i);
+    const d = addMonthsToDateString(item.start_date, i);
     const dy = Number(d.slice(0, 4));
     if (dy > year) break;
     if (dy === year) out.push({ date: d, index: i });
@@ -291,13 +317,6 @@ function addMonthsToDateString(dateStr, monthsToAdd) {
   const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
   const targetDay = Math.min(d, lastDayOfTargetMonth);
   return `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
-}
-// Suma días de calendario a una fecha "YYYY-MM-DD" (se usa para lo quincenal).
-function addDaysToDateString(dateStr, daysToAdd) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() + daysToAdd);
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 // A partir de la fecha real de una compra con tarjeta de crédito, calcula la
 // fecha en la que realmente toca pagarla (según el día de corte y el día de
@@ -1975,7 +1994,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             >
               <option value="mensual">Mensual</option>
-              <option value="quincenal">Quincenal (cada 15 días)</option>
+              <option value="quincenal">Quincenal (días 15 y 30)</option>
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1988,7 +2007,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "1ª quincena el" : "Empieza el"}</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -1997,7 +2016,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
           </div>
           {isQuincenal && (
             <p className="text-xs text-slate-400">
-              Se va a contar cada 15 días a partir de esa fecha (aprox. 2 veces al mes), no necesariamente los mismos días cada mes.
+              Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
             </p>
           )}
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
@@ -2994,7 +3013,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             >
               <option value="mensual">Mensual</option>
-              <option value="quincenal">Quincenal (cada 15 días)</option>
+              <option value="quincenal">Quincenal (días 15 y 30)</option>
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -3007,7 +3026,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "1ª quincena el" : "Empieza el"}</label>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -3016,7 +3035,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
           </div>
           {isQuincenal && (
             <p className="text-xs text-slate-400">
-              Se va a contar cada 15 días a partir de esa fecha (aprox. 2 veces al mes), no necesariamente los mismos días cada mes.
+              Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
             </p>
           )}
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
