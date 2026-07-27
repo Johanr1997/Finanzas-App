@@ -1228,17 +1228,19 @@ function Row({ label, value, bold }) {
 /* ---------------------------------------------------------------
    METAS
 ------------------------------------------------------------------ */
-// Sugiere cuánto sería razonable aportar a una meta puntual ESTE mes, sin
+// Sugiere cuánto sería razonable aportar a una meta puntual EN EL MES
+// ELEGIDO (las flechitas "‹ Mes Año ›" arriba del título de Metas), sin
 // afectar las demás finanzas. Las metas no tienen fecha límite (no hay
 // columna para eso todavía), así que el consejo no se basa en "cuántos
-// meses faltan" — se basa en lo que de verdad sobra este mes en la vida
+// meses faltan" — se basa en lo que de verdad sobra en ese mes en la vida
 // real de la persona: `monthBalance` es el mismo "balance" que ya calcula
 // fetchYearData (ingresos - gastos - ahorros ya registrados) para el mes
-// real actual, sin importar qué mes esté viendo en el resto de la app. Se
-// recomienda hasta un 30% de ese sobrante — nunca más de lo que sobra, ni
-// más de lo que falta para completar la meta — para dejar margen para
-// imprevistos y no comprometer todo el dinero disponible en una sola meta.
-function buildGoalSavingsTip(remaining, monthBalance, fmt) {
+// elegido, tomado directamente del `yearData` que ya carga toda la app (no
+// hace falta una consulta aparte). Se recomienda hasta un 30% de ese
+// sobrante — nunca más de lo que sobra, ni más de lo que falta para
+// completar la meta — para dejar margen para imprevistos y no comprometer
+// todo el dinero disponible en una sola meta.
+function buildGoalSavingsTip(remaining, monthBalance, monthLabel, fmt) {
   if (remaining <= 0) {
     return { level: "green", text: "¡Ya completaste esta meta! No hace falta aportar más, a menos que quieras seguir acumulando." };
   }
@@ -1246,7 +1248,7 @@ function buildGoalSavingsTip(remaining, monthBalance, fmt) {
   if (monthBalance <= 0) {
     return {
       level: "red",
-      text: "Este mes tus gastos y ahorros ya igualan o superan tus ingresos, así que no queda margen para aportar a esta meta sin afectar tus finanzas. Espera a un mes con más balance disponible.",
+      text: `En ${monthLabel} tus gastos y ahorros ya igualan o superan tus ingresos, así que no queda margen para aportar a esta meta sin afectar tus finanzas ese mes.`,
     };
   }
   let suggested = Math.min(remaining, monthBalance * 0.3);
@@ -1255,30 +1257,25 @@ function buildGoalSavingsTip(remaining, monthBalance, fmt) {
   if (suggested >= remaining) {
     return {
       level: "green",
-      text: `Con ${fmt(remaining)} completarías esta meta, y tu margen de este mes (${fmt(monthBalance)}) alcanza sin problema — podrías completarla ahora sin afectar tus finanzas.`,
+      text: `Con ${fmt(remaining)} completarías esta meta, y tu margen en ${monthLabel} (${fmt(monthBalance)}) alcanza sin problema — podrías completarla sin afectar tus finanzas.`,
     };
   }
   return {
     level: "amber",
-    text: `Este mes lo recomendable sería ahorrar ${fmt(suggested)} para esta meta, sin afectar tus finanzas (hasta un 30% de lo que te queda disponible este mes: ${fmt(monthBalance)}).`,
+    text: `En ${monthLabel} lo recomendable sería ahorrar ${fmt(suggested)} para esta meta, sin afectar tus finanzas (hasta un 30% de lo que te queda disponible ese mes: ${fmt(monthBalance)}).`,
   };
 }
-function GoalsView({ fmt }) {
+function GoalsView({ fmt, yearData, month }) {
   const [goals, setGoals] = useState([]);
   const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
-  // Balance real del mes actual (ingresos - gastos - ahorros), para el
-  // consejo de "cuánto aportar a esta meta sin afectar tus finanzas" dentro
-  // de "Ver aportes". Se calcula una sola vez con fetchYearData del año real
-  // actual (independiente de cualquier año/mes que se esté viendo en otras
-  // pestañas de la app, ya que Metas no participa de esa navegación).
-  const [thisMonthBalance, setThisMonthBalance] = useState(null);
-  useEffect(() => {
-    const now = new Date();
-    fetchYearData(now.getFullYear()).then((data) => {
-      setThisMonthBalance(data[now.getMonth()].balance);
-    });
-  }, []);
+  // Balance del mes elegido con las flechitas de arriba (ingresos - gastos -
+  // ahorros), para el consejo de "cuánto aportar a esta meta sin afectar tus
+  // finanzas" dentro de "Ver aportes". Se toma directo del `yearData` que ya
+  // carga la app entera — no hace falta una consulta aparte. Mientras
+  // `yearData` todavía no llega (primera carga), queda en null y el consejo
+  // simplemente no se muestra todavía (ver buildGoalSavingsTip).
+  const selectedMonthBalance = yearData ? yearData[month].balance : null;
   const [showModal, setShowModal] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
   const [deletingGoal, setDeletingGoal] = useState(null);
@@ -1391,7 +1388,8 @@ function GoalsView({ fmt }) {
           goal={viewingContributionsGoal}
           contributions={contributions.filter((c) => c.goal_id === viewingContributionsGoal.id)}
           fmt={fmt}
-          thisMonthBalance={thisMonthBalance}
+          selectedMonthBalance={selectedMonthBalance}
+          monthLabel={MONTHS_FULL[month]}
           onClose={() => setViewingContributionsGoal(null)}
         />
       )}
@@ -1491,13 +1489,14 @@ function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
 // Solo lectura: muestra los ahorros de la pestaña Ahorros que se vincularon
 // a esta meta. Para editarlos o borrarlos, se hace desde Ahorros (ahí vive
 // el registro real); esto evita duplicar esa lógica en dos lugares.
-function GoalContributionsListModal({ goal, contributions, fmt, thisMonthBalance, onClose }) {
+function GoalContributionsListModal({ goal, contributions, fmt, selectedMonthBalance, monthLabel, onClose }) {
   const total = contributions.reduce((a, c) => a + Number(c.amount), 0);
-  // Consejo desplegable de cuánto aportar este mes sin afectar las
-  // finanzas — empieza cerrado, la persona decide si lo quiere ver.
+  // Consejo desplegable de cuánto aportar en el mes elegido (las flechitas
+  // de arriba) sin afectar las finanzas — empieza cerrado, la persona decide
+  // si lo quiere ver.
   const [tipOpen, setTipOpen] = useState(false);
   const remaining = Math.max(0, Number(goal.target_amount) - Number(goal.current_amount));
-  const tip = buildGoalSavingsTip(remaining, thisMonthBalance, fmt);
+  const tip = buildGoalSavingsTip(remaining, selectedMonthBalance, monthLabel, fmt);
   const tipToneClasses = {
     red: { icon: "text-red-500", border: "border-red-100 dark:border-red-500/20", text: "text-red-600 dark:text-red-400" },
     amber: { icon: "text-amber-500", border: "border-amber-100 dark:border-amber-500/20", text: "text-amber-700 dark:text-amber-400" },
@@ -4116,7 +4115,7 @@ export default function FinanceApp() {
                   </button>
                   <span>· actualizado en tiempo real</span>
                 </div>
-              ) : ["incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
+              ) : ["incomes", "expenses", "calendar", "savings", "budgets", "goals"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToMonth(-1)}
@@ -4153,7 +4152,7 @@ export default function FinanceApp() {
           {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
           {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} />}
           {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
-          {tab === "goals" && <GoalsView fmt={format} />}
+          {tab === "goals" && <GoalsView fmt={format} yearData={yearData} month={month} />}
         </main>
         {monthOpen !== null && yearData && (
           <MonthDetail index={monthOpen} year={year} fmt={format} onClose={() => setMonthOpen(null)} onNav={navMonth} yearData={yearData} />
