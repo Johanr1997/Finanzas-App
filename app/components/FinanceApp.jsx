@@ -1228,10 +1228,57 @@ function Row({ label, value, bold }) {
 /* ---------------------------------------------------------------
    METAS
 ------------------------------------------------------------------ */
+// Sugiere cuánto sería razonable aportar a una meta puntual ESTE mes, sin
+// afectar las demás finanzas. Las metas no tienen fecha límite (no hay
+// columna para eso todavía), así que el consejo no se basa en "cuántos
+// meses faltan" — se basa en lo que de verdad sobra este mes en la vida
+// real de la persona: `monthBalance` es el mismo "balance" que ya calcula
+// fetchYearData (ingresos - gastos - ahorros ya registrados) para el mes
+// real actual, sin importar qué mes esté viendo en el resto de la app. Se
+// recomienda hasta un 30% de ese sobrante — nunca más de lo que sobra, ni
+// más de lo que falta para completar la meta — para dejar margen para
+// imprevistos y no comprometer todo el dinero disponible en una sola meta.
+function buildGoalSavingsTip(remaining, monthBalance, fmt) {
+  if (remaining <= 0) {
+    return { level: "green", text: "¡Ya completaste esta meta! No hace falta aportar más, a menos que quieras seguir acumulando." };
+  }
+  if (monthBalance == null) return null; // todavía cargando el balance del mes
+  if (monthBalance <= 0) {
+    return {
+      level: "red",
+      text: "Este mes tus gastos y ahorros ya igualan o superan tus ingresos, así que no queda margen para aportar a esta meta sin afectar tus finanzas. Espera a un mes con más balance disponible.",
+    };
+  }
+  let suggested = Math.min(remaining, monthBalance * 0.3);
+  if (suggested >= 1000) suggested = Math.round(suggested / 1000) * 1000; // redondeado a miles, se ve más limpio
+  suggested = Math.min(suggested, monthBalance); // por si acaso el redondeo lo pasara del margen real
+  if (suggested >= remaining) {
+    return {
+      level: "green",
+      text: `Con ${fmt(remaining)} completarías esta meta, y tu margen de este mes (${fmt(monthBalance)}) alcanza sin problema — podrías completarla ahora sin afectar tus finanzas.`,
+    };
+  }
+  return {
+    level: "amber",
+    text: `Este mes lo recomendable sería ahorrar ${fmt(suggested)} para esta meta, sin afectar tus finanzas (hasta un 30% de lo que te queda disponible este mes: ${fmt(monthBalance)}).`,
+  };
+}
 function GoalsView({ fmt }) {
   const [goals, setGoals] = useState([]);
   const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Balance real del mes actual (ingresos - gastos - ahorros), para el
+  // consejo de "cuánto aportar a esta meta sin afectar tus finanzas" dentro
+  // de "Ver aportes". Se calcula una sola vez con fetchYearData del año real
+  // actual (independiente de cualquier año/mes que se esté viendo en otras
+  // pestañas de la app, ya que Metas no participa de esa navegación).
+  const [thisMonthBalance, setThisMonthBalance] = useState(null);
+  useEffect(() => {
+    const now = new Date();
+    fetchYearData(now.getFullYear()).then((data) => {
+      setThisMonthBalance(data[now.getMonth()].balance);
+    });
+  }, []);
   const [showModal, setShowModal] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
   const [deletingGoal, setDeletingGoal] = useState(null);
@@ -1344,6 +1391,7 @@ function GoalsView({ fmt }) {
           goal={viewingContributionsGoal}
           contributions={contributions.filter((c) => c.goal_id === viewingContributionsGoal.id)}
           fmt={fmt}
+          thisMonthBalance={thisMonthBalance}
           onClose={() => setViewingContributionsGoal(null)}
         />
       )}
@@ -1443,8 +1491,18 @@ function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
 // Solo lectura: muestra los ahorros de la pestaña Ahorros que se vincularon
 // a esta meta. Para editarlos o borrarlos, se hace desde Ahorros (ahí vive
 // el registro real); esto evita duplicar esa lógica en dos lugares.
-function GoalContributionsListModal({ goal, contributions, fmt, onClose }) {
+function GoalContributionsListModal({ goal, contributions, fmt, thisMonthBalance, onClose }) {
   const total = contributions.reduce((a, c) => a + Number(c.amount), 0);
+  // Consejo desplegable de cuánto aportar este mes sin afectar las
+  // finanzas — empieza cerrado, la persona decide si lo quiere ver.
+  const [tipOpen, setTipOpen] = useState(false);
+  const remaining = Math.max(0, Number(goal.target_amount) - Number(goal.current_amount));
+  const tip = buildGoalSavingsTip(remaining, thisMonthBalance, fmt);
+  const tipToneClasses = {
+    red: { icon: "text-red-500", border: "border-red-100 dark:border-red-500/20", text: "text-red-600 dark:text-red-400" },
+    amber: { icon: "text-amber-500", border: "border-amber-100 dark:border-amber-500/20", text: "text-amber-700 dark:text-amber-400" },
+    green: { icon: "text-emerald-500", border: "border-emerald-100 dark:border-emerald-500/20", text: "text-emerald-700 dark:text-emerald-400" },
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
@@ -1455,6 +1513,26 @@ function GoalContributionsListModal({ goal, contributions, fmt, onClose }) {
         <p className="mb-4 text-xs text-slate-400">
           Ahorros de la pestaña Ahorros vinculados a esta meta. Para editar o eliminar alguno, hazlo desde ahí.
         </p>
+        {tip && (
+          <div className="mb-4 overflow-hidden rounded-xl border border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setTipOpen((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left"
+            >
+              <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+                <Sparkles size={13} className={tipToneClasses[tip.level].icon} />
+                Consejo para esta meta
+              </span>
+              <ChevronRight size={14} className={`shrink-0 text-slate-400 transition-transform ${tipOpen ? "rotate-90" : ""}`} />
+            </button>
+            {tipOpen && (
+              <p className={`border-t px-4 py-2.5 text-xs ${tipToneClasses[tip.level].border} ${tipToneClasses[tip.level].text}`}>
+                {tip.text}
+              </p>
+            )}
+          </div>
+        )}
         <div className="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
           {contributions.map((c) => {
             const label = SAVINGS_TYPES.find((t) => t.value === c.type)?.label || c.type;
@@ -3894,10 +3972,10 @@ const TABS = [
   { id: "dashboard", label: "Resumen", icon: Wallet },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
-  { id: "calendar", label: "Calendario", icon: Calendar },
   { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "savings", label: "Ahorros", icon: PiggyBank },
   { id: "goals", label: "Metas", icon: Target },
+  { id: "calendar", label: "Calendario", icon: Calendar },
 ];
 export default function FinanceApp() {
   const [tab, setTab] = useState("dashboard");
