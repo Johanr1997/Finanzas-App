@@ -158,6 +158,7 @@ async function fetchYearData(year) {
   if (planError) console.error("Error planes de pago:", planError.message);
   if (recExpError) console.error("Error gastos fijos:", recExpError.message);
   if (recIncError) console.error("Error ingresos fijos:", recIncError.message);
+  const hadError = Boolean(incError || expError || savError || planError || recExpError || recIncError);
   // Los planes de pago no se guardan como una fila por cuota: se sintetizan
   // aquí, solo para el año consultado, a partir de start_date + total_months.
   const planExpenses = [];
@@ -218,6 +219,12 @@ async function fetchYearData(year) {
     const gastosFormateados = monthExpenses.map((e) => ({
       id: e.id,
       categoria: e.categories?.name || "Otros",
+      // Color real de la categoría, tal como está en Supabase (columna
+      // categories.color) — así los gráficos de Resumen usan el mismo color
+      // que ya se ve en Gastos/Presupuestos, en vez de un color fijo aparte
+      // en el código (CATEGORY_META) que podía quedar desactualizado si el
+      // color de una categoría se edita alguna vez desde la base de datos.
+      color: e.categories?.color || null,
       descripcion: e.description || e.categories?.name || "Gasto",
       fecha: e.date,
       fechaCompra: e.purchase_date || null,
@@ -236,7 +243,12 @@ async function fetchYearData(year) {
       balance,
     };
   });
-  return monthsData;
+  // Antes esto solo mandaba los errores a console.error y seguía con lo que
+  // hubiera cargado bien — la persona veía la pantalla igual que si de
+  // verdad no tuviera datos ese año, sin ningún aviso. Ahora también se
+  // devuelve si algo falló, para que quien llama a fetchYearData (el
+  // encabezado de la app) pueda mostrar un aviso visible.
+  return { months: monthsData, hadError };
 }
 /* ---------------------------------------------------------------
    HELPERS
@@ -449,6 +461,20 @@ function Card({ children, className = "" }) {
 function Eyebrow({ children }) {
   return <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">{children}</p>;
 }
+// Aviso visible cuando algo falló al cargar datos de Supabase (antes solo se
+// mandaba a la consola con console.error y la pantalla quedaba igual que si
+// no hubiera datos, sin ningún aviso — confuso, porque se ve idéntico a "no
+// has registrado nada todavía"). Cada pestaña guarda su propio mensaje de
+// error y lo limpia en cuanto una recarga sale bien.
+function LoadErrorBanner({ message }) {
+  if (!message) return null;
+  return (
+    <div className="mb-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+      <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+      <span>{message}</span>
+    </div>
+  );
+}
 function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
   const accents = {
     slate: "text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800",
@@ -568,9 +594,11 @@ function RowActions({ onEdit, onDelete }) {
 ------------------------------------------------------------------ */
 function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const [goals, setGoals] = useState([]);
+  const [goalsError, setGoalsError] = useState(false);
   useEffect(() => {
     supabase.from("goals").select("*").then(({ data, error }) => {
       if (error) console.error("Error cargando metas:", error.message);
+      setGoalsError(Boolean(error));
       setGoals(data || []);
     });
   }, []);
@@ -598,11 +626,19 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const catTotalsYear = useMemo(() => {
     const expensesForCat = yearData.flatMap((m) => m.gastos);
     const categoriasUsadas = [...new Set(expensesForCat.map((e) => e.categoria))];
-    return categoriasUsadas.map((cat) => ({
-      name: cat,
-      value: expensesForCat.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
-      color: CATEGORY_META[cat]?.color || "#64748B",
-    }));
+    return categoriasUsadas.map((cat) => {
+      // Color real de la categoría (columna categories.color en Supabase),
+      // el mismo que ya se ve en Gastos/Presupuestos — así nunca se ven
+      // colores distintos para la misma categoría entre pestañas. Si algún
+      // gasto viejo no tiene ese dato (categoría eliminada, por ejemplo),
+      // se usa el color fijo del código como respaldo, y gris si tampoco hay.
+      const conColor = expensesForCat.find((e) => e.categoria === cat && e.color);
+      return {
+        name: cat,
+        value: expensesForCat.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
+        color: conColor?.color || CATEGORY_META[cat]?.color || "#64748B",
+      };
+    });
   }, [yearData]);
   const monthCompare = yearData.map((m) => ({ mes: m.mes, Balance: m.balance }));
   const now = new Date();
@@ -646,6 +682,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   }
   return (
     <div className="space-y-6">
+      <LoadErrorBanner message={goalsError ? "No se pudieron cargar tus metas — el progreso de metas de abajo puede no ser exacto. Revisa tu conexión e intenta recargar la página." : ""} />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard label="Saldo disponible" value={fmt(totals.saldo)} icon={Wallet} accent="slate" />
         <StatCard label="Ingresos del año" value={fmt(totals.ingresos)} icon={TrendingUp} accent="green" />
@@ -1063,11 +1100,14 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
     e.descripcion.toLowerCase().includes(search.toLowerCase())
   );
   const categoriasDelMes = [...new Set(m.gastos.map((e) => e.categoria))];
-  const pieData = categoriasDelMes.map((cat) => ({
-    name: cat,
-    value: m.gastos.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
-    color: CATEGORY_META[cat]?.color || "#64748B",
-  })).filter((d) => d.value > 0);
+  const pieData = categoriasDelMes.map((cat) => {
+    const conColor = m.gastos.find((e) => e.categoria === cat && e.color);
+    return {
+      name: cat,
+      value: m.gastos.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
+      color: conColor?.color || CATEGORY_META[cat]?.color || "#64748B",
+    };
+  }).filter((d) => d.value > 0);
   const tipToneClasses = {
     red: "bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300",
     amber: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
@@ -1178,8 +1218,13 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
             </div>
             <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
               {filteredExpenses.map((e) => {
+                // El ícono sigue viniendo de la tabla fija del código (el
+                // ícono guardado en Supabase no está conectado a ningún
+                // componente real todavía en ningún lado de la app); el
+                // color en cambio usa el real de la categoría (Supabase) si
+                // este gasto lo trae, para que coincida con Gastos/Presupuestos.
                 const Icon = CATEGORY_META[e.categoria]?.icon || MoreHorizontal;
-                const color = CATEGORY_META[e.categoria]?.color || "#64748B";
+                const color = e.color || CATEGORY_META[e.categoria]?.color || "#64748B";
                 return (
                   <div key={e.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
                     <div className="flex items-center gap-3">
@@ -1269,6 +1314,7 @@ function GoalsView({ fmt, yearData, month }) {
   const [goals, setGoals] = useState([]);
   const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   // Balance del mes elegido con las flechitas de arriba (ingresos - gastos -
   // ahorros), para el consejo de "cuánto aportar a esta meta sin afectar tus
   // finanzas" dentro de "Ver aportes". Se toma directo del `yearData` que ya
@@ -1293,6 +1339,11 @@ function GoalsView({ fmt, yearData, month }) {
       ]);
       if (error) console.error("Error cargando metas:", error.message);
       if (contribError) console.error("Error cargando aportes:", contribError.message);
+      setLoadError(
+        error || contribError
+          ? "No se pudieron cargar tus metas. Revisa tu conexión e intenta recargar la página."
+          : ""
+      );
       setGoals(gls || []);
       setContributions(contribs || []);
       setLoading(false);
@@ -1309,7 +1360,9 @@ function GoalsView({ fmt, yearData, month }) {
     return <p className="text-sm text-slate-400">Cargando metas...</p>;
   }
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="space-y-4">
+      <LoadErrorBanner message={loadError} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {goals.map((g) => {
         const pct = Math.min(100, Math.round((g.current_amount / g.target_amount) * 100));
         const Icon = Target;
@@ -1393,6 +1446,7 @@ function GoalsView({ fmt, yearData, month }) {
           onClose={() => setViewingContributionsGoal(null)}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -1680,6 +1734,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
   // ocupar espacio de entrada — mismo patrón que "Consejos para este mes".
   const [recurringOpen, setRecurringOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [loadError, setLoadError] = useState("");
   async function refetchIncomes() {
     const { data } = await supabase.from("incomes").select("*")
       .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
@@ -1703,6 +1758,11 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
       ]);
       if (error) console.error("Error cargando ingresos:", error.message);
       if (recError) console.error("Error cargando ingresos fijos:", recError.message);
+      setLoadError(
+        error || recError
+          ? "No se pudieron cargar todos tus ingresos. Revisa tu conexión e intenta recargar la página."
+          : ""
+      );
       setIncomes(inc || []);
       setRecurring(rec || []);
       setLoading(false);
@@ -1733,6 +1793,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
   }
   return (
     <div className="space-y-4">
+      <LoadErrorBanner message={loadError} />
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Ingresos en {MONTHS_FULL[month]} {year}</Eyebrow>
@@ -2119,6 +2180,7 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
+  const [loadError, setLoadError] = useState("");
   async function refetchExpenses() {
     const { data } = await supabase
       .from("expenses")
@@ -2178,6 +2240,11 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
       if (overrideError) console.error("Error cargando estado de cuotas:", overrideError.message);
       if (recError) console.error("Error cargando gastos fijos:", recError.message);
       if (cardError) console.error("Error cargando tarjetas:", cardError.message);
+      setLoadError(
+        expError || catError || planError || overrideError || recError || cardError
+          ? "No se pudieron cargar todos tus datos de Gastos. Revisa tu conexión e intenta recargar la página."
+          : ""
+      );
       setExpenses(exp || []);
       setCategories(sortCategories(cats || []));
       setPlans(pls || []);
@@ -2289,6 +2356,7 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
   }
   return (
     <div className="space-y-4">
+      <LoadErrorBanner message={loadError} />
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Gastos en {MONTHS_FULL[month]} {year}</Eyebrow>
@@ -3231,6 +3299,7 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
   const [deletingSaving, setDeletingSaving] = useState(null);
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [viewingTypeReport, setViewingTypeReport] = useState(null);
+  const [loadError, setLoadError] = useState("");
   async function refetchSavings() {
     const { data } = await supabase
       .from("savings")
@@ -3251,6 +3320,11 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
       ]);
       if (error) console.error("Error cargando ahorros:", error.message);
       if (glsError) console.error("Error cargando metas:", glsError.message);
+      setLoadError(
+        error || glsError
+          ? "No se pudieron cargar todos tus ahorros. Revisa tu conexión e intenta recargar la página."
+          : ""
+      );
       setSavings(sav || []);
       setGoals(gls || []);
       setLoading(false);
@@ -3288,6 +3362,7 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
   }
   return (
     <div className="space-y-4">
+      <LoadErrorBanner message={loadError} />
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Ahorrado en {MONTHS_FULL[month]} {year}</Eyebrow>
@@ -3615,8 +3690,9 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
 function BudgetsView({ fmt, year, month }) {
   const [categories, setCategories] = useState([]);
   const [budgets, setBudgets] = useState([]);
-  const [monthExpenses, setMonthExpenses] = useState([]);
+  const [yearExpenses, setYearExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [editingBudget, setEditingBudget] = useState(null);
   const [deletingBudget, setDeletingBudget] = useState(null);
   const [viewingCategoryExpenses, setViewingCategoryExpenses] = useState(null);
@@ -3625,29 +3701,44 @@ function BudgetsView({ fmt, year, month }) {
     const [{ data: cats, error: catError }, { data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
       supabase.from("categories").select("*"),
       supabase.from("budgets").select("*"),
-      // Se trae sin filtrar por fecha en la consulta: un gasto con tarjeta de
-      // crédito guarda en "date" la fecha de PAGO (puede caer el mes
-      // siguiente), no la fecha en que realmente se compró. Para el
-      // presupuesto lo que importa es cuándo se gastó de verdad, así que se
-      // filtra abajo por "purchase_date" (si existe) o por "date".
-      supabase.from("expenses").select("id, amount, category_id, date, purchase_date, description, credit_cards(name)"),
+      // Antes esto traía TODOS los gastos de la historia, sin filtrar por
+      // fecha en la consulta, y filtraba por mes después en el navegador —
+      // funcionaba, pero con los años se vuelve una consulta cada vez más
+      // pesada (trae más y más filas que nunca hacían falta). Ahora se
+      // acota a una ventana de un año con margen: un gasto con tarjeta de
+      // crédito guarda en "date" la fecha de PAGO (puede caer 1-2 meses
+      // después de la compra real, ver computeCardPaymentDate), así que el
+      // margen cubre eso — se sigue filtrando por "purchase_date" (si
+      // existe) o "date" abajo, esto solo acota cuánto se trae de Supabase.
+      supabase.from("expenses")
+        .select("id, amount, category_id, date, purchase_date, description, credit_cards(name)")
+        .gte("date", `${year}-01-01`)
+        .lte("date", `${year + 1}-03-31`),
     ]);
     if (catError) console.error("Error cargando categorías:", catError.message);
     if (budError) console.error("Error cargando presupuestos:", budError.message);
-    if (expError) console.error("Error cargando gastos del mes:", expError.message);
-    const thisMonth = (exps || []).filter((e) => {
-      const effective = e.purchase_date || e.date;
-      return dateStringYear(effective) === year && dateStringMonth(effective) === month + 1;
-    });
+    if (expError) console.error("Error cargando gastos:", expError.message);
+    setLoadError(
+      catError || budError || expError
+        ? "No se pudieron cargar todos tus datos de Presupuestos. Revisa tu conexión e intenta recargar la página."
+        : ""
+    );
     setCategories(cats || []);
     setBudgets(buds || []);
-    setMonthExpenses(thisMonth);
+    setYearExpenses(exps || []);
     setLoading(false);
   }
   useEffect(() => {
     refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month]);
+  }, [year]);
+  // El mes que se está viendo se filtra al vuelo sobre lo ya cargado — ya no
+  // hace falta volver a consultar Supabase solo por mover las flechitas de
+  // mes (mismo año), como sí pasaba antes.
+  const monthExpenses = useMemo(() => yearExpenses.filter((e) => {
+    const effective = e.purchase_date || e.date;
+    return dateStringYear(effective) === year && dateStringMonth(effective) === month + 1;
+  }), [yearExpenses, year, month]);
 
   async function handleDelete(id) {
     const { error } = await supabase.from("budgets").delete().eq("id", id);
@@ -3685,6 +3776,7 @@ function BudgetsView({ fmt, year, month }) {
 
   return (
     <div className="space-y-4">
+      <LoadErrorBanner message={loadError} />
       <Card className="p-5">
         <Eyebrow>Presupuestos de {MONTHS_FULL[month]} {year}</Eyebrow>
         <p className="mt-1 text-sm text-slate-400">Define un límite mensual por categoría y sigue tu progreso en tiempo real. Puedes usar el mismo monto todos los meses, o uno especial solo para el mes que estás viendo.</p>
@@ -3982,6 +4074,7 @@ export default function FinanceApp() {
   const { code, setCode, format } = useCurrency();
   const [yearData, setYearData] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
+  const [yearDataError, setYearDataError] = useState(false);
   const realCurrentYear = new Date().getFullYear();
   const [year, setYear] = useState(realCurrentYear);
   // Mes compartido por Ingresos/Gastos/Calendario/Ahorros/Presupuestos
@@ -3996,8 +4089,9 @@ export default function FinanceApp() {
 
   async function loadYearData(y = year) {
     setDataLoading(true);
-    const data = await fetchYearData(y);
-    setYearData(data);
+    const { months, hadError } = await fetchYearData(y);
+    setYearData(months);
+    setYearDataError(hadError);
     setDataLoading(false);
   }
   useEffect(() => {
@@ -4140,6 +4234,7 @@ export default function FinanceApp() {
               )}
             </div>
           </div>
+          <LoadErrorBanner message={yearDataError ? "No se pudieron cargar todos tus datos de este año. Revisa tu conexión e intenta recargar la página." : ""} />
           {dataLoading || !yearData ? (
             <p className="text-sm text-slate-400">Cargando tus datos...</p>
           ) : (
