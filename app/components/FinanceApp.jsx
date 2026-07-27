@@ -272,6 +272,9 @@ function dateStringMonth(dateStr) {
   // 1-12
   return Number(String(dateStr).slice(5, 7));
 }
+function dateStringDay(dateStr) {
+  return Number(String(dateStr).slice(8, 10));
+}
 // Fecha de HOY en el calendario LOCAL (no UTC) como "YYYY-MM-DD". Evita el
 // mismo problema pero al revés: `new Date().toISOString()` convierte la
 // hora actual a UTC antes de cortarla, así que en la noche (hora de Costa
@@ -777,6 +780,133 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
           ))}
         </ul>
       </Card>
+    </div>
+  );
+}
+/* ---------------------------------------------------------------
+   CALENDARIO
+------------------------------------------------------------------ */
+const WEEKDAYS_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+// Calendario del mes elegido con lo "programado" — cuotas de planes de pago
+// y gastos fijos, sintetizados dentro de fetchYearData (sus id empiezan con
+// "plan-"/"recexp-", ver ahí). A propósito NO incluye los gastos sueltos que
+// se registran a mano con "+ Agregar gasto" (ni siquiera los pagados con
+// tarjeta): la idea es ver de un vistazo lo que ya sabes que viene ese mes,
+// no un registro completo de todo lo gastado. No hace falta ninguna consulta
+// nueva a Supabase: reutiliza el yearData que ya carga el resto de la app.
+function CalendarView({ fmt, year, month, yearData }) {
+  const [viewingDay, setViewingDay] = useState(null);
+  const monthData = yearData[month];
+  const scheduledItems = useMemo(
+    () => monthData.gastos.filter((g) => String(g.id).startsWith("plan-") || String(g.id).startsWith("recexp-")),
+    [monthData]
+  );
+  const byDay = useMemo(() => {
+    const map = {};
+    scheduledItems.forEach((g) => {
+      const day = dateStringDay(g.fecha);
+      if (!map[day]) map[day] = [];
+      map[day].push(g);
+    });
+    return map;
+  }, [scheduledItems]);
+  const totalProgramado = scheduledItems.reduce((a, g) => a + g.monto, 0);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const now = new Date();
+  const isRealToday = (day) => year === now.getFullYear() && month === now.getMonth() && day === now.getDate();
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  return (
+    <div className="space-y-4">
+      <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Eyebrow>Pagos programados en {MONTHS_FULL[month]} {year}</Eyebrow>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(totalProgramado)}</p>
+        </div>
+        <p className="max-w-xs text-xs text-slate-400">
+          Cuotas de planes de pago y gastos fijos programados este mes. Los gastos sueltos que registras a mano no aparecen aquí.
+        </p>
+      </Card>
+      <Card className="p-5">
+        <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] font-medium text-slate-400">
+          {WEEKDAYS_SHORT.map((w) => <div key={w} className="py-1">{w}</div>)}
+        </div>
+        <div className="mt-1 grid grid-cols-7 gap-1.5">
+          {cells.map((day, i) => {
+            if (day === null) return <div key={`empty-${i}`} />;
+            const items = byDay[day] || [];
+            const dayTotal = items.reduce((a, g) => a + g.monto, 0);
+            const today = isRealToday(day);
+            return (
+              <button
+                key={day}
+                onClick={() => items.length > 0 && setViewingDay({ day, items })}
+                disabled={items.length === 0}
+                className={`flex min-h-[64px] flex-col items-start gap-1 rounded-lg border p-1.5 text-left transition-colors ${
+                  items.length > 0
+                    ? "border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+                    : "border-transparent"
+                } ${today ? "ring-2 ring-slate-900 dark:ring-white" : ""}`}
+                title={items.length > 0 ? `Total del día: ${fmt(dayTotal)}` : undefined}
+              >
+                <span className={`text-xs ${today ? "font-semibold text-slate-900 dark:text-white" : "text-slate-500 dark:text-slate-400"}`}>{day}</span>
+                {items.slice(0, 2).map((g) => (
+                  <span
+                    key={g.id}
+                    className="w-full truncate rounded px-1 py-0.5 text-[10px] font-medium text-white"
+                    style={{ backgroundColor: CATEGORY_META[g.categoria]?.color || "#64748B" }}
+                  >
+                    {fmt(g.monto)}
+                  </span>
+                ))}
+                {items.length > 2 && (
+                  <span className="text-[10px] text-slate-400">+{items.length - 2} más</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+      {viewingDay && (
+        <CalendarDayModal
+          day={viewingDay.day}
+          items={viewingDay.items}
+          fmt={fmt}
+          monthLabel={`${MONTHS_FULL[month]} ${year}`}
+          onClose={() => setViewingDay(null)}
+        />
+      )}
+    </div>
+  );
+}
+// Solo lectura: detalle de lo programado para un día puntual del calendario.
+function CalendarDayModal({ day, items, fmt, monthLabel, onClose }) {
+  const total = items.reduce((a, g) => a + g.monto, 0);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{day} de {monthLabel}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">Pagos programados para este día.</p>
+        <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          {items.map((g) => (
+            <div key={g.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+              <div>
+                <p className="font-medium text-slate-700 dark:text-slate-200">{g.descripcion}</p>
+                <p className="text-xs text-slate-400">{g.categoria}{g.tarjeta ? ` · ${g.tarjeta}` : ""}</p>
+              </div>
+              <span className="tabular-nums font-medium text-red-500">{fmt(g.monto)}</span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-right text-xs text-slate-400">
+          Total del día: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(total)}</span>
+        </p>
+      </div>
     </div>
   );
 }
@@ -3718,6 +3848,7 @@ const TABS = [
   { id: "dashboard", label: "Resumen", icon: Wallet },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
+  { id: "calendar", label: "Calendario", icon: Calendar },
   { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "savings", label: "Ahorros", icon: PiggyBank },
   { id: "goals", label: "Metas", icon: Target },
@@ -3784,7 +3915,7 @@ export default function FinanceApp() {
               })}
             </div>
             <div className="flex items-center gap-2">
-              {["dashboard", "incomes", "expenses", "savings", "budgets"].includes(tab) && (
+              {["dashboard", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) && (
                 <MonthTitleSelect month={month} onChange={setMonth} />
               )}
               <select
@@ -3826,11 +3957,12 @@ export default function FinanceApp() {
                 {tab === "dashboard" && "Resumen del año"}
                 {tab === "incomes" && "Tus ingresos"}
                 {tab === "expenses" && "Tus gastos"}
+                {tab === "calendar" && "Calendario de pagos"}
                 {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && "Tus ahorros"}
                 {tab === "goals" && "Tus metas"}
               </h1>
-              {["dashboard", "incomes", "expenses", "savings", "budgets"].includes(tab) ? (
+              {["dashboard", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToYear(year - 1)}
@@ -3860,6 +3992,7 @@ export default function FinanceApp() {
           ) : (
             <>
               {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} />}
+              {tab === "calendar" && <CalendarView fmt={format} year={year} month={month} yearData={yearData} />}
             </>
           )}
           {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
