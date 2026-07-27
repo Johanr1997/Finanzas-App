@@ -563,29 +563,6 @@ function RowActions({ onEdit, onDelete }) {
     </div>
   );
 }
-// Selector de mes minimalista, fijo arriba en el encabezado (junto al
-// selector de moneda), no pegado al título de cada pestaña — así se ve
-// siempre en el mismo lugar sin importar en qué pestaña estés, y se siente
-// como un solo control global en vez de algo distinto por pantalla. Se
-// muestra en Resumen, Ingresos, Gastos, Ahorros y Presupuestos (en Ingresos/
-// Gastos/Ahorros/Presupuestos sí filtra los datos; en Resumen no cambia nada
-// todavía, ver el dashboard más abajo). No aparece en Metas. El mes es un
-// estado compartido (ver FinanceApp), igual que ya pasa con el año. Reemplaza
-// la barra de flechitas "‹ Mes Año ›" que antes vivía dentro de cada pestaña.
-function MonthTitleSelect({ month, onChange }) {
-  return (
-    <select
-      value={month}
-      onChange={(e) => onChange(Number(e.target.value))}
-      aria-label="Cambiar de mes"
-      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
-    >
-      {MONTHS_FULL.map((m, i) => (
-        <option key={m} value={i}>{m}</option>
-      ))}
-    </select>
-  );
-}
 /* ---------------------------------------------------------------
    DASHBOARD
 ------------------------------------------------------------------ */
@@ -3930,13 +3907,14 @@ export default function FinanceApp() {
   const [dataLoading, setDataLoading] = useState(true);
   const realCurrentYear = new Date().getFullYear();
   const [year, setYear] = useState(realCurrentYear);
-  // Mes compartido por Ingresos/Gastos/Ahorros/Presupuestos (0 = enero). Vive
-  // aquí, junto al año, y se elige desde un único selector fijo en la parte
-  // de arriba del encabezado (junto a la moneda) — no pegado al título de
-  // cada pestaña, para que se sienta como un control global y no como algo
-  // distinto en cada pantalla. También se muestra en Resumen: ahí no filtra
-  // nada (esa vista siempre es anual), solo se usa para resaltar el mes
-  // elegido dentro de "Panorama del año".
+  // Mes compartido por Ingresos/Gastos/Calendario/Ahorros/Presupuestos
+  // (0 = enero). Antes se elegía con un <select> fijo arriba del todo, junto
+  // a la moneda; el 2026-07-27 por la noche se quitó ese selector y en su
+  // lugar cada una de esas pestañas muestra flechitas "‹ Mes Año ›" debajo de
+  // su título (mismo lugar donde antes solo Resumen tenía flechitas de año).
+  // Solo Resumen se quedó con las flechitas de AÑO (ahí la vista es siempre
+  // anual, no de un mes puntual) — ver más abajo, en el título de cada
+  // pestaña, dónde se bifurca uno u otro control.
   const [month, setMonth] = useState(() => new Date().getMonth());
 
   async function loadYearData(y = year) {
@@ -3955,6 +3933,18 @@ export default function FinanceApp() {
   const openMonth = (i) => setMonthOpen(i);
   const navMonth = (delta) => setMonthOpen((i) => Math.min(11, Math.max(0, i + delta)));
   const goToYear = (y) => setYear(Math.min(realCurrentYear + MAX_FUTURE_YEARS, y));
+  // Mueve el mes elegido hacia adelante/atrás; si se sale de enero o
+  // diciembre, pasa también al año anterior/siguiente (mismo wraparound que
+  // tenía la barra de flechitas original, antes de moverse al selector fijo).
+  const atMaxFutureMonth = year >= realCurrentYear + MAX_FUTURE_YEARS && month === 11;
+  const goToMonth = (delta) => {
+    let newMonth = month + delta;
+    let newYear = year;
+    if (newMonth > 11) { newMonth = 0; newYear = year + 1; }
+    else if (newMonth < 0) { newMonth = 11; newYear = year - 1; }
+    if (newYear !== year) setYear(Math.min(realCurrentYear + MAX_FUTURE_YEARS, newYear));
+    setMonth(newMonth);
+  };
   return (
     <div>
       <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-[#0B1220] dark:text-slate-100">
@@ -3984,9 +3974,6 @@ export default function FinanceApp() {
               })}
             </div>
             <div className="flex items-center gap-2">
-              {["dashboard", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) && (
-                <MonthTitleSelect month={month} onChange={setMonth} />
-              )}
               <select
                 value={code} onChange={(e) => setCode(e.target.value)}
                 className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium outline-none dark:border-slate-800 dark:bg-slate-900"
@@ -4031,7 +4018,7 @@ export default function FinanceApp() {
                 {tab === "savings" && "Tus ahorros"}
                 {tab === "goals" && "Tus metas"}
               </h1>
-              {["dashboard", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
+              {tab === "dashboard" ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToYear(year - 1)}
@@ -4046,6 +4033,26 @@ export default function FinanceApp() {
                     disabled={year >= realCurrentYear + MAX_FUTURE_YEARS}
                     className="rounded-md p-0.5 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
                     aria-label="Año siguiente"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                  <span>· actualizado en tiempo real</span>
+                </div>
+              ) : ["incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
+                <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
+                  <button
+                    onClick={() => goToMonth(-1)}
+                    className="rounded-md p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    aria-label="Mes anterior"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span className="tabular-nums font-medium text-slate-600 dark:text-slate-300">{MONTHS_FULL[month]} {year}</span>
+                  <button
+                    onClick={() => goToMonth(1)}
+                    disabled={atMaxFutureMonth}
+                    className="rounded-md p-0.5 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                    aria-label="Mes siguiente"
                   >
                     <ChevronRight size={14} />
                   </button>
