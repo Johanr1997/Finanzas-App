@@ -2051,9 +2051,12 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
   const [showRecurringModal, setShowRecurringModal] = useState(false);
   const [editingRecurring, setEditingRecurring] = useState(null);
   const [deletingRecurring, setDeletingRecurring] = useState(null);
-  // La lista de "Gastos fijos" es retráctil (empieza cerrada) para no
-  // ocupar espacio de entrada — mismo patrón que "Consejos para este mes".
-  const [recurringOpen, setRecurringOpen] = useState(false);
+  // "Gastos fijos", "Planes de pago activos" y "Planes pagados" se unieron
+  // en una sola sección colapsable ("Fijo y programado", empieza cerrada)
+  // para no llenar la pantalla de tarjetas antes de llegar a la lista real
+  // de gastos del mes — antes eran 3 tarjetas separadas (2 de ellas sin
+  // poder cerrarse) y esa fue la queja concreta que motivó este cambio.
+  const [programmedOpen, setProgrammedOpen] = useState(false);
   const [cards, setCards] = useState([]);
   const [showCardsManager, setShowCardsManager] = useState(false);
   // "Tarjetas" y "Plan de pago" son los botones que menos se usan día a día,
@@ -2281,70 +2284,87 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
           </button>
         </div>
       </Card>
-      {recurring.length > 0 && (
+      {(recurring.length > 0 || activePlans.length > 0 || finishedPlans.length > 0) && (
         <Card className="p-5">
           <button
             type="button"
-            onClick={() => setRecurringOpen((v) => !v)}
+            onClick={() => setProgrammedOpen((v) => !v)}
             className="flex w-full items-center justify-between gap-2 text-left"
           >
             <div>
-              <Eyebrow>Gastos fijos</Eyebrow>
+              <Eyebrow>Fijo y programado</Eyebrow>
               <p className="mt-1 text-xs text-slate-400">
-                Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlos.
+                Gastos fijos y planes de pago: lo que ya sabes que viene, sin tener que revisarlo cada mes.
+              </p>
+              <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                {[
+                  recurring.length > 0 && `${recurring.length} gasto${recurring.length === 1 ? "" : "s"} fijo${recurring.length === 1 ? "" : "s"}`,
+                  activePlans.length > 0 && `${activePlans.length} plan${activePlans.length === 1 ? "" : "es"} activo${activePlans.length === 1 ? "" : "s"}`,
+                  finishedPlans.length > 0 && `${finishedPlans.length} plan${finishedPlans.length === 1 ? "" : "es"} pagado${finishedPlans.length === 1 ? "" : "s"}`,
+                ].filter(Boolean).join(" · ")}
               </p>
             </div>
-            <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${recurringOpen ? "rotate-90" : ""}`} />
+            <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${programmedOpen ? "rotate-90" : ""}`} />
           </button>
-          {recurringOpen && (
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {recurring.map((r) => {
-                const color = r.categories?.color || "#64748B";
-                const isQuincenal = r.frequency === "quincenal";
-                return (
-                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
-                        style={{ backgroundColor: `${color}1a`, color }}
-                      >
-                        <Repeat size={16} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
-                        <p className="text-xs text-slate-400">
-                          {r.categories?.name} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
-                        </p>
-                      </div>
-                    </div>
-                    <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
+          {programmedOpen && (
+            <div className="mt-4 space-y-6">
+              {recurring.length > 0 && (
+                <div>
+                  <Eyebrow>Gastos fijos</Eyebrow>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlos.
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {recurring.map((r) => {
+                      const color = r.categories?.color || "#64748B";
+                      const isQuincenal = r.frequency === "quincenal";
+                      return (
+                        <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
+                              style={{ backgroundColor: `${color}1a`, color }}
+                            >
+                              <Repeat size={16} />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
+                              <p className="text-xs text-slate-400">
+                                {r.categories?.name} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
+                              </p>
+                            </div>
+                          </div>
+                          <RowActions onEdit={() => setEditingRecurring(r)} onDelete={() => setDeletingRecurring(r)} />
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              )}
+              {activePlans.length > 0 && (
+                <div>
+                  <Eyebrow>Planes de pago activos</Eyebrow>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Préstamos y compras a plazos. La cuota del mes que estás viendo arriba se suma automáticamente a tus gastos, sin llenar esta lista de filas repetidas.
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {activePlans.map(renderPlanCard)}
+                  </div>
+                </div>
+              )}
+              {finishedPlans.length > 0 && (
+                <div>
+                  <Eyebrow>Planes pagados</Eyebrow>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Ya no les queda ninguna cuota pendiente en {MONTHS_FULL[month]} {year}. Puedes eliminarlos de tu lista cuando quieras.
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {finishedPlans.map(renderPlanCard)}
+                  </div>
+                </div>
+              )}
             </div>
           )}
-        </Card>
-      )}
-      {activePlans.length > 0 && (
-        <Card className="p-5">
-          <Eyebrow>Planes de pago activos</Eyebrow>
-          <p className="mt-1 text-xs text-slate-400">
-            Préstamos y compras a plazos. La cuota del mes que estás viendo arriba se suma automáticamente a tus gastos, sin llenar esta lista de filas repetidas.
-          </p>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {activePlans.map(renderPlanCard)}
-          </div>
-        </Card>
-      )}
-      {finishedPlans.length > 0 && (
-        <Card className="p-5">
-          <Eyebrow>Planes pagados</Eyebrow>
-          <p className="mt-1 text-xs text-slate-400">
-            Ya no les queda ninguna cuota pendiente en {MONTHS_FULL[month]} {year}. Puedes eliminarlos de tu lista cuando quieras.
-          </p>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {finishedPlans.map(renderPlanCard)}
-          </div>
         </Card>
       )}
       <Card className="overflow-hidden">
