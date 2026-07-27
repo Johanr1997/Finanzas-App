@@ -787,30 +787,54 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
    CALENDARIO
 ------------------------------------------------------------------ */
 const WEEKDAYS_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-// Calendario del mes elegido con lo "programado" — cuotas de planes de pago
-// y gastos fijos, sintetizados dentro de fetchYearData (sus id empiezan con
-// "plan-"/"recexp-", ver ahí). A propósito NO incluye los gastos sueltos que
-// se registran a mano con "+ Agregar gasto" (ni siquiera los pagados con
-// tarjeta): la idea es ver de un vistazo lo que ya sabes que viene ese mes,
-// no un registro completo de todo lo gastado. No hace falta ninguna consulta
-// nueva a Supabase: reutiliza el yearData que ya carga el resto de la app.
+// Calendario del mes elegido con lo "programado" — cuotas de planes de pago,
+// gastos fijos e ingresos fijos, sintetizados dentro de fetchYearData (sus id
+// empiezan con "plan-"/"recexp-"/"recinc-", ver ahí). A propósito NO incluye
+// los gastos ni ingresos sueltos que se registran a mano (ni los gastos
+// pagados con tarjeta): la idea es ver de un vistazo lo que ya sabes que
+// viene ese mes, no un registro completo de todo lo que entra y sale. No
+// hace falta ninguna consulta nueva a Supabase: reutiliza el yearData que ya
+// carga el resto de la app. Cada ítem se normaliza a { id, kind, label, sub,
+// amount, date } para poder mezclar gastos e ingresos en una sola lista por
+// día — "kind" ("gasto"/"ingreso") es lo que decide el color (rojo/verde),
+// en vez del color de categoría que se usaba antes de agregar los ingresos.
 function CalendarView({ fmt, year, month, yearData }) {
   const [viewingDay, setViewingDay] = useState(null);
   const monthData = yearData[month];
-  const scheduledItems = useMemo(
-    () => monthData.gastos.filter((g) => String(g.id).startsWith("plan-") || String(g.id).startsWith("recexp-")),
-    [monthData]
-  );
+  const scheduledItems = useMemo(() => {
+    const gastos = monthData.gastos
+      .filter((g) => String(g.id).startsWith("plan-") || String(g.id).startsWith("recexp-"))
+      .map((g) => ({
+        id: g.id,
+        kind: "gasto",
+        label: g.descripcion,
+        sub: g.categoria + (g.tarjeta ? ` · ${g.tarjeta}` : ""),
+        amount: g.monto,
+        date: g.fecha,
+      }));
+    const ingresos = monthData.incomes
+      .filter((i) => String(i.id).startsWith("recinc-"))
+      .map((i) => ({
+        id: i.id,
+        kind: "ingreso",
+        label: i.description || i.type || "Ingreso fijo",
+        sub: i.type || "",
+        amount: Number(i.amount),
+        date: i.date,
+      }));
+    return [...gastos, ...ingresos];
+  }, [monthData]);
   const byDay = useMemo(() => {
     const map = {};
-    scheduledItems.forEach((g) => {
-      const day = dateStringDay(g.fecha);
+    scheduledItems.forEach((it) => {
+      const day = dateStringDay(it.date);
       if (!map[day]) map[day] = [];
-      map[day].push(g);
+      map[day].push(it);
     });
     return map;
   }, [scheduledItems]);
-  const totalProgramado = scheduledItems.reduce((a, g) => a + g.monto, 0);
+  const totalGastos = scheduledItems.filter((it) => it.kind === "gasto").reduce((a, it) => a + it.amount, 0);
+  const totalIngresos = scheduledItems.filter((it) => it.kind === "ingreso").reduce((a, it) => a + it.amount, 0);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstWeekday = new Date(year, month, 1).getDay();
   const now = new Date();
@@ -820,14 +844,17 @@ function CalendarView({ fmt, year, month, yearData }) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   return (
     <div className="space-y-4">
-      <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Eyebrow>Pagos programados en {MONTHS_FULL[month]} {year}</Eyebrow>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(totalProgramado)}</p>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <Eyebrow>Programado en {MONTHS_FULL[month]} {year}</Eyebrow>
+          <p className="max-w-xs text-xs text-slate-400">
+            Cuotas de planes de pago, gastos fijos e ingresos fijos. Lo que registras a mano (gastos e ingresos sueltos) no aparece aquí.
+          </p>
         </div>
-        <p className="max-w-xs text-xs text-slate-400">
-          Cuotas de planes de pago y gastos fijos programados este mes. Los gastos sueltos que registras a mano no aparecen aquí.
-        </p>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:max-w-xs">
+          <StatMini label="Vas a recibir" value={fmt(totalIngresos)} color="text-emerald-600" />
+          <StatMini label="Vas a pagar" value={fmt(totalGastos)} color="text-red-500" />
+        </div>
       </Card>
       <Card className="p-5">
         <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] font-medium text-slate-400">
@@ -837,7 +864,7 @@ function CalendarView({ fmt, year, month, yearData }) {
           {cells.map((day, i) => {
             if (day === null) return <div key={`empty-${i}`} />;
             const items = byDay[day] || [];
-            const dayTotal = items.reduce((a, g) => a + g.monto, 0);
+            const dayTotal = items.reduce((a, it) => a + (it.kind === "ingreso" ? it.amount : -it.amount), 0);
             const today = isRealToday(day);
             return (
               <button
@@ -849,16 +876,17 @@ function CalendarView({ fmt, year, month, yearData }) {
                     ? "border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
                     : "border-transparent"
                 } ${today ? "ring-2 ring-slate-900 dark:ring-white" : ""}`}
-                title={items.length > 0 ? `Total del día: ${fmt(dayTotal)}` : undefined}
+                title={items.length > 0 ? `Neto del día: ${fmt(dayTotal)}` : undefined}
               >
                 <span className={`text-xs ${today ? "font-semibold text-slate-900 dark:text-white" : "text-slate-500 dark:text-slate-400"}`}>{day}</span>
-                {items.slice(0, 2).map((g) => (
+                {items.slice(0, 2).map((it) => (
                   <span
-                    key={g.id}
-                    className="w-full truncate rounded px-1 py-0.5 text-[10px] font-medium text-white"
-                    style={{ backgroundColor: CATEGORY_META[g.categoria]?.color || "#64748B" }}
+                    key={it.id}
+                    className={`w-full truncate rounded px-1 py-0.5 text-[10px] font-medium text-white ${
+                      it.kind === "ingreso" ? "bg-emerald-500" : "bg-red-500"
+                    }`}
                   >
-                    {fmt(g.monto)}
+                    {fmt(it.amount)}
                   </span>
                 ))}
                 {items.length > 2 && (
@@ -883,7 +911,7 @@ function CalendarView({ fmt, year, month, yearData }) {
 }
 // Solo lectura: detalle de lo programado para un día puntual del calendario.
 function CalendarDayModal({ day, items, fmt, monthLabel, onClose }) {
-  const total = items.reduce((a, g) => a + g.monto, 0);
+  const total = items.reduce((a, it) => a + (it.kind === "ingreso" ? it.amount : -it.amount), 0);
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
@@ -891,20 +919,22 @@ function CalendarDayModal({ day, items, fmt, monthLabel, onClose }) {
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{day} de {monthLabel}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
         </div>
-        <p className="mb-4 text-xs text-slate-400">Pagos programados para este día.</p>
+        <p className="mb-4 text-xs text-slate-400">Lo programado para este día.</p>
         <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-          {items.map((g) => (
-            <div key={g.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+          {items.map((it) => (
+            <div key={it.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
               <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200">{g.descripcion}</p>
-                <p className="text-xs text-slate-400">{g.categoria}{g.tarjeta ? ` · ${g.tarjeta}` : ""}</p>
+                <p className="font-medium text-slate-700 dark:text-slate-200">{it.label}</p>
+                {it.sub && <p className="text-xs text-slate-400">{it.sub}</p>}
               </div>
-              <span className="tabular-nums font-medium text-red-500">{fmt(g.monto)}</span>
+              <span className={`tabular-nums font-medium ${it.kind === "ingreso" ? "text-emerald-600" : "text-red-500"}`}>
+                {it.kind === "ingreso" ? "+" : "-"}{fmt(it.amount)}
+              </span>
             </div>
           ))}
         </div>
         <p className="mt-3 text-right text-xs text-slate-400">
-          Total del día: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(total)}</span>
+          Neto del día: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(total)}</span>
         </p>
       </div>
     </div>
