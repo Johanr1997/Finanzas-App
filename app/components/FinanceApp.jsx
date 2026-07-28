@@ -503,6 +503,43 @@ function CollapsibleSection({ open, onToggle, header, buttonClassName, children 
     </>
   );
 }
+// Envoltorio compartido para modales: fondo oscuro + tarjeta blanca +
+// encabezado con título y botón de cerrar (X) — el mismo bloque que se
+// repetía a mano en más de 10 modales distintos de la app. Por ahora solo se
+// usa en los modales de Ingresos (2026-07-28, primer paso de "reducir código
+// repetido" en Ingresos/Gastos/Ahorros); el resto de modales se dejó sin
+// tocar a propósito, para probar bien este cambio en una sola pestaña antes
+// de aplicarlo en las demás.
+function ModalShell({ onClose, title, maxWidth = "max-w-md", children }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className={`w-full ${maxWidth} rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900`}>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+// Envoltorio compartido para listas con buscador/filtro arriba: tarjeta +
+// lista con líneas divisorias + mensaje de "no hay nada" cuando corresponde.
+// El encabezado (buscador, filtro, o ambos) sigue siendo distinto en cada
+// pestaña, así que se recibe tal cual como "header" — mismo criterio que
+// CollapsibleSection más arriba. Por ahora solo se usa en Ingresos
+// (2026-07-28) — mismo motivo que ModalShell, un paso a la vez.
+function ListCard({ header, isEmpty, emptyMessage, children }) {
+  return (
+    <Card className="overflow-hidden">
+      {header}
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {children}
+        {isEmpty && <p className="px-5 py-8 text-center text-sm text-slate-400">{emptyMessage}</p>}
+      </div>
+    </Card>
+  );
+}
 function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
   const accents = {
     slate: "text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800",
@@ -1884,36 +1921,34 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           </CollapsibleSection>
         </Card>
       )}
-      <Card className="overflow-hidden">
-        <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-          <div className="relative max-w-xs">
-            <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
-            <input
-              value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por tipo o descripción..."
-              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-            />
-          </div>
-        </div>
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {filteredIncomes.map((i) => (
-            <div key={i.id} className="flex items-center justify-between px-5 py-3 text-sm">
-              <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200">{i.description || i.type}</p>
-                <p className="text-xs text-slate-400">{i.type} · {i.date}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="tabular-nums font-medium text-emerald-600">{fmt(i.amount)}</span>
-                <RowActions onEdit={() => setEditingIncome(i)} onDelete={() => setDeletingIncome(i)} />
-              </div>
+      <ListCard
+        header={
+          <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+            <div className="relative max-w-xs">
+              <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
+              <input
+                value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por tipo o descripción..."
+                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
             </div>
-          ))}
-          {filteredIncomes.length === 0 && (
-            <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {monthIncomes.length === 0 ? `Aún no has registrado ingresos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
-            </p>
-          )}
-        </div>
-      </Card>
+          </div>
+        }
+        isEmpty={filteredIncomes.length === 0}
+        emptyMessage={monthIncomes.length === 0 ? `Aún no has registrado ingresos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
+      >
+        {filteredIncomes.map((i) => (
+          <div key={i.id} className="flex items-center justify-between px-5 py-3 text-sm">
+            <div>
+              <p className="font-medium text-slate-700 dark:text-slate-200">{i.description || i.type}</p>
+              <p className="text-xs text-slate-400">{i.type} · {i.date}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="tabular-nums font-medium text-emerald-600">{fmt(i.amount)}</span>
+              <RowActions onEdit={() => setEditingIncome(i)} onDelete={() => setDeletingIncome(i)} />
+            </div>
+          </div>
+        ))}
+      </ListCard>
       {showModal && (
         <IncomeModal defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
       )}
@@ -2000,56 +2035,50 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
     }
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar ingreso" : "Nuevo ingreso"}</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+    <ModalShell onClose={onClose} title={isEditing ? "Editar ingreso" : "Nuevo ingreso"}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
+          <input
+            value={type} onChange={(e) => setType(e.target.value)}
+            placeholder="Ej. Salario, Freelance, Regalo"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
+          <input
+            value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ej. Pago quincena julio"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
             <input
-              value={type} onChange={(e) => setType(e.target.value)}
-              placeholder="Ej. Salario, Freelance, Regalo"
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="500000"
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
             <input
-              value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej. Pago quincena julio"
+              type="date" value={date} onChange={(e) => setDate(e.target.value)}
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
-              <input
-                type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
-                placeholder="500000"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
-              <input
-                type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-          </div>
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
-          >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar ingreso"}
-          </button>
-        </form>
-      </div>
-    </div>
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar ingreso"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 function RecurringIncomeModal({ item, onClose, onSaved }) {
@@ -2099,74 +2128,68 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
     }
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar ingreso fijo" : "Nuevo ingreso fijo"}</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+    <ModalShell onClose={onClose} title={isEditing ? "Editar ingreso fijo" : "Nuevo ingreso fijo"}>
+      <p className="mb-4 text-xs text-slate-400">
+        Para un salario u otro ingreso que se repite por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
+      </p>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
+          <input
+            value={type} onChange={(e) => setType(e.target.value)}
+            placeholder="Ej. Salario"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
         </div>
-        <p className="mb-4 text-xs text-slate-400">
-          Para un salario u otro ingreso que se repite por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
-        </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
-            <input
-              value={type} onChange={(e) => setType(e.target.value)}
-              placeholder="Ej. Salario"
-              className={`mt-1 ${INPUT_CLASS}`}
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
-            <input
-              value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej. Salario quincenal empresa X"
-              className={`mt-1 ${INPUT_CLASS}`}
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
-            <select
-              value={frequency} onChange={(e) => setFrequency(e.target.value)}
-              className={`mt-1 ${INPUT_CLASS}`}
-            >
-              <option value="mensual">Mensual</option>
-              <option value="quincenal">Quincenal (días 15 y 30)</option>
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
-              <input
-                type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
-                placeholder="500000"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
-              <input
-                type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-          </div>
-          {isQuincenal && (
-            <p className="text-xs text-slate-400">
-              Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
-            </p>
-          )}
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
+          <input
+            value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ej. Salario quincenal empresa X"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
+          <select
+            value={frequency} onChange={(e) => setFrequency(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
           >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear ingreso fijo"}
-          </button>
-        </form>
-      </div>
-    </div>
+            <option value="mensual">Mensual</option>
+            <option value="quincenal">Quincenal (días 15 y 30)</option>
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="500000"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
+            <input
+              type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        {isQuincenal && (
+          <p className="text-xs text-slate-400">
+            Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
+          </p>
+        )}
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear ingreso fijo"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 /* ---------------------------------------------------------------
