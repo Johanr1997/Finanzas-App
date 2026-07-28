@@ -4066,8 +4066,8 @@ const TABS = [
   { id: "dashboard", label: "Resumen", icon: Wallet },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
-  { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "savings", label: "Ahorros", icon: PiggyBank },
+  { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "goals", label: "Metas", icon: Target },
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
