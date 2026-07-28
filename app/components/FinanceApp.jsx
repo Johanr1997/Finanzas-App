@@ -510,9 +510,9 @@ function CollapsibleSection({ open, onToggle, header, buttonClassName, children 
 // repetido" en Ingresos/Gastos/Ahorros); el resto de modales se dejó sin
 // tocar a propósito, para probar bien este cambio en una sola pestaña antes
 // de aplicarlo en las demás.
-function ModalShell({ onClose, title, maxWidth = "max-w-md", children }) {
+function ModalShell({ onClose, title, maxWidth = "max-w-md", zIndex = "z-50", overlayExtras, children }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div className={`fixed inset-0 ${zIndex} flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm`} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className={`w-full ${maxWidth} rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900`}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
@@ -520,6 +520,13 @@ function ModalShell({ onClose, title, maxWidth = "max-w-md", children }) {
         </div>
         {children}
       </div>
+      {/* Modales anidados (ej. "Agregar tarjeta" o confirmar borrar dentro de
+          "Tarjetas de crédito") se pasan por acá, NO por children — así
+          quedan como hermanos de la tarjeta blanca (no dentro de ella),
+          igual que estaban antes de existir ModalShell. Importa para que un
+          clic en el fondo oscuro del modal anidado no quede "atrapado" por el
+          stopPropagation() de la tarjeta blanca de este modal. */}
+      {overlayExtras}
     </div>
   );
 }
@@ -2519,55 +2526,53 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           </CollapsibleSection>
         </Card>
       )}
-      <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-          <div className="relative min-w-[160px] flex-1">
-            <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
-            <input
-              value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por descripción o categoría..."
-              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-            />
+      <ListCard
+        header={
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+            <div className="relative min-w-[160px] flex-1">
+              <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
+              <input
+                value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por descripción o categoría..."
+                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+            <select
+              value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              <option>Todas</option>
+              {categoriasDisponibles.map((c) => <option key={c}>{c}</option>)}
+            </select>
           </div>
-          <select
-            value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-          >
-            <option>Todas</option>
-            {categoriasDisponibles.map((c) => <option key={c}>{c}</option>)}
-          </select>
-        </div>
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {filteredExpenses.map((e) => (
-            <div key={e.id} className="flex items-center justify-between px-5 py-3 text-sm">
-              <div className="flex items-center gap-3">
-                <div
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold"
-                  style={{ backgroundColor: `${e.categories?.color || "#64748B"}1a`, color: e.categories?.color || "#64748B" }}
-                >
-                  {(e.categories?.name || "?").charAt(0)}
-                </div>
-                <div>
-                  <p className="font-medium text-slate-700 dark:text-slate-200">{e.description || e.categories?.name}</p>
-                  <p className="text-xs text-slate-400">
-                    {e.categories?.name} · {e.purchase_date || e.date}
-                    {e.purchase_date && e.purchase_date !== e.date && ` · pago: ${e.date}`}
-                    {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
-                  </p>
-                </div>
+        }
+        isEmpty={filteredExpenses.length === 0}
+        emptyMessage={monthExpenses.length === 0 ? `Aún no has registrado gastos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
+      >
+        {filteredExpenses.map((e) => (
+          <div key={e.id} className="flex items-center justify-between px-5 py-3 text-sm">
+            <div className="flex items-center gap-3">
+              <div
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold"
+                style={{ backgroundColor: `${e.categories?.color || "#64748B"}1a`, color: e.categories?.color || "#64748B" }}
+              >
+                {(e.categories?.name || "?").charAt(0)}
               </div>
-              <div className="flex items-center gap-2">
-                <span className="tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
-                <RowActions onEdit={() => setEditingExpense(e)} onDelete={() => setDeletingExpense(e)} />
+              <div>
+                <p className="font-medium text-slate-700 dark:text-slate-200">{e.description || e.categories?.name}</p>
+                <p className="text-xs text-slate-400">
+                  {e.categories?.name} · {e.purchase_date || e.date}
+                  {e.purchase_date && e.purchase_date !== e.date && ` · pago: ${e.date}`}
+                  {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
+                </p>
               </div>
             </div>
-          ))}
-          {filteredExpenses.length === 0 && (
-            <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {monthExpenses.length === 0 ? `Aún no has registrado gastos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
-            </p>
-          )}
-        </div>
-      </Card>
+            <div className="flex items-center gap-2">
+              <span className="tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
+              <RowActions onEdit={() => setEditingExpense(e)} onDelete={() => setDeletingExpense(e)} />
+            </div>
+          </div>
+        ))}
+      </ListCard>
       {showModal && (
         <ExpenseModal categories={categories} cards={cards} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
       )}
@@ -2717,81 +2722,75 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
     }
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar gasto" : "Nuevo gasto"}</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+    <ModalShell onClose={onClose} title={isEditing ? "Editar gasto" : "Nuevo gasto"}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+          <select
+            value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
+          <input
+            value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ej. Supermercado semana"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
-            <select
-              value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-              className={`mt-1 ${INPUT_CLASS}`}
-            >
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
             <input
-              value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej. Supermercado semana"
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="25000"
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
-              <input
-                type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
-                placeholder="25000"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha"}</label>
-              <input
-                type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha"}</label>
+            <input
+              type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
           </div>
-          {cardsList.length > 0 && (
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Método de pago</label>
-              <select
-                value={cardId} onChange={(e) => setCardId(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              >
-                <option value="">Efectivo / débito</option>
-                {cardsList.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              {selectedCard && computedPaymentDate && (
-                <p className="mt-1.5 text-xs text-slate-400">
-                  Corte el día {selectedCard.cutoff_day} y pago el día {selectedCard.payment_day}: este gasto se contará en tu balance con fecha de pago <span className="font-medium text-slate-600 dark:text-slate-300">{computedPaymentDate}</span>.
-                </p>
-              )}
-            </div>
-          )}
-          <p className="text-xs text-slate-400">
-            ¿Es un gasto fijo que se repite todos los meses (alquiler, suscripción, gimnasio)? Usa el botón "Gasto fijo" en vez de este formulario, así no tienes que volver a registrarlo cada mes.
-          </p>
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
-          >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar gasto"}
-          </button>
-        </form>
-      </div>
-    </div>
+        </div>
+        {cardsList.length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Método de pago</label>
+            <select
+              value={cardId} onChange={(e) => setCardId(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            >
+              <option value="">Efectivo / débito</option>
+              {cardsList.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            {selectedCard && computedPaymentDate && (
+              <p className="mt-1.5 text-xs text-slate-400">
+                Corte el día {selectedCard.cutoff_day} y pago el día {selectedCard.payment_day}: este gasto se contará en tu balance con fecha de pago <span className="font-medium text-slate-600 dark:text-slate-300">{computedPaymentDate}</span>.
+              </p>
+            )}
+          </div>
+        )}
+        <p className="text-xs text-slate-400">
+          ¿Es un gasto fijo que se repite todos los meses (alquiler, suscripción, gimnasio)? Usa el botón "Gasto fijo" en vez de este formulario, así no tienes que volver a registrarlo cada mes.
+        </p>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar gasto"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 function CreditCardsManagerModal({ cards, onClose, onChanged, onDeleteCard }) {
@@ -2799,58 +2798,59 @@ function CreditCardsManagerModal({ cards, onClose, onChanged, onDeleteCard }) {
   const [editingCard, setEditingCard] = useState(null);
   const [deletingCard, setDeletingCard] = useState(null);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Tarjetas de crédito</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
-        </div>
-        <p className="mb-4 text-xs text-slate-400">
-          Registra el día de corte y el día de pago de cada tarjeta. Al agregar un gasto con esa tarjeta, la app calcula sola en qué mes realmente vas a pagarlo, en vez de contarlo en el mes de la compra.
-        </p>
-        <div className="space-y-2">
-          {cards.length === 0 && (
-            <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-700">
-              Aún no has registrado tarjetas.
-            </p>
+    <ModalShell
+      onClose={onClose}
+      title="Tarjetas de crédito"
+      overlayExtras={
+        <>
+          {showCardModal && (
+            <CreditCardModal onClose={() => setShowCardModal(false)} onSaved={onChanged} />
           )}
-          {cards.map((c) => (
-            <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-3 dark:border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-                  <Landmark size={16} />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-slate-800 dark:text-white">{c.name}</p>
-                  <p className="text-xs text-slate-400">Corte día {c.cutoff_day} · Pago día {c.payment_day}</p>
-                </div>
+          {editingCard && (
+            <CreditCardModal card={editingCard} onClose={() => setEditingCard(null)} onSaved={onChanged} />
+          )}
+          {deletingCard && (
+            <ConfirmDeleteModal
+              title="Eliminar tarjeta"
+              message={`¿Seguro que quieres eliminar la tarjeta "${deletingCard.name}"? Los gastos ya registrados con esta tarjeta no se borran, pero dejarán de mostrar su nombre. Esta acción no se puede deshacer.`}
+              onCancel={() => setDeletingCard(null)}
+              onConfirm={async () => { await onDeleteCard(deletingCard.id); setDeletingCard(null); }}
+            />
+          )}
+        </>
+      }
+    >
+      <p className="mb-4 text-xs text-slate-400">
+        Registra el día de corte y el día de pago de cada tarjeta. Al agregar un gasto con esa tarjeta, la app calcula sola en qué mes realmente vas a pagarlo, en vez de contarlo en el mes de la compra.
+      </p>
+      <div className="space-y-2">
+        {cards.length === 0 && (
+          <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-700">
+            Aún no has registrado tarjetas.
+          </p>
+        )}
+        {cards.map((c) => (
+          <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-3 dark:border-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                <Landmark size={16} />
               </div>
-              <RowActions onEdit={() => setEditingCard(c)} onDelete={() => setDeletingCard(c)} />
+              <div>
+                <p className="text-sm font-medium text-slate-800 dark:text-white">{c.name}</p>
+                <p className="text-xs text-slate-400">Corte día {c.cutoff_day} · Pago día {c.payment_day}</p>
+              </div>
             </div>
-          ))}
-        </div>
-        <button
-          onClick={() => setShowCardModal(true)}
-          className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-        >
-          <Plus size={15} /> Agregar tarjeta
-        </button>
+            <RowActions onEdit={() => setEditingCard(c)} onDelete={() => setDeletingCard(c)} />
+          </div>
+        ))}
       </div>
-      {showCardModal && (
-        <CreditCardModal onClose={() => setShowCardModal(false)} onSaved={onChanged} />
-      )}
-      {editingCard && (
-        <CreditCardModal card={editingCard} onClose={() => setEditingCard(null)} onSaved={onChanged} />
-      )}
-      {deletingCard && (
-        <ConfirmDeleteModal
-          title="Eliminar tarjeta"
-          message={`¿Seguro que quieres eliminar la tarjeta "${deletingCard.name}"? Los gastos ya registrados con esta tarjeta no se borran, pero dejarán de mostrar su nombre. Esta acción no se puede deshacer.`}
-          onCancel={() => setDeletingCard(null)}
-          onConfirm={async () => { await onDeleteCard(deletingCard.id); setDeletingCard(null); }}
-        />
-      )}
-    </div>
+      <button
+        onClick={() => setShowCardModal(true)}
+        className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+      >
+        <Plus size={15} /> Agregar tarjeta
+      </button>
+    </ModalShell>
   );
 }
 function CreditCardModal({ card, onClose, onSaved }) {
@@ -2898,49 +2898,43 @@ function CreditCardModal({ card, onClose, onSaved }) {
     }
   }
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar tarjeta" : "Nueva tarjeta"}</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+    <ModalShell onClose={onClose} title={isEditing ? "Editar tarjeta" : "Nueva tarjeta"} maxWidth="max-w-sm" zIndex="z-[60]">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre de la tarjeta</label>
+          <input
+            value={name} onChange={(e) => setName(e.target.value)}
+            placeholder="Ej. BAC Visa"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre de la tarjeta</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Día de corte</label>
             <input
-              value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="Ej. BAC Visa"
+              type="number" min="1" max="31" value={cutoffDay} onChange={(e) => setCutoffDay(e.target.value)}
+              placeholder="3"
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Día de corte</label>
-              <input
-                type="number" min="1" max="31" value={cutoffDay} onChange={(e) => setCutoffDay(e.target.value)}
-                placeholder="3"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Día de pago</label>
-              <input
-                type="number" min="1" max="31" value={paymentDay} onChange={(e) => setPaymentDay(e.target.value)}
-                placeholder="18"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Día de pago</label>
+            <input
+              type="number" min="1" max="31" value={paymentDay} onChange={(e) => setPaymentDay(e.target.value)}
+              placeholder="18"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
           </div>
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
-          >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tarjeta"}
-          </button>
-        </form>
-      </div>
-    </div>
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tarjeta"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 function PlanModal({ categories, cards, plan, onClose, onSaved }) {
@@ -3003,97 +2997,91 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
     }
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar plan de pago" : "Nuevo plan de pago"}</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+    <ModalShell onClose={onClose} title={isEditing ? "Editar plan de pago" : "Nuevo plan de pago"}>
+      <p className="mb-4 text-xs text-slate-400">
+        Para préstamos o compras a plazos. Se guarda como un solo plan; la cuota del mes correspondiente se suma automáticamente a tus gastos cada mes, sin crear una fila por cuota.
+      </p>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+          <select
+            value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
-        <p className="mb-4 text-xs text-slate-400">
-          Para préstamos o compras a plazos. Se guarda como un solo plan; la cuota del mes correspondiente se suma automáticamente a tus gastos cada mes, sin crear una fila por cuota.
-        </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción</label>
+          <input
+            value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ej. Préstamo Conape"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        {cardsList.length > 0 && (
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tarjeta asociada</label>
             <select
-              value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+              value={cardId} onChange={(e) => setCardId(e.target.value)}
               className={`mt-1 ${INPUT_CLASS}`}
             >
-              {categories.map((c) => (
+              <option value="">Ninguna / pago directo</option>
+              {cardsList.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
+            <p className="mt-1.5 text-xs text-slate-400">
+              Elige una tarjeta si esto es una compra a plazos que se cobra en el estado de cuenta (como Conape, elige "Ninguna").
+            </p>
           </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto de la cuota mensual</label>
             <input
-              value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej. Préstamo Conape"
+              type="number" value={monthlyAmount} onChange={(e) => setMonthlyAmount(e.target.value)}
+              placeholder="25000"
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
-          {cardsList.length > 0 && (
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tarjeta asociada</label>
-              <select
-                value={cardId} onChange={(e) => setCardId(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              >
-                <option value="">Ninguna / pago directo</option>
-                {cardsList.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <p className="mt-1.5 text-xs text-slate-400">
-                Elige una tarjeta si esto es una compra a plazos que se cobra en el estado de cuenta (como Conape, elige "Ninguna").
-              </p>
-            </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha de la 1ª cuota"}</label>
+            <input
+              type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿A cuántos meses (cuotas)?</label>
+          <input
+            type="number" min="1" value={totalMonths} onChange={(e) => setTotalMonths(e.target.value)}
+            placeholder="72"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+          {monthlyAmount && totalMonths && Number(totalMonths) > 0 && !selectedCard && (
+            <p className="mt-1.5 text-xs text-slate-400">
+              Se cobrará {Number(monthlyAmount).toLocaleString("es-CR")} cada mes durante {totalMonths} meses, empezando el {startDate}.
+            </p>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto de la cuota mensual</label>
-              <input
-                type="number" value={monthlyAmount} onChange={(e) => setMonthlyAmount(e.target.value)}
-                placeholder="25000"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha de la 1ª cuota"}</label>
-              <input
-                type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿A cuántos meses (cuotas)?</label>
-            <input
-              type="number" min="1" value={totalMonths} onChange={(e) => setTotalMonths(e.target.value)}
-              placeholder="72"
-              className={`mt-1 ${INPUT_CLASS}`}
-            />
-            {monthlyAmount && totalMonths && Number(totalMonths) > 0 && !selectedCard && (
-              <p className="mt-1.5 text-xs text-slate-400">
-                Se cobrará {Number(monthlyAmount).toLocaleString("es-CR")} cada mes durante {totalMonths} meses, empezando el {startDate}.
-              </p>
-            )}
-            {monthlyAmount && totalMonths && Number(totalMonths) > 0 && selectedCard && anchorDate && (
-              <p className="mt-1.5 text-xs text-slate-400">
-                Corte el día {selectedCard.cutoff_day} y pago el día {selectedCard.payment_day}: la 1ª cuota se contará con fecha de pago <span className="font-medium text-slate-600 dark:text-slate-300">{anchorDate}</span>, y las siguientes {Number(totalMonths) - 1} cuotas seguirán ese mismo día cada mes.
-              </p>
-            )}
-          </div>
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
-          >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear plan de pago"}
-          </button>
-        </form>
-      </div>
-    </div>
+          {monthlyAmount && totalMonths && Number(totalMonths) > 0 && selectedCard && anchorDate && (
+            <p className="mt-1.5 text-xs text-slate-400">
+              Corte el día {selectedCard.cutoff_day} y pago el día {selectedCard.payment_day}: la 1ª cuota se contará con fecha de pago <span className="font-medium text-slate-600 dark:text-slate-300">{anchorDate}</span>, y las siguientes {Number(totalMonths) - 1} cuotas seguirán ese mismo día cada mes.
+            </p>
+          )}
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear plan de pago"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
@@ -3149,77 +3137,71 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
     }
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar gasto fijo" : "Nuevo gasto fijo"}</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+    <ModalShell onClose={onClose} title={isEditing ? "Editar gasto fijo" : "Nuevo gasto fijo"}>
+      <p className="mb-4 text-xs text-slate-400">
+        Para alquiler, suscripciones, gimnasio y otros pagos que se repiten por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
+      </p>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+          <select
+            value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
-        <p className="mb-4 text-xs text-slate-400">
-          Para alquiler, suscripciones, gimnasio y otros pagos que se repiten por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
-        </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción</label>
+          <input
+            value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ej. Alquiler apartamento"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
+          <select
+            value={frequency} onChange={(e) => setFrequency(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            <option value="mensual">Mensual</option>
+            <option value="quincenal">Quincenal (días 15 y 30)</option>
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
-            <select
-              value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-              className={`mt-1 ${INPUT_CLASS}`}
-            >
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
             <input
-              value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej. Alquiler apartamento"
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="150000"
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
-            <select
-              value={frequency} onChange={(e) => setFrequency(e.target.value)}
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
+            <input
+              type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
               className={`mt-1 ${INPUT_CLASS}`}
-            >
-              <option value="mensual">Mensual</option>
-              <option value="quincenal">Quincenal (días 15 y 30)</option>
-            </select>
+            />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
-              <input
-                type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
-                placeholder="150000"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
-              <input
-                type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-          </div>
-          {isQuincenal && (
-            <p className="text-xs text-slate-400">
-              Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
-            </p>
-          )}
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
-          >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear gasto fijo"}
-          </button>
-        </form>
-      </div>
-    </div>
+        </div>
+        {isQuincenal && (
+          <p className="text-xs text-slate-400">
+            Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
+          </p>
+        )}
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear gasto fijo"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 // Checklist de cuotas de un plan: el cálculo automático por fecha (cuota
