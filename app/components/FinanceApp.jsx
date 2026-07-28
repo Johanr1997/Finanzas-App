@@ -1422,7 +1422,6 @@ function GoalsView({ fmt, yearData, month }) {
   const [showModal, setShowModal] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
   const [deletingGoal, setDeletingGoal] = useState(null);
-  const [withdrawingGoal, setWithdrawingGoal] = useState(null);
   const [viewingContributionsGoal, setViewingContributionsGoal] = useState(null);
   async function refetchGoals() {
     const { data } = await supabase.from("goals").select("*");
@@ -1496,16 +1495,10 @@ function GoalsView({ fmt, yearData, month }) {
                 </span>.
               </p>
             )}
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setWithdrawingGoal(g)}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                Retiro de monto
-              </button>
+            <div className="mt-3">
               <button
                 onClick={() => setViewingContributionsGoal(g)}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 Ver aportes
               </button>
@@ -1534,14 +1527,6 @@ function GoalsView({ fmt, yearData, month }) {
           onConfirm={() => handleDelete(deletingGoal.id)}
         />
       )}
-      {withdrawingGoal && (
-        <GoalWithdrawalModal
-          goal={withdrawingGoal}
-          fmt={fmt}
-          onClose={() => setWithdrawingGoal(null)}
-          onSaved={refetchGoals}
-        />
-      )}
       {viewingContributionsGoal && (
         <GoalContributionsListModal
           goal={viewingContributionsGoal}
@@ -1552,65 +1537,6 @@ function GoalsView({ fmt, yearData, month }) {
           onClose={() => setViewingContributionsGoal(null)}
         />
       )}
-      </div>
-    </div>
-  );
-}
-function GoalWithdrawalModal({ goal, fmt, onClose, onSaved }) {
-  const [amount, setAmount] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-  const delta = amount && !Number.isNaN(Number(amount)) ? -Number(amount) : null;
-  const preview = delta !== null ? Number(goal.current_amount) + delta : null;
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!amount || Number(amount) <= 0) {
-      setErrorMsg("Ingresa un monto mayor a cero.");
-      return;
-    }
-    setSaving(true);
-    setErrorMsg("");
-    const nuevoActual = Number(goal.current_amount) + delta;
-    const { error } = await supabase.from("goals").update({ current_amount: nuevoActual }).eq("id", goal.id);
-    setSaving(false);
-    if (error) {
-      setErrorMsg("Error al guardar: " + error.message);
-    } else {
-      onSaved();
-      onClose();
-    }
-  }
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-1 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Retiro de monto</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
-        </div>
-        <p className="mb-4 text-xs text-slate-400">
-          {goal.name} · llevas {fmt(goal.current_amount)} de {fmt(goal.target_amount)}
-        </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto a retirar</label>
-            <input
-              type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus
-              placeholder="25000"
-              className={`mt-1 ${INPUT_CLASS}`}
-            />
-            <p className="mt-1.5 text-xs text-slate-400">
-              Se resta de lo que ya tienes ahorrado para esta meta (por ejemplo, si retiraste dinero guardado destinado a ella).
-              {preview !== null && <> Nuevo monto actual: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(preview)}</span>.</>}
-            </p>
-          </div>
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
-          >
-            {saving ? "Guardando..." : "Retirar monto"}
-          </button>
-        </form>
       </div>
     </div>
   );
