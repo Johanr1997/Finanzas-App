@@ -1379,6 +1379,34 @@ function buildGoalSavingsTip(remaining, monthBalance, monthLabel, fmt) {
     text: `En ${monthLabel} lo recomendable sería ahorrar ${fmt(suggested)} para esta meta, sin afectar tus finanzas (hasta un 30% de lo que te queda disponible ese mes: ${fmt(monthBalance)}).`,
   };
 }
+// Estima para cuándo se completaría una meta si se sigue aportando al mismo
+// ritmo promedio de hasta ahora — inspirado en el "oráculo" de una plantilla
+// de Excel que el usuario vio en Instagram (2026-07-28). Se basa en los
+// ahorros de la pestaña Ahorros vinculados a esta meta (mismo dato que ya se
+// ve en "Ver aportes"), NO en ajustes manuales hechos con "Actualizar
+// monto" — esos no quedan guardados con fecha, así que no hay forma de
+// incluirlos en un promedio mensual real.
+function estimateGoalForecast(goal, contributions) {
+  const remaining = Number(goal.target_amount) - Number(goal.current_amount);
+  if (remaining <= 0) return { status: "completed" };
+  if (!contributions || contributions.length === 0) return { status: "no-data" };
+  const sorted = [...contributions].sort((a, b) => a.date.localeCompare(b.date));
+  const firstDate = sorted[0].date;
+  const today = localDateString();
+  const totalContributed = contributions.reduce((a, c) => a + Number(c.amount), 0);
+  // Meses transcurridos desde el primer aporte hasta hoy — con un piso de 1
+  // mes, para no sobreestimar el ritmo si todos los aportes fueron dentro
+  // del mismo mes.
+  const monthsElapsed = Math.max(
+    1,
+    (dateStringYear(today) - dateStringYear(firstDate)) * 12 + (dateStringMonth(today) - dateStringMonth(firstDate))
+  );
+  const avgMonthly = totalContributed / monthsElapsed;
+  if (avgMonthly <= 0) return { status: "no-pace" };
+  const monthsNeeded = Math.ceil(remaining / avgMonthly);
+  const targetDate = addMonthsToDateString(today, monthsNeeded);
+  return { status: "ok", avgMonthly, targetDate };
+}
 function GoalsView({ fmt, yearData, month }) {
   const [goals, setGoals] = useState([]);
   const [contributions, setContributions] = useState([]);
@@ -1435,6 +1463,7 @@ function GoalsView({ fmt, yearData, month }) {
       {goals.map((g) => {
         const pct = Math.min(100, Math.round((g.current_amount / g.target_amount) * 100));
         const Icon = Target;
+        const forecast = estimateGoalForecast(g, contributions.filter((c) => c.goal_id === g.id));
         return (
           <Card key={g.id} className="p-5">
             <div className="flex items-start justify-between">
@@ -1459,6 +1488,14 @@ function GoalsView({ fmt, yearData, month }) {
               <span className="font-medium" style={{ color: g.color }}>{pct}% completado</span>
               {pct >= 100 && <span className="inline-flex items-center gap-1 text-emerald-600"><Check size={12} /> Meta alcanzada</span>}
             </div>
+            {forecast.status === "ok" && (
+              <p className="mt-1.5 text-xs text-slate-400">
+                A este ritmo (~{fmt(Math.round(forecast.avgMonthly))}/mes), la completarías en{" "}
+                <span className="font-medium text-slate-600 dark:text-slate-300">
+                  {MONTHS_FULL[dateStringMonth(forecast.targetDate) - 1]} {dateStringYear(forecast.targetDate)}
+                </span>.
+              </p>
+            )}
             <div className="mt-3 grid grid-cols-2 gap-2">
               <button
                 onClick={() => setContributingGoal(g)}
