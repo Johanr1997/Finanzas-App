@@ -1028,11 +1028,11 @@ function CalendarDayModal({ day, items, fmt, monthLabel, onClose }) {
         <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
           {items.map((it) => (
             <div key={it.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-              <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200">{it.label}</p>
-                {it.sub && <p className="text-xs text-slate-400">{it.sub}</p>}
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{it.label}</p>
+                {it.sub && <p className="truncate text-xs text-slate-400">{it.sub}</p>}
               </div>
-              <span className={`tabular-nums font-medium ${it.kind === "ingreso" ? "text-emerald-600" : "text-red-500"}`}>
+              <span className={`shrink-0 tabular-nums font-medium ${it.kind === "ingreso" ? "text-emerald-600" : "text-red-500"}`}>
                 {it.kind === "ingreso" ? "+" : "-"}{fmt(it.amount)}
               </span>
             </div>
@@ -1295,21 +1295,21 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
                 const Icon = CATEGORY_META[e.categoria]?.icon || MoreHorizontal;
                 const color = e.color || CATEGORY_META[e.categoria]?.color || "#64748B";
                 return (
-                  <div key={e.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: `${color}1a`, color }}>
+                  <div key={e.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${color}1a`, color }}>
                         <Icon size={15} />
                       </div>
-                      <div>
-                        <p className="font-medium text-slate-700 dark:text-slate-200">{e.descripcion}</p>
-                        <p className="text-xs text-slate-400">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.descripcion}</p>
+                        <p className="truncate text-xs text-slate-400">
                           {e.categoria} · {e.fechaCompra || e.fecha}
                           {e.fechaCompra && e.fechaCompra !== e.fecha && ` · pago: ${e.fecha}`}
                           {e.tarjeta && ` · ${e.tarjeta}`}
                         </p>
                       </div>
                     </div>
-                    <span className="tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(e.monto)}</span>
+                    <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(e.monto)}</span>
                   </div>
                 );
               })}
@@ -1465,14 +1465,14 @@ function GoalsView({ fmt, yearData, month }) {
         const forecast = estimateGoalForecast(g, contributions.filter((c) => c.goal_id === g.id));
         return (
           <Card key={g.id} className="p-5">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ backgroundColor: `${g.color}1a`, color: g.color }}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: `${g.color}1a`, color: g.color }}>
                   <Icon size={18} />
                 </div>
-                <div>
-                  <p className="font-medium text-slate-800 dark:text-white">{g.name}</p>
-                  <p className="text-xs text-slate-400">{fmt(g.current_amount)} de {fmt(g.target_amount)}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-800 dark:text-white">{g.name}</p>
+                  <p className="truncate text-xs text-slate-400">{fmt(g.current_amount)} de {fmt(g.target_amount)}</p>
                 </div>
               </div>
               <RowActions onEdit={() => setEditingGoal(g)} onDelete={() => setDeletingGoal(g)} />
@@ -1591,12 +1591,12 @@ function GoalContributionsListModal({ goal, contributions, fmt, selectedMonthBal
           {contributions.map((c) => {
             const label = SAVINGS_TYPES.find((t) => t.value === c.type)?.label || c.type;
             return (
-              <div key={c.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                <div>
-                  <p className="font-medium text-slate-700 dark:text-slate-200">{label}</p>
+              <div key={c.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{label}</p>
                   <p className="text-xs text-slate-400">{c.date}</p>
                 </div>
-                <span className="tabular-nums font-medium text-blue-500">{fmt(c.amount)}</span>
+                <span className="shrink-0 tabular-nums font-medium text-blue-500">{fmt(c.amount)}</span>
               </div>
             );
           })}
@@ -1681,7 +1681,7 @@ function GoalModal({ goal, onClose, onSaved }) {
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto objetivo</label>
               <input
@@ -1841,13 +1841,13 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
                 const isQuincenal = r.frequency === "quincenal";
                 return (
                   <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-                    <div className="flex items-center gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
                         <Repeat size={16} />
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.type || "Ingreso fijo"}</p>
-                        <p className="text-xs text-slate-400">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{r.description || r.type || "Ingreso fijo"}</p>
+                        <p className="truncate text-xs text-slate-400">
                           {r.type} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
                         </p>
                       </div>
@@ -1876,12 +1876,12 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         emptyMessage={monthIncomes.length === 0 ? `Aún no has registrado ingresos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
       >
         {filteredIncomes.map((i) => (
-          <div key={i.id} className="flex items-center justify-between px-5 py-3 text-sm">
-            <div>
-              <p className="font-medium text-slate-700 dark:text-slate-200">{i.description || i.type}</p>
-              <p className="text-xs text-slate-400">{i.type} · {i.date}</p>
+          <div key={i.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium text-slate-700 dark:text-slate-200">{i.description || i.type}</p>
+              <p className="truncate text-xs text-slate-400">{i.type} · {i.date}</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <span className="tabular-nums font-medium text-emerald-600">{fmt(i.amount)}</span>
               <RowActions onEdit={() => setEditingIncome(i)} onDelete={() => setDeletingIncome(i)} />
             </div>
@@ -1992,7 +1992,7 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
             className={`mt-1 ${INPUT_CLASS}`}
           />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
             <input
@@ -2098,7 +2098,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
             <option value="quincenal">Quincenal (días 15 y 30)</option>
           </select>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
             <input
@@ -2279,16 +2279,16 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
     return (
       <div key={p.id} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
               style={{ backgroundColor: `${color}1a`, color }}
             >
               <CreditCard size={16} />
             </div>
-            <div>
-              <p className="text-sm font-medium text-slate-800 dark:text-white">{p.description || p.categories?.name || "Plan de pago"}</p>
-              <p className="text-xs text-slate-400">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{p.description || p.categories?.name || "Plan de pago"}</p>
+              <p className="truncate text-xs text-slate-400">
                 {p.categories?.name} · {fmt(p.monthly_amount)}/mes
                 {p.credit_cards?.name && ` · ${p.credit_cards.name}`}
               </p>
@@ -2411,16 +2411,16 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
                       const isQuincenal = r.frequency === "quincenal";
                       return (
                         <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-                          <div className="flex items-center gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
                             <div
                               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
                               style={{ backgroundColor: `${color}1a`, color }}
                             >
                               <Repeat size={16} />
                             </div>
-                            <div>
-                              <p className="text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
-                              <p className="text-xs text-slate-400">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{r.description || r.categories?.name || "Gasto fijo"}</p>
+                              <p className="truncate text-xs text-slate-400">
                                 {r.categories?.name} · {fmt(r.amount)} {isQuincenal ? "c/quincena" : "/mes"} · desde {r.start_date}
                               </p>
                             </div>
@@ -2481,24 +2481,24 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         emptyMessage={monthExpenses.length === 0 ? `Aún no has registrado gastos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
       >
         {filteredExpenses.map((e) => (
-          <div key={e.id} className="flex items-center justify-between px-5 py-3 text-sm">
-            <div className="flex items-center gap-3">
+          <div key={e.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
+            <div className="flex min-w-0 items-center gap-3">
               <div
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
                 style={{ backgroundColor: `${e.categories?.color || "#64748B"}1a`, color: e.categories?.color || "#64748B" }}
               >
                 {(e.categories?.name || "?").charAt(0)}
               </div>
-              <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200">{e.description || e.categories?.name}</p>
-                <p className="text-xs text-slate-400">
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.description || e.categories?.name}</p>
+                <p className="truncate text-xs text-slate-400">
                   {e.categories?.name} · {e.purchase_date || e.date}
                   {e.purchase_date && e.purchase_date !== e.date && ` · pago: ${e.date}`}
                   {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <span className="tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
               <RowActions onEdit={() => setEditingExpense(e)} onDelete={() => setDeletingExpense(e)} />
             </div>
@@ -2675,7 +2675,7 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
             className={`mt-1 ${INPUT_CLASS}`}
           />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
             <input
@@ -2763,13 +2763,13 @@ function CreditCardsManagerModal({ cards, onClose, onChanged, onDeleteCard }) {
         )}
         {cards.map((c) => (
           <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-3 dark:border-slate-800">
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
                 <Landmark size={16} />
               </div>
-              <div>
-                <p className="text-sm font-medium text-slate-800 dark:text-white">{c.name}</p>
-                <p className="text-xs text-slate-400">Corte día {c.cutoff_day} · Pago día {c.payment_day}</p>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{c.name}</p>
+                <p className="truncate text-xs text-slate-400">Corte día {c.cutoff_day} · Pago día {c.payment_day}</p>
               </div>
             </div>
             <RowActions onEdit={() => setEditingCard(c)} onDelete={() => setDeletingCard(c)} />
@@ -2840,7 +2840,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
             className={`mt-1 ${INPUT_CLASS}`}
           />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Día de corte</label>
             <input
@@ -2970,7 +2970,7 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
             </p>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto de la cuota mensual</label>
             <input
@@ -3103,7 +3103,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
             <option value="quincenal">Quincenal (días 15 y 30)</option>
           </select>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "Monto por quincena" : "Monto mensual"}</label>
             <input
@@ -3363,19 +3363,19 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
         {filteredSavings.map((s) => {
           const label = SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type;
           return (
-            <div key={s.id} className="flex items-center justify-between px-5 py-3 text-sm">
-              <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200">{label}</p>
-                <p className="text-xs text-slate-400">
-                  {s.date}
+            <div key={s.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{label}</p>
+                <p className="flex min-w-0 items-center gap-2 text-xs text-slate-400">
+                  <span className="shrink-0">{s.date}</span>
                   {s.goals?.name && (
-                    <span className="ml-2 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium" style={{ backgroundColor: `${s.goals.color || "#3B82F6"}1a`, color: s.goals.color || "#3B82F6" }}>
-                      <Target size={10} /> {s.goals.name}
+                    <span className="inline-flex min-w-0 max-w-[45%] items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium" style={{ backgroundColor: `${s.goals.color || "#3B82F6"}1a`, color: s.goals.color || "#3B82F6" }}>
+                      <Target size={10} className="shrink-0" /> <span className="truncate">{s.goals.name}</span>
                     </span>
                   )}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <span className="tabular-nums font-medium text-blue-500">{fmt(s.amount)}</span>
                 <RowActions onEdit={() => setEditingSaving(s)} onDelete={() => setDeletingSaving(s)} />
               </div>
@@ -3592,7 +3592,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
             <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al progreso de esa meta.</p>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
             <input
@@ -3858,15 +3858,15 @@ function CategoryExpensesListModal({ category, expenses, fmt, onClose }) {
         </p>
         <div className="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
           {sorted.map((e) => (
-            <div key={e.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-              <div>
-                <p className="font-medium text-slate-700 dark:text-slate-200">{e.description || category.name}</p>
-                <p className="text-xs text-slate-400">
+            <div key={e.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.description || category.name}</p>
+                <p className="truncate text-xs text-slate-400">
                   {e.purchase_date || e.date}
                   {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
                 </p>
               </div>
-              <span className="tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
+              <span className="shrink-0 tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
             </div>
           ))}
           {sorted.length === 0 && (
