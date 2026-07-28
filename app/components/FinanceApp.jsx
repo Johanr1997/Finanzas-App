@@ -10,7 +10,7 @@ import {
   Home, Utensils, Car, Zap, HeartPulse, GraduationCap, Popcorn,
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
-  Pencil, Coins, AlertTriangle, CreditCard, Minus, Landmark,
+  Pencil, Coins, AlertTriangle, CreditCard, Landmark,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -1422,7 +1422,7 @@ function GoalsView({ fmt, yearData, month }) {
   const [showModal, setShowModal] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
   const [deletingGoal, setDeletingGoal] = useState(null);
-  const [contributingGoal, setContributingGoal] = useState(null);
+  const [withdrawingGoal, setWithdrawingGoal] = useState(null);
   const [viewingContributionsGoal, setViewingContributionsGoal] = useState(null);
   async function refetchGoals() {
     const { data } = await supabase.from("goals").select("*");
@@ -1498,10 +1498,10 @@ function GoalsView({ fmt, yearData, month }) {
             )}
             <div className="mt-3 grid grid-cols-2 gap-2">
               <button
-                onClick={() => setContributingGoal(g)}
+                onClick={() => setWithdrawingGoal(g)}
                 className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               >
-                Actualizar monto
+                Retiro de monto
               </button>
               <button
                 onClick={() => setViewingContributionsGoal(g)}
@@ -1534,11 +1534,11 @@ function GoalsView({ fmt, yearData, month }) {
           onConfirm={() => handleDelete(deletingGoal.id)}
         />
       )}
-      {contributingGoal && (
-        <GoalContributionModal
-          goal={contributingGoal}
+      {withdrawingGoal && (
+        <GoalWithdrawalModal
+          goal={withdrawingGoal}
           fmt={fmt}
-          onClose={() => setContributingGoal(null)}
+          onClose={() => setWithdrawingGoal(null)}
           onSaved={refetchGoals}
         />
       )}
@@ -1556,14 +1556,11 @@ function GoalsView({ fmt, yearData, month }) {
     </div>
   );
 }
-function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
-  const [mode, setMode] = useState("agregar"); // "agregar" | "rebajar"
+function GoalWithdrawalModal({ goal, fmt, onClose, onSaved }) {
   const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const delta = amount && !Number.isNaN(Number(amount))
-    ? (mode === "agregar" ? Number(amount) : -Number(amount))
-    : null;
+  const delta = amount && !Number.isNaN(Number(amount)) ? -Number(amount) : null;
   const preview = delta !== null ? Number(goal.current_amount) + delta : null;
   async function handleSubmit(e) {
     e.preventDefault();
@@ -1587,50 +1584,22 @@ function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
         <div className="mb-1 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Actualizar monto</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Retiro de monto</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
         </div>
         <p className="mb-4 text-xs text-slate-400">
           {goal.name} · llevas {fmt(goal.current_amount)} de {fmt(goal.target_amount)}
         </p>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-            <button
-              type="button"
-              onClick={() => setMode("agregar")}
-              className={`flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-medium transition-colors ${
-                mode === "agregar"
-                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white"
-                  : "text-slate-500 dark:text-slate-400"
-              }`}
-            >
-              <Plus size={14} /> Agregar
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("rebajar")}
-              className={`flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-medium transition-colors ${
-                mode === "rebajar"
-                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white"
-                  : "text-slate-500 dark:text-slate-400"
-              }`}
-            >
-              <Minus size={14} /> Rebajar
-            </button>
-          </div>
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              {mode === "agregar" ? "Monto a agregar" : "Monto a rebajar"}
-            </label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto a retirar</label>
             <input
               type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus
               placeholder="25000"
               className={`mt-1 ${INPUT_CLASS}`}
             />
             <p className="mt-1.5 text-xs text-slate-400">
-              {mode === "agregar"
-                ? "Se suma a lo que ya tienes ahorrado para esta meta."
-                : "Se resta de lo que ya tienes ahorrado (por ejemplo, si retiraste dinero de la meta)."}
+              Se resta de lo que ya tienes ahorrado para esta meta (por ejemplo, si retiraste dinero guardado destinado a ella).
               {preview !== null && <> Nuevo monto actual: <span className="font-medium text-slate-600 dark:text-slate-300">{fmt(preview)}</span>.</>}
             </p>
           </div>
@@ -1639,7 +1608,7 @@ function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
             type="submit" disabled={saving}
             className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
           >
-            {saving ? "Guardando..." : mode === "agregar" ? "Agregar aporte" : "Rebajar monto"}
+            {saving ? "Guardando..." : "Retirar monto"}
           </button>
         </form>
       </div>
@@ -4104,8 +4073,8 @@ const TABS = [
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
   { id: "savings", label: "Ahorros", icon: PiggyBank },
-  { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "goals", label: "Metas", icon: Target },
+  { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
 export default function FinanceApp() {
