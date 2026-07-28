@@ -448,6 +448,13 @@ const STATUS_COLOR = {
   verde: "bg-emerald-500", amarillo: "bg-amber-400", rojo: "bg-red-500", gris: "bg-slate-400",
 };
 const STATUS_LABEL = { verde: "Saludable", amarillo: "Ajustado", rojo: "En déficit", gris: "Sin datos" };
+// Clase compartida por casi todos los <input>/<select> de los formularios
+// (modales de gasto, ingreso, ahorro, presupuesto, etc.) — antes estaba
+// repetida literalmente en más de 35 lugares; centralizarla acá hace que un
+// cambio de estilo futuro sea de una sola línea en vez de buscar y
+// reemplazar por todo el archivo. El margen superior (mt-1, mt-2...) se
+// agrega en cada lugar según haga falta, ya que varía según el contexto.
+const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 /* ---------------------------------------------------------------
    PRIMITIVES
 ------------------------------------------------------------------ */
@@ -473,6 +480,27 @@ function LoadErrorBanner({ message }) {
       <AlertTriangle size={16} className="mt-0.5 shrink-0" />
       <span>{message}</span>
     </div>
+  );
+}
+// Encabezado colapsable reutilizable: antes cada sección plegable ("Consejos
+// para este mes" en Resumen, "Ingresos fijos" en Ingresos, "Fijo y
+// programado" en Gastos) repetía el mismo botón con flechita que gira +
+// lógica de mostrar/ocultar. El contenido de cada encabezado (título,
+// descripción, ícono) sigue siendo distinto en cada lugar, así que se recibe
+// como children ("header") y no se intenta forzar una forma única.
+function CollapsibleSection({ open, onToggle, header, buttonClassName, children }) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={buttonClassName || "flex w-full items-center justify-between gap-2 text-left"}
+      >
+        {header}
+        <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && children}
+    </>
   );
 }
 function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
@@ -1135,28 +1163,25 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
             <StatMini label="Balance" value={fmt(m.balance)} color={m.balance >= 0 ? "text-emerald-600" : "text-red-500"} />
           </div>
           {tips.length > 0 && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setTipsOpen((v) => !v)}
-                className="flex w-full items-center justify-between gap-2 rounded-lg py-1 text-left hover:opacity-80"
-              >
+            <CollapsibleSection
+              open={tipsOpen}
+              onToggle={() => setTipsOpen((v) => !v)}
+              buttonClassName="flex w-full items-center justify-between gap-2 rounded-lg py-1 text-left hover:opacity-80"
+              header={
                 <span className="flex items-center gap-2">
                   <Sparkles size={16} className="text-amber-500" />
                   <Eyebrow>Consejos para este mes</Eyebrow>
                 </span>
-                <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${tipsOpen ? "rotate-90" : ""}`} />
-              </button>
-              {tipsOpen && (
-                <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {tips.map((t, i) => (
-                    <li key={i} className={`rounded-xl px-4 py-3 text-sm ${tipToneClasses[t.level]}`}>
-                      {t.text}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+              }
+            >
+              <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {tips.map((t, i) => (
+                  <li key={i} className={`rounded-xl px-4 py-3 text-sm ${tipToneClasses[t.level]}`}>
+                    {t.text}
+                  </li>
+                ))}
+              </ul>
+            </CollapsibleSection>
           )}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div>
@@ -1519,7 +1544,7 @@ function GoalContributionModal({ goal, fmt, onClose, onSaved }) {
             <input
               type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus
               placeholder="25000"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
             <p className="mt-1.5 text-xs text-slate-400">
               {mode === "agregar"
@@ -1677,7 +1702,7 @@ function GoalModal({ goal, onClose, onSaved }) {
             <input
               value={nombre} onChange={(e) => setNombre(e.target.value)}
               placeholder="Ej. Viajar a Japón"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1686,7 +1711,7 @@ function GoalModal({ goal, onClose, onSaved }) {
               <input
                 type="number" value={objetivo} onChange={(e) => setObjetivo(e.target.value)}
                 placeholder="1000000"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
@@ -1694,7 +1719,7 @@ function GoalModal({ goal, onClose, onSaved }) {
               <input
                 type="number" value={actual} onChange={(e) => setActual(e.target.value)}
                 placeholder="0"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -1823,20 +1848,18 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
       </Card>
       {recurring.length > 0 && (
         <Card className="p-5">
-          <button
-            type="button"
-            onClick={() => setRecurringOpen((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 text-left"
+          <CollapsibleSection
+            open={recurringOpen}
+            onToggle={() => setRecurringOpen((v) => !v)}
+            header={
+              <div>
+                <Eyebrow>Ingresos fijos</Eyebrow>
+                <p className="mt-1 text-xs text-slate-400">
+                  Salario u otro ingreso fijo. Se cuenta automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlo.
+                </p>
+              </div>
+            }
           >
-            <div>
-              <Eyebrow>Ingresos fijos</Eyebrow>
-              <p className="mt-1 text-xs text-slate-400">
-                Salario u otro ingreso fijo. Se cuenta automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlo.
-              </p>
-            </div>
-            <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${recurringOpen ? "rotate-90" : ""}`} />
-          </button>
-          {recurringOpen && (
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {recurring.map((r) => {
                 const isQuincenal = r.frequency === "quincenal";
@@ -1858,7 +1881,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
                 );
               })}
             </div>
-          )}
+          </CollapsibleSection>
         </Card>
       )}
       <Card className="overflow-hidden">
@@ -1989,7 +2012,7 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
             <input
               value={type} onChange={(e) => setType(e.target.value)}
               placeholder="Ej. Salario, Freelance, Regalo"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div>
@@ -1997,7 +2020,7 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
             <input
               value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Ej. Pago quincena julio"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -2006,14 +2029,14 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="500000"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
               <input
                 type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -2091,7 +2114,7 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
             <input
               value={type} onChange={(e) => setType(e.target.value)}
               placeholder="Ej. Salario"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div>
@@ -2099,14 +2122,14 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
             <input
               value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Ej. Salario quincenal empresa X"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
             <select
               value={frequency} onChange={(e) => setFrequency(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             >
               <option value="mensual">Mensual</option>
               <option value="quincenal">Quincenal (días 15 y 30)</option>
@@ -2118,14 +2141,14 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="500000"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -2149,9 +2172,8 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    GASTOS
 ------------------------------------------------------------------ */
-function ExpensesView({ fmt, onDataChanged, year, month }) {
+function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refetchCards }) {
   const [expenses, setExpenses] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [plans, setPlans] = useState([]);
   const [paymentOverrides, setPaymentOverrides] = useState([]);
   const [recurring, setRecurring] = useState([]);
@@ -2172,7 +2194,6 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
   // de gastos del mes — antes eran 3 tarjetas separadas (2 de ellas sin
   // poder cerrarse) y esa fue la queja concreta que motivó este cambio.
   const [programmedOpen, setProgrammedOpen] = useState(false);
-  const [cards, setCards] = useState([]);
   const [showCardsManager, setShowCardsManager] = useState(false);
   // "Tarjetas" y "Plan de pago" son los botones que menos se usan día a día,
   // así que quedan escondidos detrás de "Más opciones" (empieza cerrado) —
@@ -2189,10 +2210,6 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
       .order("date", { ascending: false });
     setExpenses(data || []);
     if (onDataChanged) onDataChanged();
-  }
-  async function refetchCards() {
-    const { data } = await supabase.from("credit_cards").select("*").order("name", { ascending: true });
-    setCards(data || []);
   }
   async function refetchPlans() {
     const { data } = await supabase
@@ -2219,38 +2236,30 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
       setLoading(true);
       const [
         { data: exp, error: expError },
-        { data: cats, error: catError },
         { data: pls, error: planError },
         { data: overrides, error: overrideError },
         { data: rec, error: recError },
-        { data: crds, error: cardError },
       ] = await Promise.all([
         supabase.from("expenses").select("*, categories(name, color, icon), credit_cards(name)")
           .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
           .order("date", { ascending: false }),
-        supabase.from("categories").select("*"),
         supabase.from("installment_plans").select("*, categories(name, color, icon), credit_cards(name, cutoff_day, payment_day)").order("start_date", { ascending: false }),
         supabase.from("installment_payment_status").select("*"),
         supabase.from("recurring_expenses").select("*, categories(name, color, icon)").order("start_date", { ascending: false }),
-        supabase.from("credit_cards").select("*").order("name", { ascending: true }),
       ]);
       if (expError) console.error("Error cargando gastos:", expError.message);
-      if (catError) console.error("Error cargando categorías:", catError.message);
       if (planError) console.error("Error cargando planes de pago:", planError.message);
       if (overrideError) console.error("Error cargando estado de cuotas:", overrideError.message);
       if (recError) console.error("Error cargando gastos fijos:", recError.message);
-      if (cardError) console.error("Error cargando tarjetas:", cardError.message);
       setLoadError(
-        expError || catError || planError || overrideError || recError || cardError
+        expError || planError || overrideError || recError
           ? "No se pudieron cargar todos tus datos de Gastos. Revisa tu conexión e intenta recargar la página."
           : ""
       );
       setExpenses(exp || []);
-      setCategories(sortCategories(cats || []));
       setPlans(pls || []);
       setPaymentOverrides(overrides || []);
       setRecurring(rec || []);
-      setCards(crds || []);
       setLoading(false);
     }
     fetchAll();
@@ -2279,7 +2288,7 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
   async function handleDeleteCard(id) {
     const { error } = await supabase.from("credit_cards").delete().eq("id", id);
     if (error) throw error;
-    setCards((prev) => prev.filter((c) => c.id !== id));
+    if (refetchCards) refetchCards();
     refetchExpenses();
   }
   const monthExpenses = expenses.filter((e) => dateStringMonth(e.date) - 1 === month);
@@ -2408,27 +2417,25 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
       </Card>
       {(recurring.length > 0 || activePlans.length > 0 || finishedPlans.length > 0) && (
         <Card className="p-5">
-          <button
-            type="button"
-            onClick={() => setProgrammedOpen((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 text-left"
+          <CollapsibleSection
+            open={programmedOpen}
+            onToggle={() => setProgrammedOpen((v) => !v)}
+            header={
+              <div>
+                <Eyebrow>Fijo y programado</Eyebrow>
+                <p className="mt-1 text-xs text-slate-400">
+                  Gastos fijos y planes de pago: lo que ya sabes que viene, sin tener que revisarlo cada mes.
+                </p>
+                <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  {[
+                    recurring.length > 0 && `${recurring.length} gasto${recurring.length === 1 ? "" : "s"} fijo${recurring.length === 1 ? "" : "s"}`,
+                    activePlans.length > 0 && `${activePlans.length} plan${activePlans.length === 1 ? "" : "es"} activo${activePlans.length === 1 ? "" : "s"}`,
+                    finishedPlans.length > 0 && `${finishedPlans.length} plan${finishedPlans.length === 1 ? "" : "es"} pagado${finishedPlans.length === 1 ? "" : "s"}`,
+                  ].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+            }
           >
-            <div>
-              <Eyebrow>Fijo y programado</Eyebrow>
-              <p className="mt-1 text-xs text-slate-400">
-                Gastos fijos y planes de pago: lo que ya sabes que viene, sin tener que revisarlo cada mes.
-              </p>
-              <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
-                {[
-                  recurring.length > 0 && `${recurring.length} gasto${recurring.length === 1 ? "" : "s"} fijo${recurring.length === 1 ? "" : "s"}`,
-                  activePlans.length > 0 && `${activePlans.length} plan${activePlans.length === 1 ? "" : "es"} activo${activePlans.length === 1 ? "" : "s"}`,
-                  finishedPlans.length > 0 && `${finishedPlans.length} plan${finishedPlans.length === 1 ? "" : "es"} pagado${finishedPlans.length === 1 ? "" : "s"}`,
-                ].filter(Boolean).join(" · ")}
-              </p>
-            </div>
-            <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${programmedOpen ? "rotate-90" : ""}`} />
-          </button>
-          {programmedOpen && (
             <div className="mt-4 space-y-6">
               {recurring.length > 0 && (
                 <div>
@@ -2486,7 +2493,7 @@ function ExpensesView({ fmt, onDataChanged, year, month }) {
                 </div>
               )}
             </div>
-          )}
+          </CollapsibleSection>
         </Card>
       )}
       <Card className="overflow-hidden">
@@ -2698,7 +2705,7 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
             <select
               value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             >
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -2710,7 +2717,7 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
             <input
               value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Ej. Supermercado semana"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -2719,14 +2726,14 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="25000"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha"}</label>
               <input
                 type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -2735,7 +2742,7 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Método de pago</label>
               <select
                 value={cardId} onChange={(e) => setCardId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               >
                 <option value="">Efectivo / débito</option>
                 {cardsList.map((c) => (
@@ -2880,7 +2887,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
             <input
               value={name} onChange={(e) => setName(e.target.value)}
               placeholder="Ej. BAC Visa"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -2889,7 +2896,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
               <input
                 type="number" min="1" max="31" value={cutoffDay} onChange={(e) => setCutoffDay(e.target.value)}
                 placeholder="3"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
@@ -2897,7 +2904,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
               <input
                 type="number" min="1" max="31" value={paymentDay} onChange={(e) => setPaymentDay(e.target.value)}
                 placeholder="18"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -2987,7 +2994,7 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
             <select
               value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             >
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -2999,7 +3006,7 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
             <input
               value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Ej. Préstamo Conape"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           {cardsList.length > 0 && (
@@ -3007,7 +3014,7 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tarjeta asociada</label>
               <select
                 value={cardId} onChange={(e) => setCardId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               >
                 <option value="">Ninguna / pago directo</option>
                 {cardsList.map((c) => (
@@ -3025,14 +3032,14 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
               <input
                 type="number" value={monthlyAmount} onChange={(e) => setMonthlyAmount(e.target.value)}
                 placeholder="25000"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{selectedCard ? "Fecha de la compra" : "Fecha de la 1ª cuota"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -3041,7 +3048,7 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
             <input
               type="number" min="1" value={totalMonths} onChange={(e) => setTotalMonths(e.target.value)}
               placeholder="72"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
             {monthlyAmount && totalMonths && Number(totalMonths) > 0 && !selectedCard && (
               <p className="mt-1.5 text-xs text-slate-400">
@@ -3133,7 +3140,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
             <select
               value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             >
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -3145,14 +3152,14 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
             <input
               value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Ej. Alquiler apartamento"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Frecuencia</label>
             <select
               value={frequency} onChange={(e) => setFrequency(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             >
               <option value="mensual">Mensual</option>
               <option value="quincenal">Quincenal (días 15 y 30)</option>
@@ -3164,14 +3171,14 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="150000"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{isQuincenal ? "A partir de" : "Empieza el"}</label>
               <input
                 type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -3625,7 +3632,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ahorro</label>
             <select
               value={selectValue} onChange={(e) => handleSelectChange(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             >
               {SAVINGS_TYPES.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
@@ -3636,7 +3643,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
               <input
                 type="text" value={type} onChange={(e) => setType(e.target.value)}
                 placeholder="Ej. Ahorro para viaje, Colegio de los niños..."
-                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-2 ${INPUT_CLASS}`}
               />
             )}
           </div>
@@ -3644,7 +3651,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una meta (opcional)</label>
             <select
               value={goalId} onChange={(e) => setGoalId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             >
               <option value="">Ninguna</option>
               {(goals || []).map((g) => (
@@ -3661,14 +3668,14 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
               <input
                 type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="50000"
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
               <input
                 type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className={`mt-1 ${INPUT_CLASS}`}
               />
             </div>
           </div>
@@ -3687,8 +3694,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
 /* ---------------------------------------------------------------
    PRESUPUESTOS
 ------------------------------------------------------------------ */
-function BudgetsView({ fmt, year, month }) {
-  const [categories, setCategories] = useState([]);
+function BudgetsView({ fmt, year, month, categories }) {
   const [budgets, setBudgets] = useState([]);
   const [yearExpenses, setYearExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3698,8 +3704,10 @@ function BudgetsView({ fmt, year, month }) {
   const [viewingCategoryExpenses, setViewingCategoryExpenses] = useState(null);
 
   async function refetch() {
-    const [{ data: cats, error: catError }, { data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
-      supabase.from("categories").select("*"),
+    // Las categorías ya llegan como prop desde FinanceApp (se cargan una
+    // sola vez ahí arriba, no dependen del año). Acá solo se piden
+    // presupuestos y gastos.
+    const [{ data: buds, error: budError }, { data: exps, error: expError }] = await Promise.all([
       supabase.from("budgets").select("*"),
       // Antes esto traía TODOS los gastos de la historia, sin filtrar por
       // fecha en la consulta, y filtraba por mes después en el navegador —
@@ -3715,15 +3723,13 @@ function BudgetsView({ fmt, year, month }) {
         .gte("date", `${year}-01-01`)
         .lte("date", `${year + 1}-03-31`),
     ]);
-    if (catError) console.error("Error cargando categorías:", catError.message);
     if (budError) console.error("Error cargando presupuestos:", budError.message);
     if (expError) console.error("Error cargando gastos:", expError.message);
     setLoadError(
-      catError || budError || expError
+      budError || expError
         ? "No se pudieron cargar todos tus datos de Presupuestos. Revisa tu conexión e intenta recargar la página."
         : ""
     );
-    setCategories(cats || []);
     setBudgets(buds || []);
     setYearExpenses(exps || []);
     setLoading(false);
@@ -4041,7 +4047,7 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
             <input
               type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
               placeholder="150000"
-              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
@@ -4086,6 +4092,21 @@ export default function FinanceApp() {
   // anual, no de un mes puntual) — ver más abajo, en el título de cada
   // pestaña, dónde se bifurca uno u otro control.
   const [month, setMonth] = useState(() => new Date().getMonth());
+  // Categorías y tarjetas de crédito no dependen del año/mes elegido y antes
+  // se volvían a pedir a Supabase por separado en Gastos y en Presupuestos
+  // cada vez que se entraba a esas pestañas. Ahora se cargan una sola vez
+  // acá arriba y se pasan como prop hacia abajo — menos consultas repetidas
+  // a la base de datos por la misma información.
+  const [categories, setCategories] = useState([]);
+  const [cards, setCards] = useState([]);
+  async function refetchCards() {
+    const { data } = await supabase.from("credit_cards").select("*").order("name", { ascending: true });
+    setCards(data || []);
+  }
+  useEffect(() => {
+    supabase.from("categories").select("*").then(({ data }) => setCategories(sortCategories(data || [])));
+    refetchCards();
+  }, []);
 
   async function loadYearData(y = year) {
     setDataLoading(true);
@@ -4244,8 +4265,8 @@ export default function FinanceApp() {
             </>
           )}
           {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
-          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
-          {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} />}
+          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} />}
+          {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} categories={categories} />}
           {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
           {tab === "goals" && <GoalsView fmt={format} yearData={yearData} month={month} />}
         </main>
