@@ -2139,10 +2139,15 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   const [plans, setPlans] = useState([]);
   const [paymentOverrides, setPaymentOverrides] = useState([]);
   const [recurring, setRecurring] = useState([]);
+  // Artículos por categoría (ej. "Arroz", "Frijoles" dentro de Alimentación):
+  // no dependen del año/mes elegido (son una lista que la persona arma poco a
+  // poco), así que se cargan una sola vez, no cada vez que cambia el año.
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [deletingExpense, setDeletingExpense] = useState(null);
+  const [showItemsReport, setShowItemsReport] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [editingPlan, setEditingPlan] = useState(null);
   const [deletingPlan, setDeletingPlan] = useState(null);
@@ -2167,11 +2172,15 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   async function refetchExpenses() {
     const { data } = await supabase
       .from("expenses")
-      .select("*, categories(name, color, icon), credit_cards(name)")
+      .select("*, categories(name, color, icon), credit_cards(name), expense_items(name)")
       .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
       .order("date", { ascending: false });
     setExpenses(data || []);
     if (onDataChanged) onDataChanged();
+  }
+  async function refetchItems() {
+    const { data } = await supabase.from("expense_items").select("*").order("name", { ascending: true });
+    setItems(data || []);
   }
   async function refetchPlans() {
     const { data } = await supabase
@@ -2202,7 +2211,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         { data: overrides, error: overrideError },
         { data: rec, error: recError },
       ] = await Promise.all([
-        supabase.from("expenses").select("*, categories(name, color, icon), credit_cards(name)")
+        supabase.from("expenses").select("*, categories(name, color, icon), credit_cards(name), expense_items(name)")
           .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
           .order("date", { ascending: false }),
         supabase.from("installment_plans").select("*, categories(name, color, icon), credit_cards(name, cutoff_day, payment_day)").order("start_date", { ascending: false }),
@@ -2226,6 +2235,9 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
     }
     fetchAll();
   }, [year]);
+  useEffect(() => {
+    refetchItems();
+  }, []);
   async function handleDelete(id) {
     const { error } = await supabase.from("expenses").delete().eq("id", id);
     if (error) throw error;
@@ -2335,7 +2347,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Monto: e.amount, Fecha: e.date, FechaCompra: e.purchase_date || "", Tarjeta: e.credit_cards?.name || "" })))}
+            onClick={() => exportToCSV("gastos.csv", filteredExpenses.map((e) => ({ Categoria: e.categories?.name || "", Descripcion: e.description || "", Articulo: e.expense_items?.name || "", Monto: e.amount, Fecha: e.date, FechaCompra: e.purchase_date || "", Tarjeta: e.credit_cards?.name || "" })))}
             disabled={filteredExpenses.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
@@ -2346,6 +2358,12 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Repeat size={15} /> Gasto fijo
+          </button>
+          <button
+            onClick={() => setShowItemsReport(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <ShoppingBag size={15} /> Por artículo
           </button>
           <button
             onClick={() => setMoreOpen((v) => !v)}
@@ -2490,9 +2508,11 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
                 {(e.categories?.name || "?").charAt(0)}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.description || e.categories?.name}</p>
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.description || e.expense_items?.name || e.categories?.name}</p>
                 <p className="truncate text-xs text-slate-400">
-                  {e.categories?.name} · {e.purchase_date || e.date}
+                  {e.categories?.name}
+                  {e.expense_items?.name && ` · ${e.expense_items.name}`}
+                  {" · "}{e.purchase_date || e.date}
                   {e.purchase_date && e.purchase_date !== e.date && ` · pago: ${e.date}`}
                   {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
                 </p>
@@ -2506,12 +2526,14 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         ))}
       </ListCard>
       {showModal && (
-        <ExpenseModal categories={categories} cards={cards} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
+        <ExpenseModal categories={categories} cards={cards} items={items} onItemsChanged={refetchItems} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
       )}
       {editingExpense && (
         <ExpenseModal
           categories={categories}
           cards={cards}
+          items={items}
+          onItemsChanged={refetchItems}
           expense={editingExpense}
           onClose={() => setEditingExpense(null)}
           onSaved={refetchExpenses}
@@ -2581,15 +2603,33 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           onDeleteCard={handleDeleteCard}
         />
       )}
+      {showItemsReport && (
+        <ExpenseItemsReportModal
+          categories={categories}
+          items={items}
+          expenses={expenses}
+          year={year}
+          month={month}
+          defaultCategoryId={catFilter !== "Todas" ? categories.find((c) => c.name === catFilter)?.id : undefined}
+          fmt={fmt}
+          onClose={() => setShowItemsReport(false)}
+        />
+      )}
     </div>
   );
 }
-function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDate }) {
+// Valor sentinela del selector de "Artículo" que significa "quiero escribir
+// uno nuevo" (mismo patrón que "Otro (escribir nombre)" en tipos de ahorro).
+const CUSTOM_ITEM_VALUE = "__nuevo_articulo__";
+function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClose, onSaved, defaultDate }) {
   const cardsList = cards || [];
+  const itemsList = items || [];
   const isEditing = Boolean(expense);
   const today = localDateString();
   const [categoryId, setCategoryId] = useState(expense?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(expense?.description || "");
+  const [itemId, setItemId] = useState(expense?.item_id || "");
+  const [newItemName, setNewItemName] = useState("");
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
   const [date, setDate] = useState(expense?.purchase_date || expense?.date || defaultDate || today);
   const [cardId, setCardId] = useState(expense?.card_id || "");
@@ -2600,6 +2640,14 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
   const computedPaymentDate = selectedCard && date
     ? computeCardPaymentDate(date, Number(selectedCard.cutoff_day), Number(selectedCard.payment_day))
     : null;
+  // Los artículos son por categoría (ej. "Arroz" vive dentro de Alimentación),
+  // así que la lista del selector se filtra según la categoría elegida.
+  const itemsForCategory = itemsList.filter((it) => it.category_id === categoryId);
+  function handleCategoryChange(value) {
+    setCategoryId(value);
+    setItemId("");
+    setNewItemName("");
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -2607,12 +2655,36 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
       setErrorMsg("Completa al menos la categoría, el monto y la fecha.");
       return;
     }
+    if (itemId === CUSTOM_ITEM_VALUE && !newItemName.trim()) {
+      setErrorMsg("Escribe el nombre del artículo nuevo.");
+      return;
+    }
     setSaving(true);
     setErrorMsg("");
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    // Si eligió "+ Agregar artículo nuevo", primero se crea ese artículo (queda
+    // guardado para poder volver a elegirlo después) y se usa su id recién creado.
+    let finalItemId = itemId && itemId !== CUSTOM_ITEM_VALUE ? itemId : null;
+    if (itemId === CUSTOM_ITEM_VALUE) {
+      const { data: newItem, error: itemError } = await supabase
+        .from("expense_items")
+        .insert({ user_id: userId || null, category_id: categoryId, name: newItemName.trim() })
+        .select()
+        .single();
+      if (itemError) {
+        setSaving(false);
+        setErrorMsg("Error al crear el artículo: " + itemError.message);
+        return;
+      }
+      finalItemId = newItem.id;
+      if (onItemsChanged) onItemsChanged();
+    }
     const payload = selectedCard
       ? {
           category_id: categoryId,
           description,
+          item_id: finalItemId,
           amount: Number(amount),
           date: computedPaymentDate,
           purchase_date: date,
@@ -2622,6 +2694,7 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
       : {
           category_id: categoryId,
           description,
+          item_id: finalItemId,
           amount: Number(amount),
           date,
           purchase_date: null,
@@ -2639,8 +2712,6 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
       }
       return;
     }
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData?.user?.id;
     const { error } = await supabase.from("expenses").insert({
       user_id: userId || null,
       ...payload,
@@ -2659,13 +2730,37 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
           <select
-            value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            value={categoryId} onChange={(e) => handleCategoryChange(e.target.value)}
             className={`mt-1 ${INPUT_CLASS}`}
           >
             {categories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Artículo (opcional)</label>
+          <select
+            value={itemId}
+            onChange={(e) => { setItemId(e.target.value); if (e.target.value !== CUSTOM_ITEM_VALUE) setNewItemName(""); }}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            <option value="">Ninguno</option>
+            {itemsForCategory.map((it) => (
+              <option key={it.id} value={it.id}>{it.name}</option>
+            ))}
+            <option value={CUSTOM_ITEM_VALUE}>+ Agregar artículo nuevo</option>
+          </select>
+          {itemId === CUSTOM_ITEM_VALUE && (
+            <input
+              value={newItemName} onChange={(e) => setNewItemName(e.target.value)} autoFocus
+              placeholder="Ej. Arroz"
+              className={`mt-2 ${INPUT_CLASS}`}
+            />
+          )}
+          <p className="mt-1.5 text-xs text-slate-400">
+            Útil para llevar el detalle de compras dentro de una categoría (ej. cuánto gastaste en arroz este mes en Alimentación). Los artículos que crees aquí quedan guardados para volver a elegirlos después.
+          </p>
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
@@ -2722,6 +2817,108 @@ function ExpenseModal({ categories, cards, expense, onClose, onSaved, defaultDat
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar gasto"}
         </button>
       </form>
+    </ModalShell>
+  );
+}
+// Solo lectura: cuánto se gastó por artículo (ej. "Arroz" dentro de
+// Alimentación) en el mes elegido, o en una de sus dos quincenas. Se separó
+// "período" (mes/quincena) de las flechitas "‹ Mes Año ›" de arriba a
+// propósito, para no cambiarle el significado a esa navegación en el resto
+// de la app — aquí simplemente se recorta el mismo mes elegido en dos mitades.
+function ExpenseItemsReportModal({ categories, items, expenses, year, month, defaultCategoryId, fmt, onClose }) {
+  const categoriesWithItems = categories.filter((c) => items.some((it) => it.category_id === c.id));
+  const [categoryId, setCategoryId] = useState(
+    defaultCategoryId && items.some((it) => it.category_id === defaultCategoryId)
+      ? defaultCategoryId
+      : (categoriesWithItems[0]?.id || "")
+  );
+  const [period, setPeriod] = useState("mes"); // "mes" | "q1" | "q2"
+
+  const itemsForCategory = items.filter((it) => it.category_id === categoryId);
+  function inSelectedPeriod(e) {
+    if (dateStringYear(e.date) !== year || dateStringMonth(e.date) - 1 !== month) return false;
+    if (period === "mes") return true;
+    const day = dateStringDay(e.date);
+    return period === "q1" ? day <= 15 : day > 15;
+  }
+  const relevantExpenses = expenses.filter((e) => e.category_id === categoryId && e.item_id && inSelectedPeriod(e));
+  const totalsByItem = itemsForCategory
+    .map((it) => {
+      const matching = relevantExpenses.filter((e) => e.item_id === it.id);
+      return { id: it.id, name: it.name, amount: matching.reduce((a, e) => a + Number(e.amount), 0), count: matching.length };
+    })
+    .filter((d) => d.count > 0)
+    .sort((a, b) => b.amount - a.amount);
+  const grandTotal = totalsByItem.reduce((a, d) => a + d.amount, 0);
+  const periodLabel = period === "mes"
+    ? `${MONTHS_FULL[month]} ${year}`
+    : period === "q1"
+    ? `1 al 15 de ${MONTHS_FULL[month]} ${year}`
+    : `16 a fin de mes de ${MONTHS_FULL[month]} ${year}`;
+  const chartHeight = Math.max(120, totalsByItem.length * 40);
+
+  return (
+    <ModalShell onClose={onClose} title="Gasto por artículo" maxWidth="max-w-lg">
+      {categoriesWithItems.length === 0 ? (
+        <p className="text-sm text-slate-400">
+          Aún no has creado ningún artículo. Cuando agregues un gasto, en el campo "Artículo" puedes crear el primero (ej. "Arroz" dentro de Alimentación).
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+              <select
+                value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+                className={`mt-1 ${INPUT_CLASS}`}
+              >
+                {categoriesWithItems.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Período</label>
+              <select
+                value={period} onChange={(e) => setPeriod(e.target.value)}
+                className={`mt-1 ${INPUT_CLASS}`}
+              >
+                <option value="mes">Mes completo</option>
+                <option value="q1">Quincena 1 (días 1 al 15)</option>
+                <option value="q2">Quincena 2 (día 16 a fin de mes)</option>
+              </select>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-slate-400">{periodLabel}</p>
+          {totalsByItem.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-400">Aún no has registrado compras por artículo en este período para esta categoría.</p>
+          ) : (
+            <>
+              <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{fmt(grandTotal)}</p>
+              <div className="mt-4" style={{ height: chartHeight }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={totalsByItem} layout="vertical" margin={{ left: 8, right: 16 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                    <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
+                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                    <Bar dataKey="amount" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={18} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+                {totalsByItem.map((d) => (
+                  <div key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-slate-700 dark:text-slate-200">{d.name}</p>
+                      <p className="text-xs text-slate-400">{d.count} compra{d.count === 1 ? "" : "s"}</p>
+                    </div>
+                    <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(d.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
     </ModalShell>
   );
 }
