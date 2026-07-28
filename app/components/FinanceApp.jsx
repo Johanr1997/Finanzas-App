@@ -2147,7 +2147,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   const [showModal, setShowModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [deletingExpense, setDeletingExpense] = useState(null);
-  const [showItemsReport, setShowItemsReport] = useState(false);
+  const [showItemsManager, setShowItemsManager] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [editingPlan, setEditingPlan] = useState(null);
   const [deletingPlan, setDeletingPlan] = useState(null);
@@ -2360,12 +2360,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
             <Repeat size={15} /> Gasto fijo
           </button>
           <button
-            onClick={() => setShowItemsReport(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <ShoppingBag size={15} /> Por artículo
-          </button>
-          <button
             onClick={() => setMoreOpen((v) => !v)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
@@ -2384,6 +2378,12 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
                 className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 <CreditCard size={15} /> Plan de pago
+              </button>
+              <button
+                onClick={() => setShowItemsManager(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <ShoppingBag size={15} /> Artículos
               </button>
             </>
           )}
@@ -2476,6 +2476,19 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           </CollapsibleSection>
         </Card>
       )}
+      {items.length > 0 && (
+        <Card className="p-5">
+          <ExpenseItemsReport
+            categories={categories}
+            items={items}
+            expenses={expenses}
+            year={year}
+            month={month}
+            defaultCategoryId={catFilter !== "Todas" ? categories.find((c) => c.name === catFilter)?.id : undefined}
+            fmt={fmt}
+          />
+        </Card>
+      )}
       <ListCard
         header={
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
@@ -2526,14 +2539,13 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         ))}
       </ListCard>
       {showModal && (
-        <ExpenseModal categories={categories} cards={cards} items={items} onItemsChanged={refetchItems} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
+        <ExpenseModal categories={categories} cards={cards} items={items} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
       )}
       {editingExpense && (
         <ExpenseModal
           categories={categories}
           cards={cards}
           items={items}
-          onItemsChanged={refetchItems}
           expense={editingExpense}
           onClose={() => setEditingExpense(null)}
           onSaved={refetchExpenses}
@@ -2603,16 +2615,12 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           onDeleteCard={handleDeleteCard}
         />
       )}
-      {showItemsReport && (
-        <ExpenseItemsReportModal
+      {showItemsManager && (
+        <ExpenseItemsManagerModal
           categories={categories}
           items={items}
-          expenses={expenses}
-          year={year}
-          month={month}
-          defaultCategoryId={catFilter !== "Todas" ? categories.find((c) => c.name === catFilter)?.id : undefined}
-          fmt={fmt}
-          onClose={() => setShowItemsReport(false)}
+          onClose={() => setShowItemsManager(false)}
+          onChanged={refetchItems}
         />
       )}
     </div>
@@ -2620,8 +2628,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
 }
 // Valor sentinela del selector de "Artículo" que significa "quiero escribir
 // uno nuevo" (mismo patrón que "Otro (escribir nombre)" en tipos de ahorro).
-const CUSTOM_ITEM_VALUE = "__nuevo_articulo__";
-function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClose, onSaved, defaultDate }) {
+function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, defaultDate }) {
   const cardsList = cards || [];
   const itemsList = items || [];
   const isEditing = Boolean(expense);
@@ -2629,7 +2636,6 @@ function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClo
   const [categoryId, setCategoryId] = useState(expense?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(expense?.description || "");
   const [itemId, setItemId] = useState(expense?.item_id || "");
-  const [newItemName, setNewItemName] = useState("");
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
   const [date, setDate] = useState(expense?.purchase_date || expense?.date || defaultDate || today);
   const [cardId, setCardId] = useState(expense?.card_id || "");
@@ -2641,12 +2647,14 @@ function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClo
     ? computeCardPaymentDate(date, Number(selectedCard.cutoff_day), Number(selectedCard.payment_day))
     : null;
   // Los artículos son por categoría (ej. "Arroz" vive dentro de Alimentación),
-  // así que la lista del selector se filtra según la categoría elegida.
+  // así que la lista del selector se filtra según la categoría elegida. Los
+  // artículos en sí se crean/editan/borran aparte, en "Artículos" (dentro de
+  // "Más opciones" en Gastos) — este formulario solo elige entre los que ya
+  // existan, para no mezclar "registrar un gasto" con "armar la lista".
   const itemsForCategory = itemsList.filter((it) => it.category_id === categoryId);
   function handleCategoryChange(value) {
     setCategoryId(value);
     setItemId("");
-    setNewItemName("");
   }
 
   async function handleSubmit(e) {
@@ -2655,36 +2663,13 @@ function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClo
       setErrorMsg("Completa al menos la categoría, el monto y la fecha.");
       return;
     }
-    if (itemId === CUSTOM_ITEM_VALUE && !newItemName.trim()) {
-      setErrorMsg("Escribe el nombre del artículo nuevo.");
-      return;
-    }
     setSaving(true);
     setErrorMsg("");
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData?.user?.id;
-    // Si eligió "+ Agregar artículo nuevo", primero se crea ese artículo (queda
-    // guardado para poder volver a elegirlo después) y se usa su id recién creado.
-    let finalItemId = itemId && itemId !== CUSTOM_ITEM_VALUE ? itemId : null;
-    if (itemId === CUSTOM_ITEM_VALUE) {
-      const { data: newItem, error: itemError } = await supabase
-        .from("expense_items")
-        .insert({ user_id: userId || null, category_id: categoryId, name: newItemName.trim() })
-        .select()
-        .single();
-      if (itemError) {
-        setSaving(false);
-        setErrorMsg("Error al crear el artículo: " + itemError.message);
-        return;
-      }
-      finalItemId = newItem.id;
-      if (onItemsChanged) onItemsChanged();
-    }
     const payload = selectedCard
       ? {
           category_id: categoryId,
           description,
-          item_id: finalItemId,
+          item_id: itemId || null,
           amount: Number(amount),
           date: computedPaymentDate,
           purchase_date: date,
@@ -2694,7 +2679,7 @@ function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClo
       : {
           category_id: categoryId,
           description,
-          item_id: finalItemId,
+          item_id: itemId || null,
           amount: Number(amount),
           date,
           purchase_date: null,
@@ -2712,6 +2697,8 @@ function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClo
       }
       return;
     }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
     const { error } = await supabase.from("expenses").insert({
       user_id: userId || null,
       ...payload,
@@ -2742,24 +2729,18 @@ function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClo
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Artículo (opcional)</label>
           <select
             value={itemId}
-            onChange={(e) => { setItemId(e.target.value); if (e.target.value !== CUSTOM_ITEM_VALUE) setNewItemName(""); }}
+            onChange={(e) => setItemId(e.target.value)}
             className={`mt-1 ${INPUT_CLASS}`}
           >
             <option value="">Ninguno</option>
             {itemsForCategory.map((it) => (
               <option key={it.id} value={it.id}>{it.name}</option>
             ))}
-            <option value={CUSTOM_ITEM_VALUE}>+ Agregar artículo nuevo</option>
           </select>
-          {itemId === CUSTOM_ITEM_VALUE && (
-            <input
-              value={newItemName} onChange={(e) => setNewItemName(e.target.value)} autoFocus
-              placeholder="Ej. Arroz"
-              className={`mt-2 ${INPUT_CLASS}`}
-            />
-          )}
           <p className="mt-1.5 text-xs text-slate-400">
-            Útil para llevar el detalle de compras dentro de una categoría (ej. cuánto gastaste en arroz este mes en Alimentación). Los artículos que crees aquí quedan guardados para volver a elegirlos después.
+            {itemsForCategory.length > 0
+              ? "Útil para llevar el detalle de compras dentro de esta categoría (ej. cuánto gastaste en arroz este mes)."
+              : "Esta categoría todavía no tiene artículos. Créalos desde \"Artículos\", dentro de \"Más opciones\"."}
           </p>
         </div>
         <div>
@@ -2821,11 +2802,14 @@ function ExpenseModal({ categories, cards, items, onItemsChanged, expense, onClo
   );
 }
 // Solo lectura: cuánto se gastó por artículo (ej. "Arroz" dentro de
-// Alimentación) en el mes elegido, o en una de sus dos quincenas. Se separó
-// "período" (mes/quincena) de las flechitas "‹ Mes Año ›" de arriba a
-// propósito, para no cambiarle el significado a esa navegación en el resto
-// de la app — aquí simplemente se recorta el mismo mes elegido en dos mitades.
-function ExpenseItemsReportModal({ categories, items, expenses, year, month, defaultCategoryId, fmt, onClose }) {
+// Alimentación) en el mes elegido, o en una de sus dos quincenas. Vive
+// directamente en la pestaña Gastos (no en un modal aparte) para que se vea
+// de un vistazo, sin tener que darle a un botón. Se separó "período"
+// (mes/quincena) de las flechitas "‹ Mes Año ›" de arriba a propósito, para
+// no cambiarle el significado a esa navegación en el resto de la app — aquí
+// simplemente se recorta el mismo mes elegido en dos mitades. El componente
+// no se renderiza si todavía no hay ningún artículo creado (ver ExpensesView).
+function ExpenseItemsReport({ categories, items, expenses, year, month, defaultCategoryId, fmt }) {
   const categoriesWithItems = categories.filter((c) => items.some((it) => it.category_id === c.id));
   const [categoryId, setCategoryId] = useState(
     defaultCategoryId && items.some((it) => it.category_id === defaultCategoryId)
@@ -2857,68 +2841,198 @@ function ExpenseItemsReportModal({ categories, items, expenses, year, month, def
     : `16 a fin de mes de ${MONTHS_FULL[month]} ${year}`;
   const chartHeight = Math.max(120, totalsByItem.length * 40);
 
+  if (categoriesWithItems.length === 0) return null;
+
   return (
-    <ModalShell onClose={onClose} title="Gasto por artículo" maxWidth="max-w-lg">
-      {categoriesWithItems.length === 0 ? (
-        <p className="text-sm text-slate-400">
-          Aún no has creado ningún artículo. Cuando agregues un gasto, en el campo "Artículo" puedes crear el primero (ej. "Arroz" dentro de Alimentación).
-        </p>
+    <div>
+      <Eyebrow>Gasto por artículo</Eyebrow>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+          <select
+            value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            {categoriesWithItems.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Período</label>
+          <select
+            value={period} onChange={(e) => setPeriod(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            <option value="mes">Mes completo</option>
+            <option value="q1">Quincena 1 (días 1 al 15)</option>
+            <option value="q2">Quincena 2 (día 16 a fin de mes)</option>
+          </select>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-slate-400">{periodLabel}</p>
+      {totalsByItem.length === 0 ? (
+        <p className="mt-4 text-sm text-slate-400">Aún no has registrado compras por artículo en este período para esta categoría.</p>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
-              <select
-                value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              >
-                {categoriesWithItems.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Período</label>
-              <select
-                value={period} onChange={(e) => setPeriod(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              >
-                <option value="mes">Mes completo</option>
-                <option value="q1">Quincena 1 (días 1 al 15)</option>
-                <option value="q2">Quincena 2 (día 16 a fin de mes)</option>
-              </select>
-            </div>
+          <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{fmt(grandTotal)}</p>
+          <div className="mt-4" style={{ height: chartHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={totalsByItem} layout="vertical" margin={{ left: 8, right: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Bar dataKey="amount" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
-          <p className="mt-3 text-xs text-slate-400">{periodLabel}</p>
-          {totalsByItem.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-400">Aún no has registrado compras por artículo en este período para esta categoría.</p>
-          ) : (
-            <>
-              <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{fmt(grandTotal)}</p>
-              <div className="mt-4" style={{ height: chartHeight }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={totalsByItem} layout="vertical" margin={{ left: 8, right: 16 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                    <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
-                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
-                    <Bar dataKey="amount" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={18} />
-                  </BarChart>
-                </ResponsiveContainer>
+          <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {totalsByItem.map((d) => (
+              <div key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{d.name}</p>
+                  <p className="text-xs text-slate-400">{d.count} compra{d.count === 1 ? "" : "s"}</p>
+                </div>
+                <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(d.amount)}</span>
               </div>
-              <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-                {totalsByItem.map((d) => (
-                  <div key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium text-slate-700 dark:text-slate-200">{d.name}</p>
-                      <p className="text-xs text-slate-400">{d.count} compra{d.count === 1 ? "" : "s"}</p>
-                    </div>
-                    <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(d.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
+            ))}
+          </div>
         </>
       )}
+    </div>
+  );
+}
+// Espacio para armar la lista de artículos por categoría, separado a
+// propósito del formulario de "Agregar gasto" (mismo patrón que
+// CreditCardsManagerModal/CreditCardModal): un lugar para crear/editar/
+// borrar artículos, y otro distinto para registrar gastos usándolos.
+function ExpenseItemsManagerModal({ categories, items, onClose, onChanged }) {
+  const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
+  const [showItemModal, setShowItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [deletingItem, setDeletingItem] = useState(null);
+  const itemsForCategory = items.filter((it) => it.category_id === categoryId).sort((a, b) => a.name.localeCompare(b.name));
+  async function handleDeleteItem(id) {
+    const { error } = await supabase.from("expense_items").delete().eq("id", id);
+    if (!error) {
+      onChanged();
+      setDeletingItem(null);
+    }
+  }
+  return (
+    <ModalShell
+      onClose={onClose}
+      title="Artículos por categoría"
+      overlayExtras={
+        <>
+          {showItemModal && (
+            <ExpenseItemModal categoryId={categoryId} onClose={() => setShowItemModal(false)} onSaved={onChanged} />
+          )}
+          {editingItem && (
+            <ExpenseItemModal categoryId={categoryId} item={editingItem} onClose={() => setEditingItem(null)} onSaved={onChanged} />
+          )}
+          {deletingItem && (
+            <ConfirmDeleteModal
+              title="Eliminar artículo"
+              message={`¿Seguro que quieres eliminar "${deletingItem.name}"? Los gastos que ya registraste con este artículo no se borran, solo quedan sin artículo asociado.`}
+              onCancel={() => setDeletingItem(null)}
+              onConfirm={() => handleDeleteItem(deletingItem.id)}
+            />
+          )}
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-xs text-slate-400">
+          Crea aquí los artículos que quieras registrar por separado dentro de cada categoría (ej. "Arroz", "Frijoles" en Alimentación). Luego, al agregar un gasto, podrás elegirlos desde ese formulario.
+        </p>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
+          <select
+            value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        {itemsForCategory.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400 dark:border-slate-700">
+            Aún no hay artículos en esta categoría.
+          </p>
+        ) : (
+          <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {itemsForCategory.map((it) => (
+              <div key={it.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{it.name}</p>
+                <RowActions onEdit={() => setEditingItem(it)} onDelete={() => setDeletingItem(it)} />
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowItemModal(true)}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <Plus size={15} /> Agregar artículo
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+function ExpenseItemModal({ categoryId, item, onClose, onSaved }) {
+  const isEditing = Boolean(item);
+  const [name, setName] = useState(item?.name || "");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) {
+      setErrorMsg("Escribe un nombre.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("expense_items").update({ name: name.trim() }).eq("id", item.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("expense_items").insert({ user_id: userId || null, category_id: categoryId, name: name.trim() });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <ModalShell onClose={onClose} title={isEditing ? "Editar artículo" : "Nuevo artículo"} maxWidth="max-w-sm" zIndex="z-[60]">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre</label>
+          <input
+            value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            placeholder="Ej. Arroz"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar artículo"}
+        </button>
+      </form>
     </ModalShell>
   );
 }
