@@ -3413,46 +3413,44 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
           ))}
         </div>
       </Card>
-      <Card className="overflow-hidden">
-        <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-          <select
-            value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-          >
-            <option>Todos</option>
-            {allTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-        </div>
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {filteredSavings.map((s) => {
-            const label = SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type;
-            return (
-              <div key={s.id} className="flex items-center justify-between px-5 py-3 text-sm">
-                <div>
-                  <p className="font-medium text-slate-700 dark:text-slate-200">{label}</p>
-                  <p className="text-xs text-slate-400">
-                    {s.date}
-                    {s.goals?.name && (
-                      <span className="ml-2 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium" style={{ backgroundColor: `${s.goals.color || "#3B82F6"}1a`, color: s.goals.color || "#3B82F6" }}>
-                        <Target size={10} /> {s.goals.name}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="tabular-nums font-medium text-blue-500">{fmt(s.amount)}</span>
-                  <RowActions onEdit={() => setEditingSaving(s)} onDelete={() => setDeletingSaving(s)} />
-                </div>
+      <ListCard
+        header={
+          <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+            <select
+              value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              <option>Todos</option>
+              {allTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+        }
+        isEmpty={filteredSavings.length === 0}
+        emptyMessage={monthSavings.length === 0 ? `Aún no has registrado ahorros en ${MONTHS_FULL[month]} ${year}.` : "No hay ahorros de este tipo."}
+      >
+        {filteredSavings.map((s) => {
+          const label = SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type;
+          return (
+            <div key={s.id} className="flex items-center justify-between px-5 py-3 text-sm">
+              <div>
+                <p className="font-medium text-slate-700 dark:text-slate-200">{label}</p>
+                <p className="text-xs text-slate-400">
+                  {s.date}
+                  {s.goals?.name && (
+                    <span className="ml-2 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium" style={{ backgroundColor: `${s.goals.color || "#3B82F6"}1a`, color: s.goals.color || "#3B82F6" }}>
+                      <Target size={10} /> {s.goals.name}
+                    </span>
+                  )}
+                </p>
               </div>
-            );
-          })}
-          {filteredSavings.length === 0 && (
-            <p className="px-5 py-8 text-center text-sm text-slate-400">
-              {monthSavings.length === 0 ? `Aún no has registrado ahorros en ${MONTHS_FULL[month]} ${year}.` : "No hay ahorros de este tipo."}
-            </p>
-          )}
-        </div>
-      </Card>
+              <div className="flex items-center gap-2">
+                <span className="tabular-nums font-medium text-blue-500">{fmt(s.amount)}</span>
+                <RowActions onEdit={() => setEditingSaving(s)} onDelete={() => setDeletingSaving(s)} />
+              </div>
+            </div>
+          );
+        })}
+      </ListCard>
       {showModal && (
         <SavingModal goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
       )}
@@ -3626,74 +3624,68 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
     }
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar ahorro" : "Nuevo ahorro"}</h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ahorro</label>
-            <select
-              value={selectValue} onChange={(e) => handleSelectChange(e.target.value)}
-              className={`mt-1 ${INPUT_CLASS}`}
-            >
-              {SAVINGS_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-              <option value={CUSTOM_TYPE_VALUE}>Otro (escribir nombre)</option>
-            </select>
-            {selectValue === CUSTOM_TYPE_VALUE && (
-              <input
-                type="text" value={type} onChange={(e) => setType(e.target.value)}
-                placeholder="Ej. Ahorro para viaje, Colegio de los niños..."
-                className={`mt-2 ${INPUT_CLASS}`}
-              />
-            )}
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una meta (opcional)</label>
-            <select
-              value={goalId} onChange={(e) => setGoalId(e.target.value)}
-              className={`mt-1 ${INPUT_CLASS}`}
-            >
-              <option value="">Ninguna</option>
-              {(goals || []).map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-            {goalId && (
-              <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al progreso de esa meta.</p>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
-              <input
-                type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
-                placeholder="50000"
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
-              <input
-                type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className={`mt-1 ${INPUT_CLASS}`}
-              />
-            </div>
-          </div>
-          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
-          <button
-            type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+    <ModalShell onClose={onClose} title={isEditing ? "Editar ahorro" : "Nuevo ahorro"}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ahorro</label>
+          <select
+            value={selectValue} onChange={(e) => handleSelectChange(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
           >
-            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar ahorro"}
-          </button>
-        </form>
-      </div>
-    </div>
+            {SAVINGS_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+            <option value={CUSTOM_TYPE_VALUE}>Otro (escribir nombre)</option>
+          </select>
+          {selectValue === CUSTOM_TYPE_VALUE && (
+            <input
+              type="text" value={type} onChange={(e) => setType(e.target.value)}
+              placeholder="Ej. Ahorro para viaje, Colegio de los niños..."
+              className={`mt-2 ${INPUT_CLASS}`}
+            />
+          )}
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una meta (opcional)</label>
+          <select
+            value={goalId} onChange={(e) => setGoalId(e.target.value)}
+            className={`mt-1 ${INPUT_CLASS}`}
+          >
+            <option value="">Ninguna</option>
+            {(goals || []).map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+          {goalId && (
+            <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al progreso de esa meta.</p>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="50000"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
+            <input
+              type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar ahorro"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 /* ---------------------------------------------------------------
