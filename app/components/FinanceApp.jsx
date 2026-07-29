@@ -1879,7 +1879,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
       )}
       {types.length > 0 && (
         <Card className="p-5">
-          <IncomeTypesReport types={types} incomes={incomes} year={year} month={month} fmt={fmt} />
+          <IncomeTypesReport types={types} incomes={incomes} recurring={recurring} year={year} month={month} fmt={fmt} />
         </Card>
       )}
       <ListCard
@@ -1928,10 +1928,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         />
       )}
       {showRecurringModal && (
-        <RecurringIncomeModal onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} />
+        <RecurringIncomeModal types={types} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} />
       )}
       {editingRecurring && (
-        <RecurringIncomeModal item={editingRecurring} onClose={() => setEditingRecurring(null)} onSaved={refetchRecurring} />
+        <RecurringIncomeModal types={types} item={editingRecurring} onClose={() => setEditingRecurring(null)} onSaved={refetchRecurring} />
       )}
       {deletingRecurring && (
         <ConfirmDeleteModal
@@ -2059,10 +2059,10 @@ function IncomeModal({ income, types, onClose, onSaved, defaultDate }) {
     </ModalShell>
   );
 }
-function RecurringIncomeModal({ item, onClose, onSaved }) {
+function RecurringIncomeModal({ item, types, onClose, onSaved }) {
   const isEditing = Boolean(item);
   const today = localDateString();
-  const [type, setType] = useState(item?.type || "");
+  const [typeId, setTypeId] = useState(item?.type_id || "");
   const [description, setDescription] = useState(item?.description || "");
   const [amount, setAmount] = useState(item ? String(item.amount) : "");
   const [startDate, setStartDate] = useState(item?.start_date || today);
@@ -2073,13 +2073,18 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!type || !amount || !startDate) {
-      setErrorMsg("Completa el tipo, el monto y la fecha de inicio.");
+    if (!typeId || !amount || !startDate) {
+      setErrorMsg(
+        types.length === 0
+          ? "Primero crea un tipo de ingreso con el botón \"Tipos de ingreso\"."
+          : "Completa el tipo, el monto y la fecha de inicio."
+      );
       return;
     }
+    const selectedType = types.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
-    const payload = { type, description, amount: Number(amount), start_date: startDate, frequency };
+    const payload = { type: selectedType?.name || "", type_id: typeId, description, amount: Number(amount), start_date: startDate, frequency };
     if (isEditing) {
       const { error } = await supabase.from("recurring_incomes").update(payload).eq("id", item.id);
       setSaving(false);
@@ -2113,11 +2118,18 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
-          <input
-            value={type} onChange={(e) => setType(e.target.value)}
-            placeholder="Ej. Salario"
+          <select
+            value={typeId} onChange={(e) => setTypeId(e.target.value)}
             className={`mt-1 ${INPUT_CLASS}`}
-          />
+          >
+            <option value="">Selecciona un tipo</option>
+            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          {types.length === 0 && (
+            <p className="mt-1 text-xs text-slate-400">
+              Aún no tienes tipos de ingreso. Créalos con el botón "Tipos de ingreso".
+            </p>
+          )}
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
@@ -2297,7 +2309,7 @@ function IncomeTypeModal({ type, onClose, onSaved }) {
     </ModalShell>
   );
 }
-function IncomeTypesReport({ types, incomes, year, month, fmt }) {
+function IncomeTypesReport({ types, incomes, recurring, year, month, fmt }) {
   const sortedTypes = [...types].sort((a, b) => a.name.localeCompare(b.name));
   const [period, setPeriod] = useState("mes"); // "mes" | "q1" | "q2"
 
@@ -2307,15 +2319,30 @@ function IncomeTypesReport({ types, incomes, year, month, fmt }) {
     const day = dateStringDay(i.date);
     return period === "q1" ? day <= 15 : day > 15;
   }
+  // Los ingresos fijos ("Ingreso fijo") no se guardan como fila real en
+  // incomes -- se sintetizan aquí, solo para el año elegido, igual que ya
+  // hace fetchYearData para Resumen/Calendario, para poder sumarlos también
+  // a este gráfico junto con los ingresos sueltos.
+  const recurringIncomeEntries = [];
+  (recurring || []).forEach((r) => {
+    if (!r.type_id) return;
+    synthesizeRecurringEntries(r, year).forEach(({ date }) => {
+      recurringIncomeEntries.push({ type_id: r.type_id, amount: r.amount, date });
+    });
+  });
   const relevantIncomes = incomes.filter((i) => i.type_id && inSelectedPeriod(i));
+  const relevantRecurring = recurringIncomeEntries.filter(inSelectedPeriod);
   const totalsByType = sortedTypes
     .map((t) => {
-      const matching = relevantIncomes.filter((i) => i.type_id === t.id);
+      const matchingIncomes = relevantIncomes.filter((i) => i.type_id === t.id);
+      const matchingRecurring = relevantRecurring.filter((e) => e.type_id === t.id);
       return {
         id: t.id,
         name: t.name,
-        amount: matching.reduce((a, i) => a + Number(i.amount), 0),
-        count: matching.length,
+        amount:
+          matchingIncomes.reduce((a, i) => a + Number(i.amount), 0) +
+          matchingRecurring.reduce((a, e) => a + Number(e.amount), 0),
+        count: matchingIncomes.length + matchingRecurring.length,
       };
     })
     .filter((d) => d.count > 0)
