@@ -2434,6 +2434,11 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   // de gastos del mes — antes eran 3 tarjetas separadas (2 de ellas sin
   // poder cerrarse) y esa fue la queja concreta que motivó este cambio.
   const [programmedOpen, setProgrammedOpen] = useState(false);
+  // "Gasto por artículo" también es colapsable, igual que "Fijo y
+  // programado" arriba (empieza cerrada por el mismo motivo: no llenar la
+  // pantalla antes de la lista real de gastos, para quien no revise esto a
+  // diario).
+  const [itemsReportOpen, setItemsReportOpen] = useState(false);
   const [showCardsManager, setShowCardsManager] = useState(false);
   // "Tarjetas" y "Plan de pago" son los botones que menos se usan día a día,
   // así que quedan escondidos detrás de "Más opciones" (empieza cerrado) —
@@ -2751,15 +2756,30 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
       )}
       {items.length > 0 && (
         <Card className="p-5">
-          <ExpenseItemsReport
-            categories={categories}
-            items={items}
-            expenses={expenses}
-            year={year}
-            month={month}
-            defaultCategoryId={catFilter !== "Todas" ? categories.find((c) => c.name === catFilter)?.id : undefined}
-            fmt={fmt}
-          />
+          <CollapsibleSection
+            open={itemsReportOpen}
+            onToggle={() => setItemsReportOpen((v) => !v)}
+            header={
+              <div>
+                <Eyebrow>Gasto por artículo</Eyebrow>
+                <p className="mt-1 text-xs text-slate-400">
+                  Cuánto gastaste en cada artículo que hayas creado, por categoría o en total.
+                </p>
+              </div>
+            }
+          >
+            <div className="mt-4">
+              <ExpenseItemsReport
+                categories={categories}
+                items={items}
+                expenses={expenses}
+                year={year}
+                month={month}
+                defaultCategoryId={catFilter !== "Todas" ? categories.find((c) => c.name === catFilter)?.id : undefined}
+                fmt={fmt}
+              />
+            </div>
+          </CollapsibleSection>
         </Card>
       )}
       <ListCard
@@ -3086,10 +3106,16 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, def
 const ALL_CATEGORIES_VALUE = "";
 function ExpenseItemsReport({ categories, items, expenses, year, month, defaultCategoryId, fmt }) {
   const categoriesWithItems = categories.filter((c) => items.some((it) => it.category_id === c.id));
+  // Por defecto se muestran todas las categorías juntas ("Todas"), salvo que
+  // se llegue con un filtro de categoría específico ya elegido arriba en
+  // Gastos (defaultCategoryId) -- así, al recargar la página sin ningún
+  // filtro puesto, el gráfico no "elige por su cuenta" la primera categoría
+  // con artículos (ej. Alimentación), que no es necesariamente lo que se
+  // quiere ver de un vistazo.
   const [categoryId, setCategoryId] = useState(
     defaultCategoryId && items.some((it) => it.category_id === defaultCategoryId)
       ? defaultCategoryId
-      : (categoriesWithItems[0]?.id || ALL_CATEGORIES_VALUE)
+      : ALL_CATEGORIES_VALUE
   );
   const [period, setPeriod] = useState("mes"); // "mes" | "q1" | "q2"
   const showAllCategories = categoryId === ALL_CATEGORIES_VALUE;
@@ -3132,8 +3158,7 @@ function ExpenseItemsReport({ categories, items, expenses, year, month, defaultC
 
   return (
     <div>
-      <Eyebrow>Gasto por artículo</Eyebrow>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
           <select
