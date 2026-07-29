@@ -512,8 +512,14 @@ function CollapsibleSection({ open, onToggle, header, buttonClassName, children 
 // de aplicarlo en las demás.
 function ModalShell({ onClose, title, maxWidth = "max-w-md", zIndex = "z-50", overlayExtras, children }) {
   return (
-    <div className={`fixed inset-0 ${zIndex} flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm`} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className={`w-full ${maxWidth} rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900`}>
+    // "overflow-y-auto" es a propósito: si el contenido de un modal (ej. una
+    // lista larga de artículos) termina siendo más alto que la pantalla, se
+    // puede desplazar el modal completo en vez de que la parte de abajo
+    // (como el botón "+ Agregar") quede fuera de la vista sin ninguna forma
+    // de llegar a ella. Antes esto no tenía overflow, así que en pantallas
+    // bajas (celular) o con listas largas, ese botón quedaba inalcanzable.
+    <div className={`fixed inset-0 ${zIndex} flex items-center justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm`} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className={`my-8 w-full ${maxWidth} rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900`}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
@@ -2232,7 +2238,7 @@ function IncomeTypesManagerModal({ types, onClose, onChanged }) {
             Aún no hay tipos de ingreso.
           </p>
         ) : (
-          <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          <div className="max-h-[40vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {sortedTypes.map((t) => (
               <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
                 <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{t.name}</p>
@@ -3276,7 +3282,7 @@ function ExpenseItemsManagerModal({ categories, items, onClose, onChanged }) {
             Aún no hay artículos en esta categoría.
           </p>
         ) : (
-          <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          <div className="max-h-[40vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {itemsForCategory.map((it) => (
               <div key={it.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
                 <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{it.name}</p>
