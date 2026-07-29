@@ -1802,7 +1802,19 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     setDeletingRecurring(null);
   }
   const monthIncomes = incomes.filter((i) => dateStringMonth(i.date) - 1 === month);
-  const total = monthIncomes.reduce((a, i) => a + Number(i.amount), 0);
+  // Un ingreso fijo ("Ingreso fijo", ej. un salario) no se guarda como fila
+  // real en incomes -- se sintetiza aquí, solo para el mes elegido, para que
+  // el total de arriba sí refleje el ingreso real de ese mes (igual que ya
+  // hace Resumen y el gráfico "Ingreso por tipo"), en vez de mostrar ₡0
+  // cuando todo el ingreso del mes viene de un ingreso fijo y no de ingresos
+  // sueltos registrados a mano.
+  const monthRecurringIncomeAmount = recurring.reduce((sum, r) => {
+    const occurrencesThisMonth = synthesizeRecurringEntries(r, year).filter(
+      ({ date }) => dateStringMonth(date) - 1 === month
+    ).length;
+    return sum + occurrencesThisMonth * Number(r.amount);
+  }, 0);
+  const total = monthIncomes.reduce((a, i) => a + Number(i.amount), 0) + monthRecurringIncomeAmount;
   const filteredIncomes = monthIncomes.filter((i) =>
     `${i.type || ""} ${i.description || ""}`.toLowerCase().includes(search.toLowerCase())
   );
@@ -1816,6 +1828,9 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         <div>
           <Eyebrow>Ingresos en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
+          {monthRecurringIncomeAmount > 0 && (
+            <p className="mt-0.5 text-xs text-slate-400">Incluye ingresos fijos de este mes</p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
