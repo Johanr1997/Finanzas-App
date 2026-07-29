@@ -2440,11 +2440,12 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   // de gastos del mes — antes eran 3 tarjetas separadas (2 de ellas sin
   // poder cerrarse) y esa fue la queja concreta que motivó este cambio.
   const [programmedOpen, setProgrammedOpen] = useState(false);
-  // "Gasto por artículo" también es colapsable, igual que "Fijo y
-  // programado" arriba (empieza cerrada por el mismo motivo: no llenar la
-  // pantalla antes de la lista real de gastos, para quien no revise esto a
-  // diario).
-  const [itemsReportOpen, setItemsReportOpen] = useState(false);
+  // El detalle de gastos individuales (buscador + lista completa, la última
+  // sección de la pestaña) también es colapsable, igual que "Fijo y
+  // programado" arriba (empieza cerrada por el mismo motivo). Antes esto se
+  // había puesto por error en "Gasto por artículo" (la sección de las
+  // barras) — se corrigió para que sea esta lista, no esa, la colapsable.
+  const [expensesListOpen, setExpensesListOpen] = useState(false);
   const [showCardsManager, setShowCardsManager] = useState(false);
   // "Tarjetas" y "Plan de pago" son los botones que menos se usan día a día,
   // así que quedan escondidos detrás de "Más opciones" (empieza cerrado) —
@@ -2762,35 +2763,32 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
       )}
       {items.length > 0 && (
         <Card className="p-5">
-          <CollapsibleSection
-            open={itemsReportOpen}
-            onToggle={() => setItemsReportOpen((v) => !v)}
-            header={
-              <div>
-                <Eyebrow>Gasto por artículo</Eyebrow>
-                <p className="mt-1 text-xs text-slate-400">
-                  Cuánto gastaste en cada artículo que hayas creado, por categoría o en total.
-                </p>
-              </div>
-            }
-          >
-            <div className="mt-4">
-              <ExpenseItemsReport
-                categories={categories}
-                items={items}
-                expenses={expenses}
-                year={year}
-                month={month}
-                defaultCategoryId={catFilter !== "Todas" ? categories.find((c) => c.name === catFilter)?.id : undefined}
-                fmt={fmt}
-              />
-            </div>
-          </CollapsibleSection>
+          <ExpenseItemsReport
+            categories={categories}
+            items={items}
+            expenses={expenses}
+            year={year}
+            month={month}
+            defaultCategoryId={catFilter !== "Todas" ? categories.find((c) => c.name === catFilter)?.id : undefined}
+            fmt={fmt}
+          />
         </Card>
       )}
-      <ListCard
-        header={
-          <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+      <Card className="overflow-hidden">
+        <CollapsibleSection
+          open={expensesListOpen}
+          onToggle={() => setExpensesListOpen((v) => !v)}
+          buttonClassName="flex w-full items-center justify-between gap-2 px-5 py-4 text-left"
+          header={
+            <div>
+              <Eyebrow>Detalle de gastos</Eyebrow>
+              <p className="mt-1 text-xs text-slate-400">
+                {monthExpenses.length} gasto{monthExpenses.length === 1 ? "" : "s"} en {MONTHS_FULL[month]} {year}
+              </p>
+            </div>
+          }
+        >
+          <div className="flex flex-wrap items-center gap-2 border-t border-b border-slate-100 px-5 py-3 dark:border-slate-800">
             <div className="relative min-w-[160px] flex-1">
               <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
               <input
@@ -2806,37 +2804,41 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
               {categoriasDisponibles.map((c) => <option key={c}>{c}</option>)}
             </select>
           </div>
-        }
-        isEmpty={filteredExpenses.length === 0}
-        emptyMessage={monthExpenses.length === 0 ? `Aún no has registrado gastos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
-      >
-        {filteredExpenses.map((e) => (
-          <div key={e.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
-            <div className="flex min-w-0 items-center gap-3">
-              <div
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
-                style={{ backgroundColor: `${e.categories?.color || "#64748B"}1a`, color: e.categories?.color || "#64748B" }}
-              >
-                {(e.categories?.name || "?").charAt(0)}
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {filteredExpenses.map((e) => (
+              <div key={e.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
+                    style={{ backgroundColor: `${e.categories?.color || "#64748B"}1a`, color: e.categories?.color || "#64748B" }}
+                  >
+                    {(e.categories?.name || "?").charAt(0)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.description || e.expense_items?.name || e.categories?.name}</p>
+                    <p className="truncate text-xs text-slate-400">
+                      {e.categories?.name}
+                      {e.expense_items?.name && ` · ${e.expense_items.name}`}
+                      {" · "}{e.purchase_date || e.date}
+                      {e.purchase_date && e.purchase_date !== e.date && ` · pago: ${e.date}`}
+                      {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
+                  <RowActions onEdit={() => setEditingExpense(e)} onDelete={() => setDeletingExpense(e)} />
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.description || e.expense_items?.name || e.categories?.name}</p>
-                <p className="truncate text-xs text-slate-400">
-                  {e.categories?.name}
-                  {e.expense_items?.name && ` · ${e.expense_items.name}`}
-                  {" · "}{e.purchase_date || e.date}
-                  {e.purchase_date && e.purchase_date !== e.date && ` · pago: ${e.date}`}
-                  {e.credit_cards?.name && ` · ${e.credit_cards.name}`}
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="tabular-nums font-medium text-red-500">{fmt(e.amount)}</span>
-              <RowActions onEdit={() => setEditingExpense(e)} onDelete={() => setDeletingExpense(e)} />
-            </div>
+            ))}
+            {filteredExpenses.length === 0 && (
+              <p className="px-5 py-8 text-center text-sm text-slate-400">
+                {monthExpenses.length === 0 ? `Aún no has registrado gastos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
+              </p>
+            )}
           </div>
-        ))}
-      </ListCard>
+        </CollapsibleSection>
+      </Card>
       {showModal && (
         <ExpenseModal categories={categories} cards={cards} items={items} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
       )}
@@ -3164,7 +3166,8 @@ function ExpenseItemsReport({ categories, items, expenses, year, month, defaultC
 
   return (
     <div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <Eyebrow>Gasto por artículo</Eyebrow>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
           <select
