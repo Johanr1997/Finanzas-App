@@ -10,7 +10,7 @@ import {
   Home, Utensils, Car, Zap, HeartPulse, GraduationCap, Popcorn,
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
-  Pencil, Coins, AlertTriangle, CreditCard, Landmark,
+  Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -1724,6 +1724,9 @@ function GoalModal({ goal, onClose, onSaved }) {
 function IncomesView({ fmt, onDataChanged, year, month }) {
   const [incomes, setIncomes] = useState([]);
   const [recurring, setRecurring] = useState([]);
+  // Tipos de ingreso (ej. "Salario", "Freelance"): no dependen del año/mes
+  // elegido, así que se cargan una sola vez, no cada vez que cambia el año.
+  const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingIncome, setEditingIncome] = useState(null);
@@ -1731,6 +1734,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
   const [showRecurringModal, setShowRecurringModal] = useState(false);
   const [editingRecurring, setEditingRecurring] = useState(null);
   const [deletingRecurring, setDeletingRecurring] = useState(null);
+  const [showTypesManager, setShowTypesManager] = useState(false);
   // La lista de "Ingresos fijos" es retráctil (empieza cerrada) para no
   // ocupar espacio de entrada — mismo patrón que "Consejos para este mes".
   const [recurringOpen, setRecurringOpen] = useState(false);
@@ -1747,6 +1751,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     const { data } = await supabase.from("recurring_incomes").select("*").order("start_date", { ascending: false });
     setRecurring(data || []);
     if (onDataChanged) onDataChanged();
+  }
+  async function refetchTypes() {
+    const { data } = await supabase.from("income_types").select("*").order("name", { ascending: true });
+    setTypes(data || []);
   }
   useEffect(() => {
     async function fetchAll() {
@@ -1770,6 +1778,9 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     }
     fetchAll();
   }, [year]);
+  useEffect(() => {
+    refetchTypes();
+  }, []);
   async function handleDelete(id) {
     const { error } = await supabase.from("incomes").delete().eq("id", id);
     if (error) throw error;
@@ -1813,6 +1824,12 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Repeat size={15} /> Ingreso fijo
+          </button>
+          <button
+            onClick={() => setShowTypesManager(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Tag size={15} /> Tipos de ingreso
           </button>
           <button
             onClick={() => setShowModal(true)}
@@ -1860,6 +1877,11 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           </CollapsibleSection>
         </Card>
       )}
+      {types.length > 0 && (
+        <Card className="p-5">
+          <IncomeTypesReport types={types} incomes={incomes} year={year} month={month} fmt={fmt} />
+        </Card>
+      )}
       <ListCard
         header={
           <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
@@ -1889,10 +1911,13 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         ))}
       </ListCard>
       {showModal && (
-        <IncomeModal defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
+        <IncomeModal types={types} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
       )}
       {editingIncome && (
-        <IncomeModal income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} />
+        <IncomeModal types={types} income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} />
+      )}
+      {showTypesManager && (
+        <IncomeTypesManagerModal types={types} onClose={() => setShowTypesManager(false)} onChanged={refetchTypes} />
       )}
       {deletingIncome && (
         <ConfirmDeleteModal
@@ -1919,10 +1944,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     </div>
   );
 }
-function IncomeModal({ income, onClose, onSaved, defaultDate }) {
+function IncomeModal({ income, types, onClose, onSaved, defaultDate }) {
   const isEditing = Boolean(income);
   const today = localDateString();
-  const [type, setType] = useState(income?.type || "");
+  const [typeId, setTypeId] = useState(income?.type_id || "");
   const [description, setDescription] = useState(income?.description || "");
   const [amount, setAmount] = useState(income ? String(income.amount) : "");
   const [date, setDate] = useState(income?.date || defaultDate || today);
@@ -1930,17 +1955,23 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
   const [errorMsg, setErrorMsg] = useState("");
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!type || !amount || !date) {
-      setErrorMsg("Completa al menos el tipo, el monto y la fecha.");
+    if (!typeId || !amount || !date) {
+      setErrorMsg(
+        types.length === 0
+          ? "Primero crea un tipo de ingreso con el botón \"Tipos de ingreso\"."
+          : "Completa el tipo, el monto y la fecha."
+      );
       return;
     }
+    const selectedType = types.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
     if (isEditing) {
       const { error } = await supabase.from("incomes").update({
         year: dateStringYear(date),
         month: dateStringMonth(date),
-        type,
+        type: selectedType?.name || "",
+        type_id: typeId,
         description,
         amount: Number(amount),
         date,
@@ -1960,7 +1991,8 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
       user_id: userId || null,
       year: dateStringYear(date),
       month: dateStringMonth(date),
-      type,
+      type: selectedType?.name || "",
+      type_id: typeId,
       description,
       amount: Number(amount),
       date,
@@ -1978,11 +2010,18 @@ function IncomeModal({ income, onClose, onSaved, defaultDate }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
-          <input
-            value={type} onChange={(e) => setType(e.target.value)}
-            placeholder="Ej. Salario, Freelance, Regalo"
+          <select
+            value={typeId} onChange={(e) => setTypeId(e.target.value)}
             className={`mt-1 ${INPUT_CLASS}`}
-          />
+          >
+            <option value="">Selecciona un tipo</option>
+            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          {types.length === 0 && (
+            <p className="mt-1 text-xs text-slate-400">
+              Aún no tienes tipos de ingreso. Créalos con el botón "Tipos de ingreso".
+            </p>
+          )}
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
@@ -2129,6 +2168,213 @@ function RecurringIncomeModal({ item, onClose, onSaved }) {
         </button>
       </form>
     </ModalShell>
+  );
+}
+// Espacio para armar la lista de tipos de ingreso, separado a propósito del
+// formulario de "Agregar ingreso" (mismo patrón que
+// ExpenseItemsManagerModal/ExpenseItemModal para Gastos): un lugar para
+// crear/editar/borrar tipos, y otro distinto para registrar ingresos
+// usándolos. A diferencia de los artículos de Gastos, un tipo de ingreso no
+// vive dentro de una categoría -- es una lista plana.
+function IncomeTypesManagerModal({ types, onClose, onChanged }) {
+  const [showTypeModal, setShowTypeModal] = useState(false);
+  const [editingType, setEditingType] = useState(null);
+  const [deletingType, setDeletingType] = useState(null);
+  const sortedTypes = [...types].sort((a, b) => a.name.localeCompare(b.name));
+  async function handleDeleteType(id) {
+    const { error } = await supabase.from("income_types").delete().eq("id", id);
+    if (!error) {
+      onChanged();
+      setDeletingType(null);
+    }
+  }
+  return (
+    <ModalShell
+      onClose={onClose}
+      title="Tipos de ingreso"
+      overlayExtras={
+        <>
+          {showTypeModal && (
+            <IncomeTypeModal onClose={() => setShowTypeModal(false)} onSaved={onChanged} />
+          )}
+          {editingType && (
+            <IncomeTypeModal type={editingType} onClose={() => setEditingType(null)} onSaved={onChanged} />
+          )}
+          {deletingType && (
+            <ConfirmDeleteModal
+              title="Eliminar tipo de ingreso"
+              message={`¿Seguro que quieres eliminar "${deletingType.name}"? Los ingresos que ya registraste con este tipo no se borran, solo quedan sin tipo asociado.`}
+              onCancel={() => setDeletingType(null)}
+              onConfirm={() => handleDeleteType(deletingType.id)}
+            />
+          )}
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-xs text-slate-400">
+          Crea aquí los tipos de ingreso que quieras registrar (ej. "Salario", "Freelance", "Regalo"). Luego, al agregar un ingreso, podrás elegirlos desde ese formulario.
+        </p>
+        {sortedTypes.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400 dark:border-slate-700">
+            Aún no hay tipos de ingreso.
+          </p>
+        ) : (
+          <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {sortedTypes.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{t.name}</p>
+                <RowActions onEdit={() => setEditingType(t)} onDelete={() => setDeletingType(t)} />
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowTypeModal(true)}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <Plus size={15} /> Agregar tipo
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+function IncomeTypeModal({ type, onClose, onSaved }) {
+  const isEditing = Boolean(type);
+  const [name, setName] = useState(type?.name || "");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) {
+      setErrorMsg("Escribe un nombre.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("income_types").update({ name: name.trim() }).eq("id", type.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("income_types").insert({ user_id: userId || null, name: name.trim() });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <ModalShell onClose={onClose} title={isEditing ? "Editar tipo de ingreso" : "Nuevo tipo de ingreso"} maxWidth="max-w-sm" zIndex="z-[60]">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre</label>
+          <input
+            value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            placeholder="Ej. Salario"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tipo"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+function IncomeTypesReport({ types, incomes, year, month, fmt }) {
+  const sortedTypes = [...types].sort((a, b) => a.name.localeCompare(b.name));
+  const [period, setPeriod] = useState("mes"); // "mes" | "q1" | "q2"
+
+  function inSelectedPeriod(i) {
+    if (dateStringYear(i.date) !== year || dateStringMonth(i.date) - 1 !== month) return false;
+    if (period === "mes") return true;
+    const day = dateStringDay(i.date);
+    return period === "q1" ? day <= 15 : day > 15;
+  }
+  const relevantIncomes = incomes.filter((i) => i.type_id && inSelectedPeriod(i));
+  const totalsByType = sortedTypes
+    .map((t) => {
+      const matching = relevantIncomes.filter((i) => i.type_id === t.id);
+      return {
+        id: t.id,
+        name: t.name,
+        amount: matching.reduce((a, i) => a + Number(i.amount), 0),
+        count: matching.length,
+      };
+    })
+    .filter((d) => d.count > 0)
+    .sort((a, b) => b.amount - a.amount);
+  const grandTotal = totalsByType.reduce((a, d) => a + d.amount, 0);
+  const periodLabel = period === "mes"
+    ? `${MONTHS_FULL[month]} ${year}`
+    : period === "q1"
+    ? `1 al 15 de ${MONTHS_FULL[month]} ${year}`
+    : `16 a fin de mes de ${MONTHS_FULL[month]} ${year}`;
+  const chartHeight = Math.max(120, totalsByType.length * 40);
+
+  return (
+    <div>
+      <Eyebrow>Ingreso por tipo</Eyebrow>
+      <div className="mt-3 max-w-xs">
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Período</label>
+        <select
+          value={period} onChange={(e) => setPeriod(e.target.value)}
+          className={`mt-1 ${INPUT_CLASS}`}
+        >
+          <option value="mes">Mes completo</option>
+          <option value="q1">Quincena 1 (días 1 al 15)</option>
+          <option value="q2">Quincena 2 (día 16 a fin de mes)</option>
+        </select>
+      </div>
+      <p className="mt-3 text-xs text-slate-400">{periodLabel}</p>
+      {totalsByType.length === 0 ? (
+        <p className="mt-4 text-sm text-slate-400">
+          Aún no has registrado ingresos por tipo en este período.
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{fmt(grandTotal)}</p>
+          <div className="mt-4" style={{ height: chartHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={totalsByType} layout="vertical" margin={{ left: 8, right: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Bar dataKey="amount" fill="#22C55E" radius={[0, 4, 4, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {totalsByType.map((d) => (
+              <div key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{d.name}</p>
+                  <p className="text-xs text-slate-400">{d.count} ingreso{d.count === 1 ? "" : "s"}</p>
+                </div>
+                <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(d.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 /* ---------------------------------------------------------------
