@@ -2809,27 +2809,41 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, def
 // no cambiarle el significado a esa navegación en el resto de la app — aquí
 // simplemente se recorta el mismo mes elegido en dos mitades. El componente
 // no se renderiza si todavía no hay ningún artículo creado (ver ExpensesView).
+// Valor sentinela del selector de categoría que significa "todas juntas".
+const ALL_CATEGORIES_VALUE = "";
 function ExpenseItemsReport({ categories, items, expenses, year, month, defaultCategoryId, fmt }) {
   const categoriesWithItems = categories.filter((c) => items.some((it) => it.category_id === c.id));
   const [categoryId, setCategoryId] = useState(
     defaultCategoryId && items.some((it) => it.category_id === defaultCategoryId)
       ? defaultCategoryId
-      : (categoriesWithItems[0]?.id || "")
+      : (categoriesWithItems[0]?.id || ALL_CATEGORIES_VALUE)
   );
   const [period, setPeriod] = useState("mes"); // "mes" | "q1" | "q2"
+  const showAllCategories = categoryId === ALL_CATEGORIES_VALUE;
 
-  const itemsForCategory = items.filter((it) => it.category_id === categoryId);
+  const itemsInScope = showAllCategories ? items : items.filter((it) => it.category_id === categoryId);
   function inSelectedPeriod(e) {
     if (dateStringYear(e.date) !== year || dateStringMonth(e.date) - 1 !== month) return false;
     if (period === "mes") return true;
     const day = dateStringDay(e.date);
     return period === "q1" ? day <= 15 : day > 15;
   }
-  const relevantExpenses = expenses.filter((e) => e.category_id === categoryId && e.item_id && inSelectedPeriod(e));
-  const totalsByItem = itemsForCategory
+  const relevantExpenses = expenses.filter((e) =>
+    (showAllCategories || e.category_id === categoryId) && e.item_id && inSelectedPeriod(e)
+  );
+  const totalsByItem = itemsInScope
     .map((it) => {
       const matching = relevantExpenses.filter((e) => e.item_id === it.id);
-      return { id: it.id, name: it.name, amount: matching.reduce((a, e) => a + Number(e.amount), 0), count: matching.length };
+      const categoryName = categories.find((c) => c.id === it.category_id)?.name || "";
+      const categoryColor = categories.find((c) => c.id === it.category_id)?.color || "#3B82F6";
+      return {
+        id: it.id,
+        name: showAllCategories && categoryName ? `${it.name} · ${categoryName}` : it.name,
+        categoryName,
+        categoryColor,
+        amount: matching.reduce((a, e) => a + Number(e.amount), 0),
+        count: matching.length,
+      };
     })
     .filter((d) => d.count > 0)
     .sort((a, b) => b.amount - a.amount);
@@ -2853,6 +2867,7 @@ function ExpenseItemsReport({ categories, items, expenses, year, month, defaultC
             value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
             className={`mt-1 ${INPUT_CLASS}`}
           >
+            <option value={ALL_CATEGORIES_VALUE}>Todas</option>
             {categoriesWithItems.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
@@ -2870,7 +2885,9 @@ function ExpenseItemsReport({ categories, items, expenses, year, month, defaultC
       </div>
       <p className="mt-3 text-xs text-slate-400">{periodLabel}</p>
       {totalsByItem.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-400">Aún no has registrado compras por artículo en este período para esta categoría.</p>
+        <p className="mt-4 text-sm text-slate-400">
+          Aún no has registrado compras por artículo en este período{showAllCategories ? "" : " para esta categoría"}.
+        </p>
       ) : (
         <>
           <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{fmt(grandTotal)}</p>
@@ -2879,9 +2896,11 @@ function ExpenseItemsReport({ categories, items, expenses, year, month, defaultC
               <BarChart data={totalsByItem} layout="vertical" margin={{ left: 8, right: 16 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
                 <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" width={showAllCategories ? 140 : 90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
                 <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
-                <Bar dataKey="amount" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={18} />
+                <Bar dataKey="amount" radius={[0, 4, 4, 0]} barSize={18}>
+                  {totalsByItem.map((d) => <Cell key={d.id} fill={d.categoryColor} />)}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
