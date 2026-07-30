@@ -691,10 +691,6 @@ function RowActions({ onEdit, onDelete }) {
 function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const [goals, setGoals] = useState([]);
   const [goalsError, setGoalsError] = useState(false);
-  // "Saldo acumulado" es desplegable, igual que "Fijo y programado" en
-  // Gastos -- empieza cerrada para no ocupar espacio de entrada, pero el
-  // saldo del mes elegido igual se ve en el encabezado sin tener que abrirla.
-  const [saldoAcumuladoOpen, setSaldoAcumuladoOpen] = useState(false);
   useEffect(() => {
     supabase.from("goals").select("*").then(({ data, error }) => {
       if (error) console.error("Error cargando metas:", error.message);
@@ -844,43 +840,35 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
         </div>
       </Card>
       <Card className="p-5">
-        <CollapsibleSection
-          open={saldoAcumuladoOpen}
-          onToggle={() => setSaldoAcumuladoOpen((v) => !v)}
-          buttonClassName="flex w-full items-center justify-between gap-3 text-left"
-          header={
-            <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
-              <div>
-                <Eyebrow>Saldo acumulado</Eyebrow>
-                <p className="mt-1 text-xs text-slate-400">
-                  Lo que te queda disponible mes a mes, sumando lo que no gastaste ni ahorraste del mes anterior (empieza en ₡0 en enero de {year}).
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-slate-400">Al cierre de {currentMonth.mesFull}</p>
-                <p className={`text-xl font-semibold tabular-nums ${cumulativeBalanceData[currentIdx].saldoAcumulado >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
-                  {fmt(cumulativeBalanceData[currentIdx].saldoAcumulado)}
-                </p>
-              </div>
-            </div>
-          }
-        >
-          <div className="mt-4 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={cumulativeBalanceData} margin={{ left: 4, right: 12 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => cumulativeBalanceData.find((d) => d.mes === l)?.mesFull || l} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
-                {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
-                    señal real de "te quedaste sin dinero", no solo un mes con
-                    balance aislado negativo (ver statusOf más arriba). */}
-                <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
-                <Line type="monotone" dataKey="saldoAcumulado" name="Saldo acumulado" stroke="#6366F1" strokeWidth={2} dot={{ r: 3, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Eyebrow>Saldo acumulado</Eyebrow>
+            <p className="mt-1 text-xs text-slate-400">
+              Lo que te queda disponible mes a mes, sumando lo que no gastaste ni ahorraste del mes anterior (empieza en ₡0 en enero de {year}).
+            </p>
           </div>
-        </CollapsibleSection>
+          <div className="text-right">
+            <p className="text-xs text-slate-400">Al cierre de {currentMonth.mesFull}</p>
+            <p className={`text-xl font-semibold tabular-nums ${cumulativeBalanceData[currentIdx].saldoAcumulado >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
+              {fmt(cumulativeBalanceData[currentIdx].saldoAcumulado)}
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={cumulativeBalanceData} margin={{ left: 4, right: 12 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+              <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => cumulativeBalanceData.find((d) => d.mes === l)?.mesFull || l} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+              {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
+                  señal real de "te quedaste sin dinero", no solo un mes con
+                  balance aislado negativo (ver statusOf más arriba). */}
+              <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
+              <Line type="monotone" dataKey="saldoAcumulado" name="Saldo acumulado" stroke="#6366F1" strokeWidth={2} dot={{ r: 3, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </Card>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-5">
