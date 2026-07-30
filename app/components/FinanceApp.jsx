@@ -705,29 +705,63 @@ function computeCumulativeBalanceData(yearData) {
     return { mes: m.mes, mesFull: m.mesFull, balanceDelMes: m.balance, saldoAcumulado: running };
   });
 }
-// Lo mismo que arriba pero por QUINCENA (1-15 y 16-fin de cada mes) en vez de
-// por mes completo -- a pedido del usuario (2026-07-30): su salario cae los
-// días 15 y 30, y necesita ver específicamente cómo ese pago financia los
-// gastos de la quincena siguiente, no solo el balance del mes completo
-// mezclado. Usado por la pestaña "Quincenas". Cada quincena sigue el mismo
-// criterio de período (1 al 15 / 16 a fin de mes) que ya usaban los
-// selectores de "Ingreso por tipo" y "Gasto por artículo", para que sea
-// consistente en toda la app. No hace falta ninguna consulta nueva a
-// Supabase: se calcula a partir del yearData que ya carga toda la app.
-function computeQuincenaBalanceData(yearData, year) {
-  const out = [];
-  yearData.forEach((m, mi) => {
+// Períodos alineados al CICLO REAL DE PAGO del usuario -- corregido el
+// 2026-07-30 después de que el usuario explicara con números reales que la
+// quincena de CALENDARIO (1-15 / 16-fin de mes, la que usan "Ingreso por
+// tipo" y "Gasto por artículo") no le servía para esto: su sueldo cae los
+// días 15 y 30 (o el último día del mes en meses más cortos, como febrero),
+// pero el del día 30 financia sus gastos del 30 al 14 del mes SIGUIENTE
+// (cruza de un mes calendario a otro) -- no "16 a fin de mes" como asumía la
+// versión anterior. Con la quincena de calendario, "Quincena 1" del mes
+// siguiente mezclaba los gastos que en realidad paga el sueldo del 30 con el
+// INGRESO del día 15 (que es para la quincena de DESPUÉS), dando números que
+// no coincidían con la realidad del usuario por más que estuviera todo bien
+// cargado. Esta función arma los períodos directamente por fecha real (no
+// por mes+mitad), aplanando todos los movimientos del año y agrupándolos
+// entre un día de pago y el siguiente -- así el período que arranca el día
+// 30 correctamente incluye los días 30/31 de un mes y 1 al 14 del próximo.
+// Empieza en ₡0 el 1° de enero (mismo criterio que el resto de "Reporte").
+// Se usa SOLO en "Reporte" → Mensual/Quincenal → Quincenal; el resto de la
+// app (Ingreso por tipo/Gasto por artículo) sigue con la quincena de
+// calendario de siempre -- son selectores de categoría, no de flujo de
+// caja, así que no es tan crítico que coincidan exactamente con el día de
+// pago real.
+function computePaydayPeriods(yearData, year) {
+  const paydays = [];
+  for (let mi = 0; mi < 12; mi++) {
     const lastDay = new Date(year, mi + 1, 0).getDate();
-    [
-      { corte: (d) => d <= 15, label: `${m.mes} 1ª`, longLabel: `1 al 15 de ${m.mesFull}` },
-      { corte: (d) => d > 15, label: `${m.mes} 2ª`, longLabel: `16 al ${lastDay} de ${m.mesFull}` },
-    ].forEach((q) => {
-      const ingreso = m.incomes.filter((i) => q.corte(dateStringDay(i.date))).reduce((a, i) => a + Number(i.amount), 0);
-      const gasto = m.gastos.filter((g) => q.corte(dateStringDay(g.fecha))).reduce((a, g) => a + Number(g.monto), 0);
-      const ahorro = m.savings.filter((s) => q.corte(dateStringDay(s.date))).reduce((a, s) => a + Number(s.amount), 0);
-      out.push({ label: q.label, longLabel: q.longLabel, ingreso, gasto, ahorro, balanceDelPeriodo: ingreso - gasto - ahorro });
+    const mm = String(mi + 1).padStart(2, "0");
+    paydays.push(`${year}-${mm}-15`);
+    paydays.push(`${year}-${mm}-${String(Math.min(30, lastDay)).padStart(2, "0")}`);
+  }
+  const boundaries = [`${year}-01-01`, ...paydays, `${year + 1}-01-01`];
+  const allIncomes = yearData.flatMap((m) => m.incomes.map((i) => ({ amount: Number(i.amount), date: i.date })));
+  const allGastos = yearData.flatMap((m) => m.gastos.map((g) => ({ amount: Number(g.monto), date: g.fecha })));
+  const allSavings = yearData.flatMap((m) => m.savings.map((s) => ({ amount: Number(s.amount), date: s.date })));
+  const out = [];
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const start = boundaries[i];
+    const end = boundaries[i + 1]; // exclusivo: el día "end" ya pertenece al siguiente período
+    const inRange = (d) => d >= start && d < end;
+    const ingreso = allIncomes.filter((x) => inRange(x.date)).reduce((a, x) => a + x.amount, 0);
+    const gasto = allGastos.filter((x) => inRange(x.date)).reduce((a, x) => a + x.amount, 0);
+    const ahorro = allSavings.filter((x) => inRange(x.date)).reduce((a, x) => a + x.amount, 0);
+    // "T00:00:00" (sin "Z") fuerza a que el Date se interprete en hora LOCAL,
+    // no UTC -- evita el mismo bug de zona horaria que ya se corrigió en
+    // otras partes de la app (ver dateStringDay/dateStringMonth) para poder
+    // restar un día sin riesgo de que se corra de fecha.
+    const startDay = Number(start.slice(8, 10));
+    const startMonthIdx = Number(start.slice(5, 7)) - 1;
+    const endMinusOne = new Date(`${end}T00:00:00`);
+    endMinusOne.setDate(endMinusOne.getDate() - 1);
+    out.push({
+      start, end,
+      label: `${startDay} ${MONTHS[startMonthIdx]}`,
+      longLabel: `${startDay} de ${MONTHS_FULL[startMonthIdx]} al ${endMinusOne.getDate()} de ${MONTHS_FULL[endMinusOne.getMonth()]}`,
+      ingreso, gasto, ahorro,
+      balanceDelPeriodo: ingreso - gasto - ahorro,
     });
-  });
+  }
   let running = 0;
   return out.map((d) => { running += d.balanceDelPeriodo; return { ...d, saldoAcumulado: running }; });
 }
@@ -1403,49 +1437,73 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
    QUINCENAS
 ------------------------------------------------------------------ */
 // Pestaña dedicada a ver el dinero disponible por quincena (o por mes
-// completo), alineada al ciclo real de pago del usuario -- agregada el
-// 2026-07-30 a pedido del usuario, quien explicó que su salario del día 30
-// financia sus gastos del 1 al 15, y el del día 15 financia los del 16 al
-// fin de mes (sumado a lo que le quedó disponible de la quincena anterior).
-// Al principio esto se resolvió solo dentro de la tarjeta "Saldo acumulado"
-// de Resumen, pero el usuario pidió que fuera "en toda la app" -- así que se
-// sacó de ahí (Resumen se quedó solo con "Panorama del año", que es lo que
-// dijo que le gustaba) y se convirtió en esta pestaña propia, con un
-// selector de Período (igual al que ya usan "Ingreso por tipo" y "Gasto por
-// artículo": Mes completo / Quincena 1 / Quincena 2) para que decida cómo
-// quiere ver la información, y los mismos gráficos de "Saldo acumulado" y
-// "Gastos por categoría" que ya existían en otras partes de la app.
+// completo) -- agregada el 2026-07-30, corregida el mismo día después de que
+// el usuario, ya probándola con números reales, explicara que la quincena de
+// CALENDARIO (1-15 / 16-fin de mes) no coincidía con su ciclo real de pago:
+// su sueldo del día 30 financia del 30 al 14 del mes SIGUIENTE (cruza de mes
+// calendario), no "16 a fin de mes" -- por eso ahora el modo "Quincenal" usa
+// `computePaydayPeriods` (períodos anclados a sus días de pago reales, 15 y
+// 30) en vez de la quincena de calendario. El modo "Mes completo" no cambió
+// -- un mes calendario siempre incluye los dos pagos, así que no tenía el
+// mismo problema.
 function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
-  const [period, setPeriod] = useState("q1"); // "mes" | "q1" | "q2"
+  const [modo, setModo] = useState("quincenal"); // "quincenal" | "mensual"
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
   const cumulativeBalanceData = useMemo(() => computeCumulativeBalanceData(yearData), [yearData]);
-  const quincenaBalanceData = useMemo(() => computeQuincenaBalanceData(yearData, year), [yearData, year]);
-  const isQuincenal = period !== "mes";
-  const half = period === "q2" ? 1 : 0;
-  const periodIndex = isQuincenal ? month * 2 + half : month;
+  const paydayPeriods = useMemo(() => computePaydayPeriods(yearData, year), [yearData, year]);
+  // Índice del período de pago elegido (0 a ~24 por año). Por defecto, el
+  // período que contiene el día de hoy (si se está viendo el año real
+  // actual); si no, el último período del año elegido -- mismo criterio que
+  // ya se usaba antes para "el cierre" de un período no-actual.
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }, []);
+  const defaultPayIndex = (periods) => {
+    const idx = periods.findIndex((p) => todayStr >= p.start && todayStr < p.end);
+    return idx >= 0 ? idx : periods.length - 1;
+  };
+  const [payIndex, setPayIndex] = useState(() => defaultPayIndex(paydayPeriods));
+  useEffect(() => {
+    setPayIndex(defaultPayIndex(paydayPeriods));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year]);
+  const isQuincenal = modo === "quincenal";
   const m = yearData[month];
-  const corte = (d) => (half === 0 ? d <= 15 : d > 15);
-  const gastosPeriodo = isQuincenal ? m.gastos.filter((e) => corte(dateStringDay(e.fecha))) : m.gastos;
-  const incomesPeriodo = isQuincenal ? m.incomes.filter((i) => corte(dateStringDay(i.date))) : m.incomes;
-  const savingsPeriodo = isQuincenal ? m.savings.filter((s) => corte(dateStringDay(s.date))) : m.savings;
-  const ingresoTotal = isQuincenal ? quincenaBalanceData[periodIndex].ingreso : m.ingresoTotal;
-  const gastoTotal = isQuincenal ? quincenaBalanceData[periodIndex].gasto : m.gastoTotal;
-  const ahorroTotal = isQuincenal ? quincenaBalanceData[periodIndex].ahorro : m.ahorroTotal;
-  const saldoFinal = isQuincenal ? quincenaBalanceData[periodIndex].saldoAcumulado : cumulativeBalanceData[periodIndex].saldoAcumulado;
-  const saldoInicial = periodIndex > 0
-    ? (isQuincenal ? quincenaBalanceData[periodIndex - 1].saldoAcumulado : cumulativeBalanceData[periodIndex - 1].saldoAcumulado)
-    : 0;
-  const periodShort = isQuincenal ? quincenaBalanceData[periodIndex].longLabel : m.mesFull;
+  const currentPeriod = isQuincenal ? paydayPeriods[payIndex] : null;
+  // Para el modo Quincenal, los movimientos de un período pueden venir de DOS
+  // meses distintos (ej. el período que arranca el 30 de julio incluye
+  // también días de agosto) -- por eso se filtra por fecha real sobre TODOS
+  // los movimientos del año, en vez de sobre el mes elegido en el
+  // encabezado (que solo se usa para el modo "Mes completo").
+  const allGastosFlat = useMemo(() => yearData.flatMap((mm) => mm.gastos), [yearData]);
+  const allIncomesFlat = useMemo(() => yearData.flatMap((mm) => mm.incomes), [yearData]);
+  const allSavingsFlat = useMemo(() => yearData.flatMap((mm) => mm.savings), [yearData]);
+  const gastosPeriodo = isQuincenal
+    ? allGastosFlat.filter((e) => e.fecha >= currentPeriod.start && e.fecha < currentPeriod.end)
+    : m.gastos;
+  const incomesPeriodo = isQuincenal
+    ? allIncomesFlat.filter((i) => i.date >= currentPeriod.start && i.date < currentPeriod.end)
+    : m.incomes;
+  const savingsPeriodo = isQuincenal
+    ? allSavingsFlat.filter((s) => s.date >= currentPeriod.start && s.date < currentPeriod.end)
+    : m.savings;
+  const ingresoTotal = isQuincenal ? currentPeriod.ingreso : m.ingresoTotal;
+  const gastoTotal = isQuincenal ? currentPeriod.gasto : m.gastoTotal;
+  const ahorroTotal = isQuincenal ? currentPeriod.ahorro : m.ahorroTotal;
+  const saldoFinal = isQuincenal ? currentPeriod.saldoAcumulado : cumulativeBalanceData[month].saldoAcumulado;
+  const saldoInicial = isQuincenal
+    ? (payIndex > 0 ? paydayPeriods[payIndex - 1].saldoAcumulado : 0)
+    : (month > 0 ? cumulativeBalanceData[month - 1].saldoAcumulado : 0);
+  const periodShort = isQuincenal ? currentPeriod.longLabel : m.mesFull;
   // Balance SOLO de este período (ingresos - gastos - ahorros de este período
   // puntual, sin sumarle el arrastre de antes) -- a pedido del usuario
   // (2026-07-30): "Saldo disponible" de arriba es el monto real acumulado
   // desde enero (útil para saber cuánto tenés de verdad), pero no deja ver de
   // un vistazo si ESTE ciclo puntual (este sueldo) rindió o no, sin mezclarlo
-  // con lo de antes. Ya estaba calculado dentro de quincenaBalanceData/
-  // cumulativeBalanceData (balanceDelPeriodo/balanceDelMes) -- solo faltaba
-  // mostrarlo como su propio número.
-  const balancePeriodo = isQuincenal ? quincenaBalanceData[periodIndex].balanceDelPeriodo : cumulativeBalanceData[periodIndex].balanceDelMes;
+  // con lo de antes.
+  const balancePeriodo = isQuincenal ? currentPeriod.balanceDelPeriodo : cumulativeBalanceData[month].balanceDelMes;
   const filteredExpenses = gastosPeriodo.filter((e) =>
     (catFilter === "Todas" || e.categoria === catFilter) &&
     e.descripcion.toLowerCase().includes(search.toLowerCase())
@@ -1459,7 +1517,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
       color: conColor?.color || CATEGORY_META[cat]?.color || "#64748B",
     };
   }).filter((d) => d.value > 0);
-  const chartData = isQuincenal ? quincenaBalanceData : cumulativeBalanceData;
+  const chartData = isQuincenal ? paydayPeriods : cumulativeBalanceData;
   return (
     <div className="space-y-6">
       <Card className="p-5">
@@ -1477,13 +1535,33 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
             </p>
           </div>
         </div>
-        <div className="mt-4 max-w-xs">
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Período</label>
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
-            <option value="q1">Quincena 1 (días 1 al 15)</option>
-            <option value="q2">Quincena 2 (día 16 a fin de mes)</option>
-            <option value="mes">Mes completo</option>
-          </select>
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="max-w-xs">
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Modo</label>
+            <select value={modo} onChange={(e) => setModo(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="quincenal">Quincenal (según mis días de pago: 15 y 30)</option>
+              <option value="mensual">Mes completo</option>
+            </select>
+          </div>
+          {isQuincenal && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPayIndex((i) => Math.max(0, i - 1))}
+                disabled={payIndex === 0}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span className="whitespace-nowrap text-sm font-medium text-slate-600 dark:text-slate-300">{currentPeriod.longLabel}</span>
+              <button
+                onClick={() => setPayIndex((i) => Math.min(paydayPeriods.length - 1, i + 1))}
+                disabled={payIndex === paydayPeriods.length - 1}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
         </div>
       </Card>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1502,7 +1580,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
       </div>
       <Card className="p-5">
         <Eyebrow>Saldo acumulado {isQuincenal ? "por quincena" : "por mes"}</Eyebrow>
-        <p className="mt-1 text-xs text-slate-400">Clic en un punto de la gráfica para saltar a {isQuincenal ? "esa quincena" : "ese mes"}.</p>
+        <p className="mt-1 text-xs text-slate-400">Clic en un punto de la gráfica para saltar a {isQuincenal ? "ese período" : "ese mes"}.</p>
         <div className="mt-2 h-64">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
@@ -1510,13 +1588,8 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
               margin={{ left: 4, right: 12 }}
               onClick={(e) => {
                 if (!e || typeof e.activeTooltipIndex !== "number") return;
-                const idx = e.activeTooltipIndex;
-                if (isQuincenal) {
-                  onJumpToMonth(Math.floor(idx / 2));
-                  setPeriod(idx % 2 === 0 ? "q1" : "q2");
-                } else {
-                  onJumpToMonth(idx);
-                }
+                if (isQuincenal) setPayIndex(e.activeTooltipIndex);
+                else onJumpToMonth(e.activeTooltipIndex);
               }}
               style={{ cursor: "pointer" }}
             >
@@ -1525,7 +1598,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
               <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
               <Tooltip
                 formatter={(v) => fmt(v)}
-                labelFormatter={(l) => (isQuincenal ? quincenaBalanceData.find((d) => d.label === l)?.longLabel : l) || l}
+                labelFormatter={(l) => (isQuincenal ? paydayPeriods.find((d) => d.label === l)?.longLabel : l) || l}
                 contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }}
               />
               {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
