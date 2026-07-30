@@ -880,22 +880,6 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-            {cumulativeBalanceData.map((d, i) => (
-              <div
-                key={d.mes}
-                className={`flex items-center justify-between gap-2 px-4 py-2.5 text-sm ${i === currentIdx ? "bg-slate-50 dark:bg-slate-800/60" : ""}`}
-              >
-                <p className="font-medium text-slate-700 dark:text-slate-200">{d.mesFull}</p>
-                <div className="flex items-center gap-3">
-                  <span className={`text-xs tabular-nums ${d.balanceDelMes >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                    {d.balanceDelMes >= 0 ? "+" : ""}{fmt(d.balanceDelMes)}
-                  </span>
-                  <span className="w-28 shrink-0 text-right font-medium tabular-nums text-slate-900 dark:text-white">{fmt(d.saldoAcumulado)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
         </CollapsibleSection>
       </Card>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
