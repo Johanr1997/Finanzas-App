@@ -3,6 +3,7 @@ import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, AreaChart,
+  Line, LineChart, ReferenceLine,
 } from "recharts";
 import {
   Wallet, TrendingUp, TrendingDown, PiggyBank, Target,
@@ -690,6 +691,10 @@ function RowActions({ onEdit, onDelete }) {
 function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const [goals, setGoals] = useState([]);
   const [goalsError, setGoalsError] = useState(false);
+  // "Saldo acumulado" es desplegable, igual que "Fijo y programado" en
+  // Gastos -- empieza cerrada para no ocupar espacio de entrada, pero el
+  // saldo del mes elegido igual se ve en el encabezado sin tener que abrirla.
+  const [saldoAcumuladoOpen, setSaldoAcumuladoOpen] = useState(false);
   useEffect(() => {
     supabase.from("goals").select("*").then(({ data, error }) => {
       if (error) console.error("Error cargando metas:", error.message);
@@ -839,36 +844,59 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
         </div>
       </Card>
       <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Eyebrow>Saldo acumulado</Eyebrow>
-            <p className="mt-1 text-xs text-slate-400">
-              Lo que te queda disponible mes a mes, sumando lo que no gastaste ni ahorraste del mes anterior (empieza en ₡0 en enero de {year}).
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-slate-400">Al cierre de {currentMonth.mesFull}</p>
-            <p className={`text-xl font-semibold tabular-nums ${cumulativeBalanceData[currentIdx].saldoAcumulado >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
-              {fmt(cumulativeBalanceData[currentIdx].saldoAcumulado)}
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-          {cumulativeBalanceData.map((d, i) => (
-            <div
-              key={d.mes}
-              className={`flex items-center justify-between gap-2 px-4 py-2.5 text-sm ${i === currentIdx ? "bg-slate-50 dark:bg-slate-800/60" : ""}`}
-            >
-              <p className="font-medium text-slate-700 dark:text-slate-200">{d.mesFull}</p>
-              <div className="flex items-center gap-3">
-                <span className={`text-xs tabular-nums ${d.balanceDelMes >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                  {d.balanceDelMes >= 0 ? "+" : ""}{fmt(d.balanceDelMes)}
-                </span>
-                <span className="w-28 shrink-0 text-right font-medium tabular-nums text-slate-900 dark:text-white">{fmt(d.saldoAcumulado)}</span>
+        <CollapsibleSection
+          open={saldoAcumuladoOpen}
+          onToggle={() => setSaldoAcumuladoOpen((v) => !v)}
+          buttonClassName="flex w-full items-center justify-between gap-3 text-left"
+          header={
+            <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
+              <div>
+                <Eyebrow>Saldo acumulado</Eyebrow>
+                <p className="mt-1 text-xs text-slate-400">
+                  Lo que te queda disponible mes a mes, sumando lo que no gastaste ni ahorraste del mes anterior (empieza en ₡0 en enero de {year}).
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-slate-400">Al cierre de {currentMonth.mesFull}</p>
+                <p className={`text-xl font-semibold tabular-nums ${cumulativeBalanceData[currentIdx].saldoAcumulado >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
+                  {fmt(cumulativeBalanceData[currentIdx].saldoAcumulado)}
+                </p>
               </div>
             </div>
-          ))}
-        </div>
+          }
+        >
+          <div className="mt-4 h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={cumulativeBalanceData} margin={{ left: 4, right: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => cumulativeBalanceData.find((d) => d.mes === l)?.mesFull || l} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
+                    señal real de "te quedaste sin dinero", no solo un mes con
+                    balance aislado negativo (ver statusOf más arriba). */}
+                <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
+                <Line type="monotone" dataKey="saldoAcumulado" name="Saldo acumulado" stroke="#6366F1" strokeWidth={2} dot={{ r: 3, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {cumulativeBalanceData.map((d, i) => (
+              <div
+                key={d.mes}
+                className={`flex items-center justify-between gap-2 px-4 py-2.5 text-sm ${i === currentIdx ? "bg-slate-50 dark:bg-slate-800/60" : ""}`}
+              >
+                <p className="font-medium text-slate-700 dark:text-slate-200">{d.mesFull}</p>
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs tabular-nums ${d.balanceDelMes >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                    {d.balanceDelMes >= 0 ? "+" : ""}{fmt(d.balanceDelMes)}
+                  </span>
+                  <span className="w-28 shrink-0 text-right font-medium tabular-nums text-slate-900 dark:text-white">{fmt(d.saldoAcumulado)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
       </Card>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-5">
