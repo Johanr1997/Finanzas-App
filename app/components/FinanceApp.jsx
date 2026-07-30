@@ -11,7 +11,7 @@ import {
   Home, Utensils, Car, Zap, HeartPulse, GraduationCap, Popcorn,
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
-  Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag,
+  Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -688,6 +688,49 @@ function RowActions({ onEdit, onDelete }) {
 /* ---------------------------------------------------------------
    DASHBOARD
 ------------------------------------------------------------------ */
+// Saldo acumulado MES A MES: a diferencia del resto de la app (que calcula
+// cada mes aislado, sin arrastrar nada del anterior), esto suma mes a mes lo
+// que sobra (ingresos - gastos - ahorros) para reflejar el dinero que en
+// realidad sigues teniendo disponible -- ej. un salario que entra el 30 de
+// julio ya no "desaparece" al pasar a agosto, porque agosto arranca con lo
+// que sobró de julio. Empieza en ₡0 en enero del año elegido (a pedido del
+// usuario, 2026-07-30) -- por ahora no arrastra saldo de un año al
+// siguiente, cada año vuelve a empezar en ₡0 en enero. Se usa para el
+// semáforo de "Panorama del año" (ver statusOf) y, en modo "Mes completo",
+// para la pestaña "Quincenas".
+function computeCumulativeBalanceData(yearData) {
+  let running = 0;
+  return yearData.map((m) => {
+    running += m.balance;
+    return { mes: m.mes, mesFull: m.mesFull, balanceDelMes: m.balance, saldoAcumulado: running };
+  });
+}
+// Lo mismo que arriba pero por QUINCENA (1-15 y 16-fin de cada mes) en vez de
+// por mes completo -- a pedido del usuario (2026-07-30): su salario cae los
+// días 15 y 30, y necesita ver específicamente cómo ese pago financia los
+// gastos de la quincena siguiente, no solo el balance del mes completo
+// mezclado. Usado por la pestaña "Quincenas". Cada quincena sigue el mismo
+// criterio de período (1 al 15 / 16 a fin de mes) que ya usaban los
+// selectores de "Ingreso por tipo" y "Gasto por artículo", para que sea
+// consistente en toda la app. No hace falta ninguna consulta nueva a
+// Supabase: se calcula a partir del yearData que ya carga toda la app.
+function computeQuincenaBalanceData(yearData, year) {
+  const out = [];
+  yearData.forEach((m, mi) => {
+    const lastDay = new Date(year, mi + 1, 0).getDate();
+    [
+      { corte: (d) => d <= 15, label: `${m.mes} 1ª`, longLabel: `1 al 15 de ${m.mesFull}` },
+      { corte: (d) => d > 15, label: `${m.mes} 2ª`, longLabel: `16 al ${lastDay} de ${m.mesFull}` },
+    ].forEach((q) => {
+      const ingreso = m.incomes.filter((i) => q.corte(dateStringDay(i.date))).reduce((a, i) => a + Number(i.amount), 0);
+      const gasto = m.gastos.filter((g) => q.corte(dateStringDay(g.fecha))).reduce((a, g) => a + Number(g.monto), 0);
+      const ahorro = m.savings.filter((s) => q.corte(dateStringDay(s.date))).reduce((a, s) => a + Number(s.amount), 0);
+      out.push({ label: q.label, longLabel: q.longLabel, ingreso, gasto, ahorro, balanceDelPeriodo: ingreso - gasto - ahorro });
+    });
+  });
+  let running = 0;
+  return out.map((d) => { running += d.balanceDelPeriodo; return { ...d, saldoAcumulado: running }; });
+}
 function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const [goals, setGoals] = useState([]);
   const [goalsError, setGoalsError] = useState(false);
@@ -745,13 +788,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   // que sobró de julio. Empieza en ₡0 en enero de {year} (a pedido del
   // usuario, 2026-07-30) -- por ahora no arrastra saldo de un año al
   // siguiente, cada año vuelve a empezar en ₡0 en enero.
-  const cumulativeBalanceData = useMemo(() => {
-    let running = 0;
-    return yearData.map((m) => {
-      running += m.balance;
-      return { mes: m.mes, mesFull: m.mesFull, balanceDelMes: m.balance, saldoAcumulado: running };
-    });
-  }, [yearData]);
+  const cumulativeBalanceData = useMemo(() => computeCumulativeBalanceData(yearData), [yearData]);
   const now = new Date();
   const isCurrentYear = year === now.getFullYear();
   // La tarjeta "Tu mes" y su frase destacada ahora siguen el mes elegido en
@@ -765,47 +802,6 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const currentMonth = yearData[currentIdx];
   const prevMonth = yearData[prevIdx];
   const isRealCurrentMonth = isCurrentYear && month === now.getMonth();
-  // "Saldo acumulado" por quincena en vez de por mes completo -- a pedido
-  // del usuario (2026-07-30): su salario cae los días 15 y 30, y necesita
-  // ver específicamente cómo ese pago financia los gastos de la quincena
-  // siguiente (1-15, o 16-fin de mes), no solo el balance del mes completo
-  // mezclado. Cada quincena sigue siendo ingresos - gastos - ahorros de esos
-  // días exactos (a partir de las mismas fechas que ya trae yearData -- sin
-  // ninguna consulta nueva a Supabase), acumulados uno tras otro durante
-  // todo el año (24 quincenas), empezando en ₡0 el 1 de enero -- mismo
-  // criterio que ya se usó para el acumulado mensual (ver más abajo, "Panorama
-  // del año" sigue usando el acumulado MENSUAL para el semáforo; este es
-  // solo para el gráfico de "Saldo acumulado").
-  const quincenaBalanceData = useMemo(() => {
-    const out = [];
-    yearData.forEach((m, mi) => {
-      const lastDay = new Date(year, mi + 1, 0).getDate();
-      [
-        { corte: (d) => d <= 15, label: `${m.mes} 1ª`, longLabel: `1 al 15 de ${m.mesFull}` },
-        { corte: (d) => d > 15, label: `${m.mes} 2ª`, longLabel: `16 al ${lastDay} de ${m.mesFull}` },
-      ].forEach((q) => {
-        const ingreso = m.incomes.filter((i) => q.corte(dateStringDay(i.date))).reduce((a, i) => a + Number(i.amount), 0);
-        const gasto = m.gastos.filter((g) => q.corte(dateStringDay(g.fecha))).reduce((a, g) => a + Number(g.monto), 0);
-        const ahorro = m.savings.filter((s) => q.corte(dateStringDay(s.date))).reduce((a, s) => a + Number(s.amount), 0);
-        out.push({ label: q.label, longLabel: q.longLabel, balanceDelPeriodo: ingreso - gasto - ahorro });
-      });
-    });
-    let running = 0;
-    return out.map((d) => { running += d.balanceDelPeriodo; return { ...d, saldoAcumulado: running }; });
-  }, [yearData, year]);
-  // Quincena "actual" para el número grande de la tarjeta: si se está viendo
-  // el mes real de hoy, la quincena que contiene el día de hoy; si no, la
-  // segunda quincena (el cierre de ese mes) -- mismo criterio que antes tenía
-  // el acumulado mensual con "Al cierre de {mes}".
-  const quincenaActual = quincenaBalanceData[
-    month * 2 + (isRealCurrentMonth ? (now.getDate() <= 15 ? 0 : 1) : 1)
-  ];
-  // Al hacer clic en un punto de la gráfica de "Saldo acumulado" se abre el
-  // detalle de esa quincena (cuánto se gastó y en qué, cuánto se ahorró y
-  // cuánto queda disponible) -- a pedido del usuario (2026-07-30). "index" va
-  // de 0 a 23 (2 quincenas x 12 meses), igual que quincenaBalanceData.
-  const [quincenaOpen, setQuincenaOpen] = useState(null);
-  const navQuincena = (delta) => setQuincenaOpen((i) => Math.min(23, Math.max(0, i + delta)));
   const insights = [];
   if (prevMonth.gastoTotal > 0) {
     const pct = Math.abs(Math.round((1 - currentMonth.gastoTotal / prevMonth.gastoTotal) * 100));
@@ -880,57 +876,6 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
           })}
         </div>
       </Card>
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Eyebrow>Saldo acumulado</Eyebrow>
-            <p className="mt-1 text-xs text-slate-400">
-              Lo que te queda disponible quincena a quincena (1-15 y 16-fin de cada mes), sumando lo que no gastaste ni ahorraste de la quincena anterior (empieza en ₡0 el 1 de enero de {year}).
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-slate-400">Al {quincenaActual.longLabel}</p>
-            <p className={`text-xl font-semibold tabular-nums ${quincenaActual.saldoAcumulado >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
-              {fmt(quincenaActual.saldoAcumulado)}
-            </p>
-          </div>
-        </div>
-        <p className="mt-3 text-xs text-slate-400">Clic en un punto de la gráfica para ver el detalle de esa quincena.</p>
-        <div className="mt-2 h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={quincenaBalanceData}
-              margin={{ left: 4, right: 12 }}
-              onClick={(e) => {
-                if (e && typeof e.activeTooltipIndex === "number") setQuincenaOpen(e.activeTooltipIndex);
-              }}
-              style={{ cursor: "pointer" }}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval={1} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-              <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => quincenaBalanceData.find((d) => d.label === l)?.longLabel || l} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
-              {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
-                  señal real de "te quedaste sin dinero", no solo una quincena
-                  con balance aislado negativo (ver statusOf más arriba, que
-                  sigue usando el acumulado MENSUAL para el semáforo). */}
-              <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
-              <Line type="monotone" dataKey="saldoAcumulado" name="Saldo acumulado" stroke="#6366F1" strokeWidth={2} dot={{ r: 3, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-      {quincenaOpen !== null && (
-        <QuincenaDetail
-          index={quincenaOpen}
-          year={year}
-          fmt={fmt}
-          onClose={() => setQuincenaOpen(null)}
-          onNav={navQuincena}
-          yearData={yearData}
-          quincenaBalanceData={quincenaBalanceData}
-        />
-      )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-5">
           <Eyebrow>Ingresos vs gastos</Eyebrow>
@@ -1454,156 +1399,215 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
     </div>
   );
 }
-// Detalle de una quincena (1-15 o 16-fin de mes) del gráfico "Saldo
-// acumulado" -- a pedido del usuario (2026-07-30): quiere ver, quincena a
-// quincena, cuánto gastó y en qué, cuánto ahorró, y cuánto le queda
-// disponible (incluyendo lo que arrastró de la quincena anterior -- ej. su
-// salario del día 30 financiando los gastos del 1 al 15 del mes siguiente).
-// Es un componente nuevo y separado de MonthDetail (no una modificación) para
-// no arriesgar esa vista ya probada. "index" va de 0 a 23 (2 quincenas x 12
-// meses), igual que quincenaBalanceData (que ya trae, por período, el
-// balance y el saldo acumulado -- acá solo se recalculan los ingresos/gastos/
-// ahorros de ESA quincena para poder listarlos y agruparlos por categoría).
-function QuincenaDetail({ index, year, fmt, onClose, onNav, yearData, quincenaBalanceData }) {
+/* ---------------------------------------------------------------
+   QUINCENAS
+------------------------------------------------------------------ */
+// Pestaña dedicada a ver el dinero disponible por quincena (o por mes
+// completo), alineada al ciclo real de pago del usuario -- agregada el
+// 2026-07-30 a pedido del usuario, quien explicó que su salario del día 30
+// financia sus gastos del 1 al 15, y el del día 15 financia los del 16 al
+// fin de mes (sumado a lo que le quedó disponible de la quincena anterior).
+// Al principio esto se resolvió solo dentro de la tarjeta "Saldo acumulado"
+// de Resumen, pero el usuario pidió que fuera "en toda la app" -- así que se
+// sacó de ahí (Resumen se quedó solo con "Panorama del año", que es lo que
+// dijo que le gustaba) y se convirtió en esta pestaña propia, con un
+// selector de Período (igual al que ya usan "Ingreso por tipo" y "Gasto por
+// artículo": Mes completo / Quincena 1 / Quincena 2) para que decida cómo
+// quiere ver la información, y los mismos gráficos de "Saldo acumulado" y
+// "Gastos por categoría" que ya existían en otras partes de la app.
+function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
+  const [period, setPeriod] = useState("q1"); // "mes" | "q1" | "q2"
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
-  const mi = Math.floor(index / 2);
-  const isQ1 = index % 2 === 0;
-  const m = yearData[mi];
-  const q = quincenaBalanceData[index];
-  const saldoInicial = index > 0 ? quincenaBalanceData[index - 1].saldoAcumulado : 0;
-  const corte = (d) => (isQ1 ? d <= 15 : d > 15);
-  const gastosQuincena = m.gastos.filter((e) => corte(dateStringDay(e.fecha)));
-  const ingresosQuincena = m.incomes.filter((i) => corte(dateStringDay(i.date)));
-  const ahorrosQuincena = m.savings.filter((s) => corte(dateStringDay(s.date)));
-  const gastoTotal = gastosQuincena.reduce((a, e) => a + e.monto, 0);
-  const ingresoTotal = ingresosQuincena.reduce((a, i) => a + Number(i.amount), 0);
-  const ahorroTotal = ahorrosQuincena.reduce((a, s) => a + Number(s.amount), 0);
-  const filteredExpenses = gastosQuincena.filter((e) =>
+  const cumulativeBalanceData = useMemo(() => computeCumulativeBalanceData(yearData), [yearData]);
+  const quincenaBalanceData = useMemo(() => computeQuincenaBalanceData(yearData, year), [yearData, year]);
+  const isQuincenal = period !== "mes";
+  const half = period === "q2" ? 1 : 0;
+  const periodIndex = isQuincenal ? month * 2 + half : month;
+  const m = yearData[month];
+  const corte = (d) => (half === 0 ? d <= 15 : d > 15);
+  const gastosPeriodo = isQuincenal ? m.gastos.filter((e) => corte(dateStringDay(e.fecha))) : m.gastos;
+  const incomesPeriodo = isQuincenal ? m.incomes.filter((i) => corte(dateStringDay(i.date))) : m.incomes;
+  const savingsPeriodo = isQuincenal ? m.savings.filter((s) => corte(dateStringDay(s.date))) : m.savings;
+  const ingresoTotal = isQuincenal ? quincenaBalanceData[periodIndex].ingreso : m.ingresoTotal;
+  const gastoTotal = isQuincenal ? quincenaBalanceData[periodIndex].gasto : m.gastoTotal;
+  const ahorroTotal = isQuincenal ? quincenaBalanceData[periodIndex].ahorro : m.ahorroTotal;
+  const saldoFinal = isQuincenal ? quincenaBalanceData[periodIndex].saldoAcumulado : cumulativeBalanceData[periodIndex].saldoAcumulado;
+  const saldoInicial = periodIndex > 0
+    ? (isQuincenal ? quincenaBalanceData[periodIndex - 1].saldoAcumulado : cumulativeBalanceData[periodIndex - 1].saldoAcumulado)
+    : 0;
+  const periodShort = isQuincenal ? quincenaBalanceData[periodIndex].longLabel : m.mesFull;
+  const filteredExpenses = gastosPeriodo.filter((e) =>
     (catFilter === "Todas" || e.categoria === catFilter) &&
     e.descripcion.toLowerCase().includes(search.toLowerCase())
   );
-  const categoriasDeLaQuincena = [...new Set(gastosQuincena.map((e) => e.categoria))];
-  const pieData = categoriasDeLaQuincena.map((cat) => {
-    const conColor = gastosQuincena.find((e) => e.categoria === cat && e.color);
+  const categoriasDelPeriodo = [...new Set(gastosPeriodo.map((e) => e.categoria))];
+  const pieData = categoriasDelPeriodo.map((cat) => {
+    const conColor = gastosPeriodo.find((e) => e.categoria === cat && e.color);
     return {
       name: cat,
-      value: gastosQuincena.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
+      value: gastosPeriodo.filter((e) => e.categoria === cat).reduce((a, e) => a + e.monto, 0),
       color: conColor?.color || CATEGORY_META[cat]?.color || "#64748B",
     };
   }).filter((d) => d.value > 0);
+  const chartData = isQuincenal ? quincenaBalanceData : cumulativeBalanceData;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-4xl animate-[fadeIn_.25s_ease] rounded-2xl bg-white shadow-2xl dark:bg-slate-900"
-      >
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
-          <div className="flex items-center gap-2">
-            <button onClick={() => onNav(-1)} disabled={index === 0} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronLeft size={18} /></button>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{q.longLabel}</h2>
-            <button onClick={() => onNav(1)} disabled={index === 23} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronRight size={18} /></button>
-          </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
-        </div>
-        <div className="max-h-[75vh] overflow-y-auto p-6 space-y-6">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatMini label="Saldo inicial" value={fmt(saldoInicial)} color={saldoInicial >= 0 ? "text-slate-500 dark:text-slate-400" : "text-red-500"} />
-            <StatMini label="Ingresos" value={fmt(ingresoTotal)} color="text-emerald-600" />
-            <StatMini label="Gastos" value={fmt(gastoTotal)} color="text-red-500" />
-            <StatMini label="Ahorros" value={fmt(ahorroTotal)} color="text-blue-500" />
-          </div>
-          <div className="rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/60">
-            <Row label="Saldo disponible al final de esta quincena" value={fmt(q.saldoAcumulado)} bold />
-          </div>
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div>
-              <Eyebrow>Ingresos de la quincena</Eyebrow>
-              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-                {ingresosQuincena.length === 0 && <p className="px-4 py-4 text-sm text-slate-400">Sin ingresos registrados.</p>}
-                {ingresosQuincena.map((inc) => (
-                  <Row key={inc.id} label={inc.description || inc.type} value={fmt(inc.amount)} />
-                ))}
-              </div>
-              <Eyebrow>
-                <span className="mt-6 block">Ahorros de la quincena</span>
-              </Eyebrow>
-              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-                {ahorrosQuincena.length === 0 && <p className="px-4 py-4 text-sm text-slate-400">Sin ahorros registrados.</p>}
-                {ahorrosQuincena.map((s) => (
-                  <Row key={s.id} label={SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type} value={fmt(s.amount)} />
-                ))}
-                <Row label="Total de la quincena" value={fmt(ahorroTotal)} bold />
-              </div>
-            </div>
-            <div>
-              <Eyebrow>Gastos por categoría</Eyebrow>
-              <div className="mt-2 h-52">
-                {pieData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                        {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                      </Pie>
-                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <p className="text-sm text-slate-400">Sin gastos en esta quincena.</p>
-                )}
-              </div>
-            </div>
-          </div>
+    <div className="space-y-6">
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <Eyebrow>Detalle de gastos</Eyebrow>
-              <div className="flex flex-wrap gap-2">
-                <div className="relative">
-                  <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
-                  <input
-                    value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar gasto..."
-                    className="rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-                <select
-                  value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                >
-                  <option>Todas</option>
-                  {categoriasDeLaQuincena.map((c) => <option key={c}>{c}</option>)}
-                </select>
-              </div>
-            </div>
-            <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
-              {filteredExpenses.map((e) => {
-                const Icon = CATEGORY_META[e.categoria]?.icon || MoreHorizontal;
-                const color = e.color || CATEGORY_META[e.categoria]?.color || "#64748B";
-                return (
-                  <div key={e.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${color}1a`, color }}>
-                        <Icon size={15} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.descripcion}</p>
-                        <p className="truncate text-xs text-slate-400">
-                          {e.categoria} · {e.fechaCompra || e.fecha}
-                          {e.fechaCompra && e.fechaCompra !== e.fecha && ` · pago: ${e.fecha}`}
-                          {e.tarjeta && ` · ${e.tarjeta}`}
-                        </p>
-                      </div>
-                    </div>
-                    <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(e.monto)}</span>
-                  </div>
-                );
-              })}
-              {filteredExpenses.length === 0 && (
-                <p className="px-4 py-6 text-center text-sm text-slate-400">Sin resultados para este filtro.</p>
-              )}
-            </div>
+            <Eyebrow>Saldo disponible</Eyebrow>
+            <p className="mt-1 text-xs text-slate-400">
+              Lo que te queda disponible en el período elegido, sumando lo que no gastaste ni ahorraste del período anterior (empieza en ₡0 el 1° de enero de {year}).
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-slate-400">Al {periodShort}</p>
+            <p className={`text-2xl font-semibold tabular-nums ${saldoFinal >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
+              {fmt(saldoFinal)}
+            </p>
           </div>
         </div>
+        <div className="mt-4 max-w-xs">
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Período</label>
+          <select value={period} onChange={(e) => setPeriod(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+            <option value="q1">Quincena 1 (días 1 al 15)</option>
+            <option value="q2">Quincena 2 (día 16 a fin de mes)</option>
+            <option value="mes">Mes completo</option>
+          </select>
+        </div>
+      </Card>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatMini label="Saldo inicial" value={fmt(saldoInicial)} color={saldoInicial >= 0 ? "text-slate-500 dark:text-slate-400" : "text-red-500"} />
+        <StatMini label="Ingresos" value={fmt(ingresoTotal)} color="text-emerald-600" />
+        <StatMini label="Gastos" value={fmt(gastoTotal)} color="text-red-500" />
+        <StatMini label="Ahorros" value={fmt(ahorroTotal)} color="text-blue-500" />
       </div>
+      <Card className="p-5">
+        <Eyebrow>Saldo acumulado {isQuincenal ? "por quincena" : "por mes"}</Eyebrow>
+        <p className="mt-1 text-xs text-slate-400">Clic en un punto de la gráfica para saltar a {isQuincenal ? "esa quincena" : "ese mes"}.</p>
+        <div className="mt-2 h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={chartData}
+              margin={{ left: 4, right: 12 }}
+              onClick={(e) => {
+                if (!e || typeof e.activeTooltipIndex !== "number") return;
+                const idx = e.activeTooltipIndex;
+                if (isQuincenal) {
+                  onJumpToMonth(Math.floor(idx / 2));
+                  setPeriod(idx % 2 === 0 ? "q1" : "q2");
+                } else {
+                  onJumpToMonth(idx);
+                }
+              }}
+              style={{ cursor: "pointer" }}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey={isQuincenal ? "label" : "mes"} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval={isQuincenal ? 1 : 0} />
+              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+              <Tooltip
+                formatter={(v) => fmt(v)}
+                labelFormatter={(l) => (isQuincenal ? quincenaBalanceData.find((d) => d.label === l)?.longLabel : l) || l}
+                contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }}
+              />
+              {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
+                  señal real de "te quedaste sin dinero", no solo un período
+                  con balance aislado negativo (ver statusOf en Resumen, que
+                  sigue usando el acumulado MENSUAL para el semáforo de
+                  "Panorama del año"). */}
+              <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
+              <Line type="monotone" dataKey="saldoAcumulado" name="Saldo acumulado" stroke="#6366F1" strokeWidth={2} dot={{ r: 3, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div>
+          <Eyebrow>Ingresos del período</Eyebrow>
+          <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {incomesPeriodo.length === 0 && <p className="px-4 py-4 text-sm text-slate-400">Sin ingresos registrados.</p>}
+            {incomesPeriodo.map((inc) => (
+              <Row key={inc.id} label={inc.description || inc.type} value={fmt(inc.amount)} />
+            ))}
+          </div>
+          <Eyebrow>
+            <span className="mt-6 block">Ahorros del período</span>
+          </Eyebrow>
+          <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {savingsPeriodo.length === 0 && <p className="px-4 py-4 text-sm text-slate-400">Sin ahorros registrados.</p>}
+            {savingsPeriodo.map((s) => (
+              <Row key={s.id} label={SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type} value={fmt(s.amount)} />
+            ))}
+            <Row label="Total del período" value={fmt(ahorroTotal)} bold />
+          </div>
+        </div>
+        <Card className="p-5">
+          <Eyebrow>Gastos por categoría</Eyebrow>
+          <div className="mt-2 h-52">
+            {pieData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                    {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-sm text-slate-400">Sin gastos en este período.</p>
+            )}
+          </div>
+        </Card>
+      </div>
+      <Card className="p-5">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <Eyebrow>Detalle de gastos</Eyebrow>
+          <div className="flex flex-wrap gap-2">
+            <div className="relative">
+              <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
+              <input
+                value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar gasto..."
+                className="rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+            <select
+              value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            >
+              <option>Todas</option>
+              {categoriasDelPeriodo.map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          {filteredExpenses.map((e) => {
+            const Icon = CATEGORY_META[e.categoria]?.icon || MoreHorizontal;
+            const color = e.color || CATEGORY_META[e.categoria]?.color || "#64748B";
+            return (
+              <div key={e.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${color}1a`, color }}>
+                    <Icon size={15} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-slate-700 dark:text-slate-200">{e.descripcion}</p>
+                    <p className="truncate text-xs text-slate-400">
+                      {e.categoria} · {e.fechaCompra || e.fecha}
+                      {e.fechaCompra && e.fechaCompra !== e.fecha && ` · pago: ${e.fecha}`}
+                      {e.tarjeta && ` · ${e.tarjeta}`}
+                    </p>
+                  </div>
+                </div>
+                <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(e.monto)}</span>
+              </div>
+            );
+          })}
+          {filteredExpenses.length === 0 && (
+            <p className="px-4 py-6 text-center text-sm text-slate-400">Sin resultados para este filtro.</p>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -4926,6 +4930,7 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
 ------------------------------------------------------------------ */
 const TABS = [
   { id: "dashboard", label: "Resumen", icon: Wallet },
+  { id: "quincenas", label: "Quincenas", icon: CalendarRange },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
   { id: "savings", label: "Ahorros", icon: PiggyBank },
@@ -5062,6 +5067,7 @@ export default function FinanceApp() {
             <div>
               <h1 className="text-xl font-semibold">
                 {tab === "dashboard" && "Resumen del año"}
+                {tab === "quincenas" && "Control por quincena"}
                 {tab === "incomes" && "Tus ingresos"}
                 {tab === "expenses" && "Tus gastos"}
                 {tab === "calendar" && "Calendario de pagos"}
@@ -5089,7 +5095,7 @@ export default function FinanceApp() {
                   </button>
                   <span>· actualizado en tiempo real</span>
                 </div>
-              ) : ["incomes", "expenses", "calendar", "savings", "budgets", "goals"].includes(tab) ? (
+              ) : ["quincenas", "incomes", "expenses", "calendar", "savings", "budgets", "goals"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToMonth(-1)}
@@ -5120,6 +5126,7 @@ export default function FinanceApp() {
           ) : (
             <>
               {tab === "dashboard" && <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} />}
+              {tab === "quincenas" && <QuincenasView fmt={format} yearData={yearData} year={year} month={month} onJumpToMonth={setMonth} />}
               {tab === "calendar" && <CalendarView fmt={format} year={year} month={month} yearData={yearData} />}
             </>
           )}
