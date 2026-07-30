@@ -1437,6 +1437,15 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
     ? (isQuincenal ? quincenaBalanceData[periodIndex - 1].saldoAcumulado : cumulativeBalanceData[periodIndex - 1].saldoAcumulado)
     : 0;
   const periodShort = isQuincenal ? quincenaBalanceData[periodIndex].longLabel : m.mesFull;
+  // Balance SOLO de este período (ingresos - gastos - ahorros de este período
+  // puntual, sin sumarle el arrastre de antes) -- a pedido del usuario
+  // (2026-07-30): "Saldo disponible" de arriba es el monto real acumulado
+  // desde enero (útil para saber cuánto tenés de verdad), pero no deja ver de
+  // un vistazo si ESTE ciclo puntual (este sueldo) rindió o no, sin mezclarlo
+  // con lo de antes. Ya estaba calculado dentro de quincenaBalanceData/
+  // cumulativeBalanceData (balanceDelPeriodo/balanceDelMes) -- solo faltaba
+  // mostrarlo como su propio número.
+  const balancePeriodo = isQuincenal ? quincenaBalanceData[periodIndex].balanceDelPeriodo : cumulativeBalanceData[periodIndex].balanceDelMes;
   const filteredExpenses = gastosPeriodo.filter((e) =>
     (catFilter === "Todas" || e.categoria === catFilter) &&
     e.descripcion.toLowerCase().includes(search.toLowerCase())
@@ -1458,7 +1467,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
           <div>
             <Eyebrow>Saldo disponible</Eyebrow>
             <p className="mt-1 text-xs text-slate-400">
-              Lo que te queda disponible en el período elegido, sumando lo que no gastaste ni ahorraste del período anterior (empieza en ₡0 el 1° de enero de {year}).
+              El monto real que tenés disponible: se arrastra de período en período (empieza en ₡0 el 1° de enero de {year}) -- si en un período no gastás/ahorrás todo, ese sobrante se suma al siguiente, y así sucesivamente.
             </p>
           </div>
           <div className="text-right">
@@ -1482,6 +1491,14 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
         <StatMini label="Ingresos" value={fmt(ingresoTotal)} color="text-emerald-600" />
         <StatMini label="Gastos" value={fmt(gastoTotal)} color="text-red-500" />
         <StatMini label="Ahorros" value={fmt(ahorroTotal)} color="text-blue-500" />
+      </div>
+      <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3 ${balancePeriodo >= 0 ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-red-50 dark:bg-red-500/10"}`}>
+        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+          Balance de {isQuincenal ? "esta quincena" : "este mes"} (ingresos − gastos − ahorros de este período, sin contar lo que traías de antes)
+        </span>
+        <span className={`text-lg font-semibold tabular-nums ${balancePeriodo >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
+          {fmt(balancePeriodo)}
+        </span>
       </div>
       <Card className="p-5">
         <Eyebrow>Saldo acumulado {isQuincenal ? "por quincena" : "por mes"}</Eyebrow>
