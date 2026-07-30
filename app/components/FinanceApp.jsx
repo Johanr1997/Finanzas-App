@@ -437,9 +437,26 @@ async function adjustGoalAmount(goalId, delta) {
   if (!data) return;
   await supabase.from("goals").update({ current_amount: Number(data.current_amount) + delta }).eq("id", goalId);
 }
-function statusOf(balance, ingreso) {
+// Antes, un mes se marcaba en rojo simplemente si ESE mes (aislado) gastó
+// más de lo que ingresó. Pero eso no toma en cuenta el saldo que se trae de
+// meses anteriores -- ej. un salario que cae el día 30 del mes anterior y
+// financia la primera quincena del mes actual: ese mes puede "verse" en
+// déficit aislado sin estarlo en la realidad, porque los gastos de esos
+// primeros días ya estaban cubiertos con el saldo que traías. Ahora, cuando
+// se conoce el saldo acumulado hasta ese mes (ver "Saldo acumulado" en
+// Resumen, 2026-07-30), solo se marca rojo si de verdad te quedarías sin
+// dinero real ese mes (el acumulado se vuelve negativo); si el acumulado
+// sigue en positivo pero ese mes en particular gastó más de lo normal, se
+// marca amarillo ("ajustado") en vez de rojo -- estás usando parte de tu
+// colchón, pero no te quedaste sin nada. El parámetro es opcional para no
+// romper otros usos futuros de esta función que no tengan ese dato a mano.
+function statusOf(balance, ingreso, saldoAcumulado) {
   if (ingreso === 0) return "gris";
   const ratio = balance / ingreso;
+  if (saldoAcumulado !== undefined) {
+    if (saldoAcumulado < 0) return "rojo";
+    return ratio >= 0.15 ? "verde" : "amarillo";
+  }
   if (ratio >= 0.15) return "verde";
   if (ratio >= 0) return "amarillo";
   return "rojo";
@@ -807,7 +824,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
         </div>
         <div className="grid grid-cols-6 gap-2 sm:grid-cols-12">
           {yearData.map((m, i) => {
-            const st = statusOf(m.balance, m.ingresoTotal);
+            const st = statusOf(m.balance, m.ingresoTotal, cumulativeBalanceData[i].saldoAcumulado);
             return (
               <button
                 key={m.mes}
