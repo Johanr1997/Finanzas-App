@@ -719,6 +719,21 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
     });
   }, [yearData]);
   const monthCompare = yearData.map((m) => ({ mes: m.mes, Balance: m.balance }));
+  // Saldo acumulado: a diferencia del resto de la app (que calcula cada mes
+  // aislado, sin arrastrar nada del anterior), esto suma mes a mes lo que
+  // sobra (ingresos - gastos - ahorros) para reflejar el dinero que en
+  // realidad sigues teniendo disponible -- ej. un salario que entra el 30 de
+  // julio ya no "desaparece" al pasar a agosto, porque agosto arranca con lo
+  // que sobró de julio. Empieza en ₡0 en enero de {year} (a pedido del
+  // usuario, 2026-07-30) -- por ahora no arrastra saldo de un año al
+  // siguiente, cada año vuelve a empezar en ₡0 en enero.
+  const cumulativeBalanceData = useMemo(() => {
+    let running = 0;
+    return yearData.map((m) => {
+      running += m.balance;
+      return { mes: m.mes, mesFull: m.mesFull, balanceDelMes: m.balance, saldoAcumulado: running };
+    });
+  }, [yearData]);
   const now = new Date();
   const isCurrentYear = year === now.getFullYear();
   // La tarjeta "Tu mes" y su frase destacada ahora siguen el mes elegido en
@@ -804,6 +819,38 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
               </button>
             );
           })}
+        </div>
+      </Card>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Eyebrow>Saldo acumulado</Eyebrow>
+            <p className="mt-1 text-xs text-slate-400">
+              Lo que te queda disponible mes a mes, sumando lo que no gastaste ni ahorraste del mes anterior (empieza en ₡0 en enero de {year}).
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-slate-400">Al cierre de {currentMonth.mesFull}</p>
+            <p className={`text-xl font-semibold tabular-nums ${cumulativeBalanceData[currentIdx].saldoAcumulado >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
+              {fmt(cumulativeBalanceData[currentIdx].saldoAcumulado)}
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+          {cumulativeBalanceData.map((d, i) => (
+            <div
+              key={d.mes}
+              className={`flex items-center justify-between gap-2 px-4 py-2.5 text-sm ${i === currentIdx ? "bg-slate-50 dark:bg-slate-800/60" : ""}`}
+            >
+              <p className="font-medium text-slate-700 dark:text-slate-200">{d.mesFull}</p>
+              <div className="flex items-center gap-3">
+                <span className={`text-xs tabular-nums ${d.balanceDelMes >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                  {d.balanceDelMes >= 0 ? "+" : ""}{fmt(d.balanceDelMes)}
+                </span>
+                <span className="w-28 shrink-0 text-right font-medium tabular-nums text-slate-900 dark:text-white">{fmt(d.saldoAcumulado)}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </Card>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
