@@ -12,6 +12,7 @@ import {
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
   Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
+  ListChecks, Smile,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -331,6 +332,24 @@ function addMonthsToDateString(dateStr, monthsToAdd) {
   const targetDay = Math.min(d, lastDayOfTargetMonth);
   return `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
 }
+// Helpers de la pestaña "Hábitos" (2026-07-31): nombres de día de la semana
+// y aritmética de fechas por día -- igual que addMonthsToDateString de
+// arriba, siempre construyendo un Date con año/mes/día por separado (nunca
+// parseando un string completo), para no toparse con el mismo bug de zona
+// horaria documentado en dateStringYear/Month/Day. WEEKDAYS_SHORT ya existía
+// más abajo (usado por el Calendario), así que acá solo se agrega
+// WEEKDAYS_FULL (nombres completos, para el Planificador semanal).
+const WEEKDAYS_FULL = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+function weekdayIndex(dateStr) {
+  return new Date(dateStringYear(dateStr), dateStringMonth(dateStr) - 1, dateStringDay(dateStr)).getDay();
+}
+function addDaysToDateString(dateStr, daysToAdd) {
+  const dt = new Date(dateStringYear(dateStr), dateStringMonth(dateStr) - 1, dateStringDay(dateStr) + daysToAdd);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+function formatDDMM(dateStr) {
+  return `${dateStringDay(dateStr)}/${dateStringMonth(dateStr)}`;
+}
 // A partir de la fecha real de una compra con tarjeta de crédito, calcula la
 // fecha en la que realmente toca pagarla (según el día de corte y el día de
 // pago de la tarjeta) — esa es la fecha que se usa para los totales
@@ -616,6 +635,33 @@ function TypeSelectWithCreate({ label, value, onChange, options, table, extraFie
       {allOptions.length === 0 && emptyHint && (
         <p className="mt-1 text-xs text-slate-400">{emptyHint}</p>
       )}
+    </div>
+  );
+}
+// Anillo de progreso circular (SVG puro, sin librería aparte) -- usado por
+// las tarjetas de día del "Planificador semanal" para mostrar de un vistazo
+// qué porcentaje de las tareas de ese día ya se completó. Es parecido al
+// ProgressRing que ya existía (usado en Metas), pero ese no muestra el
+// número en el centro, así que se dejó éste aparte con otro nombre en vez de
+// tocar el que ya estaba en uso.
+function HabitProgressRing({ percent, size = 72, strokeWidth = 7, color = "#3B82F6" }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const clamped = Math.min(100, Math.max(0, percent));
+  const offset = circumference * (1 - clamped / 100);
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" strokeWidth={strokeWidth} className="stroke-slate-100 dark:stroke-slate-800" />
+        <circle
+          cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={color} strokeWidth={strokeWidth}
+          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 0.3s ease" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+        {Math.round(clamped)}%
+      </div>
     </div>
   );
 }
@@ -5159,6 +5205,644 @@ function SavingsTypeModal({ type, onClose, onSaved }) {
   );
 }
 /* ---------------------------------------------------------------
+   HÁBITOS
+   Pestaña nueva (2026-07-31), a pedido del usuario tras ver el video de una
+   plantilla de Google Sheets de seguimiento de hábitos ("quiet progress.").
+   Se pidió la réplica más completa, así que incluye: cuadrícula mensual de
+   hábitos con checkbox por día + análisis por hábito + estado de ánimo
+   (HabitsGridView), y un Planificador semanal con tareas por día + check-in
+   de ánimo/energía/enfoque/motivación (WeeklyPlannerView) -- mismo patrón de
+   interruptor "Ahorros/Metas" o "Anual/Mensual" que ya usa el resto de la
+   app para fusionar dos vistas relacionadas en una sola pestaña.
+   Se mantuvo el estilo visual del resto de la app (tarjetas claras, mismos
+   componentes compartidos) en vez de imitar el look oscuro del video --
+   la idea es que se sienta parte de Finanzas App, no una pantalla aparte.
+------------------------------------------------------------------ */
+function HabitsView({ vista, onChangeVista, year, month }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onChangeVista("mensual")}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+            vista === "mensual" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+          }`}
+        >
+          <ListChecks size={14} /> Hábitos
+        </button>
+        <button
+          onClick={() => onChangeVista("planificador")}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+            vista === "planificador" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+          }`}
+        >
+          <CalendarRange size={14} /> Planificador semanal
+        </button>
+      </div>
+      {vista === "mensual" ? <HabitsGridView year={year} month={month} /> : <WeeklyPlannerView />}
+    </div>
+  );
+}
+function HabitsGridView({ year, month }) {
+  const [habits, setHabits] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [checkins, setCheckins] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showManager, setShowManager] = useState(false);
+  const [loadError, setLoadError] = useState("");
+
+  const daysCount = new Date(year, month + 1, 0).getDate();
+  const monthStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const monthEnd = `${year}-${String(month + 1).padStart(2, "0")}-${String(daysCount).padStart(2, "0")}`;
+  const days = Array.from({ length: daysCount }, (_, i) => i + 1);
+  function dateForDay(d) {
+    return `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+
+  async function refetchHabits() {
+    const { data } = await supabase.from("habits").select("*").order("created_at", { ascending: true });
+    setHabits(data || []);
+  }
+  async function refetchLogs() {
+    const { data } = await supabase.from("habit_logs").select("*").gte("date", monthStart).lte("date", monthEnd);
+    setLogs(data || []);
+  }
+  useEffect(() => {
+    refetchHabits();
+  }, []);
+  useEffect(() => {
+    async function fetchAll() {
+      setLoading(true);
+      const [{ data: lgs, error: logsError }, { data: cks, error: cksError }] = await Promise.all([
+        supabase.from("habit_logs").select("*").gte("date", monthStart).lte("date", monthEnd),
+        supabase.from("mindset_checkins").select("*").gte("date", monthStart).lte("date", monthEnd).order("date", { ascending: true }),
+      ]);
+      setLoadError(
+        logsError || cksError
+          ? "No se pudieron cargar todos tus hábitos. Revisa tu conexión e intenta recargar la página."
+          : ""
+      );
+      setLogs(lgs || []);
+      setCheckins(cks || []);
+      setLoading(false);
+    }
+    fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month]);
+
+  function isChecked(habitId, d) {
+    const dateStr = dateForDay(d);
+    return logs.some((l) => l.habit_id === habitId && l.date === dateStr);
+  }
+  // Optimista: se refleja el cambio de inmediato en pantalla, sin esperar la
+  // respuesta de Supabase -- si falla, se vuelve a sincronizar con el
+  // servidor (refetchLogs) para no dejar la casilla en un estado equivocado.
+  async function toggleLog(habitId, d) {
+    const dateStr = dateForDay(d);
+    const existing = logs.find((l) => l.habit_id === habitId && l.date === dateStr);
+    if (existing) {
+      setLogs((prev) => prev.filter((l) => l.id !== existing.id));
+      const { error } = await supabase.from("habit_logs").delete().eq("id", existing.id);
+      if (error) refetchLogs();
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const tempId = `temp-${habitId}-${dateStr}`;
+    setLogs((prev) => [...prev, { id: tempId, habit_id: habitId, date: dateStr, user_id: userId }]);
+    const { data, error } = await supabase.from("habit_logs").insert({ user_id: userId || null, habit_id: habitId, date: dateStr }).select().single();
+    if (error) {
+      setLogs((prev) => prev.filter((l) => l.id !== tempId));
+    } else {
+      setLogs((prev) => prev.map((l) => (l.id === tempId ? data : l)));
+    }
+  }
+
+  const totalPossible = habits.length * daysCount;
+  const totalCompleted = logs.length;
+  const progressPct = totalPossible > 0 ? Math.round((totalCompleted / totalPossible) * 100) : 0;
+
+  const habitStats = habits
+    .map((h) => {
+      const count = logs.filter((l) => l.habit_id === h.id).length;
+      return { id: h.id, name: `${h.emoji ? h.emoji + " " : ""}${h.name}`, pct: daysCount > 0 ? Math.round((count / daysCount) * 100) : 0 };
+    })
+    .sort((a, b) => b.pct - a.pct);
+
+  // Semanas para la cuadrícula: bloques de 7 días empezando en el día 1 del
+  // mes (no alineado al calendario domingo-sábado) -- mismo criterio simple
+  // que ya usa el resto de la app para cortar "quincenas" por número de día.
+  const weeks = [];
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
+  const weekColors = ["bg-blue-500", "bg-pink-500", "bg-emerald-500", "bg-amber-500", "bg-violet-500"];
+
+  // Estado de ánimo: promedio semanal de los check-ins que se llenan desde
+  // "Planificador semanal" (Ánimo/Energía/Enfoque/Motivación, escala
+  // Bajo=1/Medio=3/Alto=5) -- "Mindset" es el promedio de Ánimo+Energía+
+  // Enfoque convertido a %, y "Motivación" es su propio %. Es una forma
+  // razonable de resumirlo en dos números, no una fórmula oficial de ningún
+  // lado en particular.
+  const weeklyMindset = weeks.map((wdays, i) => {
+    const wDates = wdays.map(dateForDay);
+    const wCheckins = checkins.filter((c) => wDates.includes(c.date));
+    const avg = (field) => {
+      const vals = wCheckins.map((c) => c[field]).filter((v) => v != null);
+      if (vals.length === 0) return null;
+      return vals.reduce((a, v) => a + v, 0) / vals.length;
+    };
+    const moodAvg = avg("mood");
+    const energyAvg = avg("energy");
+    const focusAvg = avg("focus");
+    const motivationAvg = avg("motivation");
+    const mindsetVals = [moodAvg, energyAvg, focusAvg].filter((v) => v != null);
+    const mindsetPct = mindsetVals.length > 0 ? Math.round((mindsetVals.reduce((a, v) => a + v, 0) / mindsetVals.length / 5) * 100) : 0;
+    const motivationPct = motivationAvg != null ? Math.round((motivationAvg / 5) * 100) : 0;
+    return {
+      week: `Semana ${i + 1}`,
+      mindset: mindsetPct,
+      motivation: motivationPct,
+      hasData: wCheckins.length > 0,
+    };
+  });
+  const hasAnyCheckin = checkins.length > 0;
+
+  if (loading) return <p className="text-sm text-slate-400">Cargando tus hábitos...</p>;
+
+  return (
+    <div className="space-y-4">
+      <LoadErrorBanner message={loadError} />
+      <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Eyebrow>Hábitos en {MONTHS_FULL[month]} {year}</Eyebrow>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900 dark:text-white">{progressPct}%</p>
+          <p className="mt-0.5 text-xs text-slate-400">{totalCompleted} de {totalPossible} registros · {habits.length} hábito{habits.length === 1 ? "" : "s"}</p>
+        </div>
+        <button
+          onClick={() => setShowManager(true)}
+          className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <ListChecks size={15} /> Mis hábitos
+        </button>
+      </Card>
+      {habits.length === 0 ? (
+        <Card className="p-8 text-center">
+          <p className="text-sm text-slate-400">Aún no tienes hábitos. Créalos con el botón "Mis hábitos".</p>
+        </Card>
+      ) : (
+        <Card className="overflow-x-auto p-5">
+          <div style={{ minWidth: 144 + days.length * 34 }}>
+            <div className="flex">
+              <div className="w-36 shrink-0" />
+              {weeks.map((wdays, wi) => (
+                <div
+                  key={wi}
+                  className={`shrink-0 rounded-t-lg py-1 text-center text-xs font-semibold text-white ${weekColors[wi % weekColors.length]}`}
+                  style={{ width: wdays.length * 34 }}
+                >
+                  Semana {wi + 1}
+                </div>
+              ))}
+            </div>
+            <div className="flex">
+              <div className="w-36 shrink-0" />
+              {days.map((d) => (
+                <div key={d} className="flex shrink-0 flex-col items-center text-[10px] text-slate-400" style={{ width: 34 }}>
+                  <span>{WEEKDAYS_SHORT[weekdayIndex(dateForDay(d))][0]}</span>
+                  <span className="font-medium text-slate-500">{d}</span>
+                </div>
+              ))}
+            </div>
+            {habits.map((h) => (
+              <div key={h.id} className="mt-2 flex items-center">
+                <div className="w-36 shrink-0 truncate pr-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {h.emoji ? `${h.emoji} ` : ""}{h.name}
+                </div>
+                {days.map((d) => {
+                  const checked = isChecked(h.id, d);
+                  return (
+                    <button
+                      key={d}
+                      onClick={() => toggleLog(h.id, d)}
+                      style={{ width: 34 }}
+                      className="flex shrink-0 items-center justify-center py-0.5"
+                      aria-label={`${h.name} - día ${d}`}
+                    >
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-md border-2 transition-colors ${
+                          checked ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-200 text-transparent hover:border-slate-300 dark:border-slate-700"
+                        }`}
+                      >
+                        <Check size={14} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            <div className="mt-3 flex items-center border-t border-slate-100 pt-2 dark:border-slate-800">
+              <div className="w-36 shrink-0 text-xs font-medium text-slate-400">Progreso</div>
+              {days.map((d) => {
+                const dateStr = dateForDay(d);
+                const count = logs.filter((l) => l.date === dateStr).length;
+                const pct = habits.length > 0 ? Math.round((count / habits.length) * 100) : 0;
+                return (
+                  <div key={d} style={{ width: 34 }} className="shrink-0 text-center text-[10px] tabular-nums text-slate-400">
+                    {pct}%
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Card>
+      )}
+      {habitStats.length > 0 && (
+        <Card className="p-5">
+          <Eyebrow>Análisis</Eyebrow>
+          <div className="mt-4" style={{ height: Math.max(120, habitStats.length * 40) }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={habitStats} layout="vertical" margin={{ left: 8, right: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v) => `${v}%`} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Bar dataKey="pct" fill="#6366F1" radius={[0, 4, 4, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      )}
+      <Card className="p-5">
+        <div className="flex items-center gap-2">
+          <Smile size={16} className="text-slate-400" />
+          <Eyebrow>Estado de ánimo</Eyebrow>
+        </div>
+        {!hasAnyCheckin ? (
+          <p className="mt-3 text-sm text-slate-400">
+            Aún no has llenado ningún check-in. Se llenan desde "Planificador semanal", día por día.
+          </p>
+        ) : (
+          <>
+            <div className="mt-4" style={{ height: 200 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={weeklyMindset} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis dataKey="week" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip formatter={(v) => `${v}%`} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Line type="monotone" dataKey="mindset" name="Mindset" stroke="#F59E0B" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="motivation" name="Motivación" stroke="#3B82F6" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+              {weeklyMindset.filter((w) => w.hasData).map((w) => (
+                <div key={w.week} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                  <p className="font-medium text-slate-700 dark:text-slate-200">{w.week}</p>
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className="font-medium text-amber-500">Mindset {w.mindset}%</span>
+                    <span className="font-medium text-blue-500">Motivación {w.motivation}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </Card>
+      {showManager && (
+        <HabitsManagerModal habits={habits} onClose={() => setShowManager(false)} onChanged={refetchHabits} />
+      )}
+    </div>
+  );
+}
+// Espacio dedicado a crear/editar/borrar hábitos -- mismo patrón que
+// "Tipos de ingreso"/"Tipos de ahorro"/"Artículos": el formulario de la
+// cuadrícula (los checkbox del día a día) no crea hábitos nuevos, solo los
+// marca/desmarca; para eso está este botón "Mis hábitos" aparte.
+function HabitsManagerModal({ habits, onClose, onChanged }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [editingHabit, setEditingHabit] = useState(null);
+  const [deletingHabit, setDeletingHabit] = useState(null);
+  async function handleDelete(id) {
+    const { error } = await supabase.from("habits").delete().eq("id", id);
+    if (error) throw error;
+    onChanged();
+    setDeletingHabit(null);
+  }
+  return (
+    <ModalShell onClose={onClose} title="Mis hábitos" maxWidth="max-w-sm">
+      <div className="-mx-1 max-h-[40vh] overflow-y-auto px-1">
+        {habits.length === 0 && <p className="py-4 text-center text-sm text-slate-400">Aún no tienes hábitos.</p>}
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          {habits.map((h) => (
+            <div key={h.id} className="flex items-center justify-between gap-2 py-2.5 text-sm">
+              <span className="truncate font-medium text-slate-700 dark:text-slate-200">{h.emoji ? `${h.emoji} ` : ""}{h.name}</span>
+              <RowActions onEdit={() => setEditingHabit(h)} onDelete={() => setDeletingHabit(h)} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowAdd(true)}
+        className="mt-4 w-full rounded-lg border border-dashed border-slate-200 py-2.5 text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+      >
+        + Agregar hábito
+      </button>
+      {showAdd && <HabitModal onClose={() => setShowAdd(false)} onSaved={onChanged} />}
+      {editingHabit && <HabitModal habit={editingHabit} onClose={() => setEditingHabit(null)} onSaved={onChanged} />}
+      {deletingHabit && (
+        <ConfirmDeleteModal
+          title="Eliminar hábito"
+          message={`¿Seguro que quieres eliminar "${deletingHabit.name}"? También se borra todo su historial de días marcados. Esta acción no se puede deshacer.`}
+          onCancel={() => setDeletingHabit(null)}
+          onConfirm={() => handleDelete(deletingHabit.id)}
+        />
+      )}
+    </ModalShell>
+  );
+}
+function HabitModal({ habit, onClose, onSaved }) {
+  const isEditing = Boolean(habit);
+  const [name, setName] = useState(habit?.name || "");
+  const [emoji, setEmoji] = useState(habit?.emoji || "");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) {
+      setErrorMsg("Escribe un nombre.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("habits").update({ name: name.trim(), emoji: emoji.trim() || null }).eq("id", habit.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("habits").insert({ user_id: userId || null, name: name.trim(), emoji: emoji.trim() || null });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <ModalShell onClose={onClose} title={isEditing ? "Editar hábito" : "Nuevo hábito"} maxWidth="max-w-sm" zIndex="z-[60]">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="flex gap-3">
+          <div className="w-20 shrink-0">
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Emoji</label>
+            <input
+              value={emoji} onChange={(e) => setEmoji(e.target.value)}
+              placeholder="💧" maxLength={4}
+              className={`mt-1 text-center ${INPUT_CLASS}`}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre</label>
+            <input
+              value={name} onChange={(e) => setName(e.target.value)} autoFocus
+              placeholder="Ej. Tomar agua"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar hábito"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+// Planificador semanal: tareas puntuales por día (a diferencia de los
+// hábitos, que se repiten todos los días) + un check-in de ánimo/energía/
+// enfoque/motivación por día, que alimenta la sección "Estado de ánimo" de
+// la cuadrícula mensual de arriba. Navega semana a semana con sus propias
+// flechitas, independiente del mes/año elegido en el resto de la app --
+// mismo criterio que ya usa "Quincenal" dentro de Reporte.
+function WeeklyPlannerView() {
+  const [weekStart, setWeekStart] = useState(() => {
+    const today = localDateString();
+    return addDaysToDateString(today, -weekdayIndex(today));
+  });
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDaysToDateString(weekStart, i));
+  const weekEnd = weekDays[6];
+
+  const [tasks, setTasks] = useState([]);
+  const [checkins, setCheckins] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [newTaskDate, setNewTaskDate] = useState(null);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+
+  async function refetchAll() {
+    setLoading(true);
+    const [{ data: tks, error: tksError }, { data: cks, error: cksError }] = await Promise.all([
+      supabase.from("daily_tasks").select("*").gte("date", weekStart).lte("date", weekEnd).order("created_at", { ascending: true }),
+      supabase.from("mindset_checkins").select("*").gte("date", weekStart).lte("date", weekEnd),
+    ]);
+    setLoadError(
+      tksError || cksError
+        ? "No se pudieron cargar todos tus datos del planificador. Revisa tu conexión e intenta recargar la página."
+        : ""
+    );
+    setTasks(tks || []);
+    setCheckins(cks || []);
+    setLoading(false);
+  }
+  useEffect(() => {
+    refetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart]);
+
+  async function addTask(date) {
+    const title = newTaskTitle.trim();
+    if (!title) return;
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { data, error } = await supabase.from("daily_tasks").insert({ user_id: userId || null, date, title, completed: false }).select().single();
+    if (!error) {
+      setTasks((prev) => [...prev, data]);
+      setNewTaskTitle("");
+      setNewTaskDate(null);
+    }
+  }
+  async function toggleTask(task) {
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, completed: !t.completed } : t)));
+    const { error } = await supabase.from("daily_tasks").update({ completed: !task.completed }).eq("id", task.id);
+    if (error) refetchAll();
+  }
+  async function deleteTask(task) {
+    setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    await supabase.from("daily_tasks").delete().eq("id", task.id);
+  }
+  // Un check-in por día (mood/energy/focus/motivation en la misma fila) --
+  // se guarda con upsert por (user_id, date) para no tener que averiguar a
+  // mano si ya existía una fila de ese día antes de decidir insert/update.
+  async function updateCheckin(date, field, value) {
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const existing = checkins.find((c) => c.date === date);
+    setCheckins((prev) => {
+      if (existing) return prev.map((c) => (c.date === date ? { ...c, [field]: value } : c));
+      return [...prev, { date, [field]: value, user_id: userId }];
+    });
+    const { data, error } = await supabase
+      .from("mindset_checkins")
+      .upsert({ user_id: userId || null, date, [field]: value }, { onConflict: "user_id,date" })
+      .select()
+      .single();
+    if (!error && data) {
+      setCheckins((prev) => [...prev.filter((c) => c.date !== date), data]);
+    }
+  }
+
+  const totalTasks = tasks.length;
+  const totalCompleted = tasks.filter((t) => t.completed).length;
+  const weekPct = totalTasks > 0 ? Math.round((totalCompleted / totalTasks) * 100) : 0;
+  const dailyBar = weekDays.map((d) => ({
+    day: WEEKDAYS_SHORT[weekdayIndex(d)],
+    completadas: tasks.filter((t) => t.date === d && t.completed).length,
+  }));
+
+  if (loading) return <p className="text-sm text-slate-400">Cargando tu planificador...</p>;
+
+  return (
+    <div className="space-y-4">
+      <LoadErrorBanner message={loadError} />
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Eyebrow>Semana del {formatDDMM(weekStart)} al {formatDDMM(weekEnd)}</Eyebrow>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900 dark:text-white">{weekPct}%</p>
+            <p className="mt-0.5 text-xs text-slate-400">{totalCompleted} de {totalTasks} tareas completadas</p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setWeekStart((w) => addDaysToDateString(w, -7))}
+              className="rounded-md border border-slate-200 p-1.5 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              aria-label="Semana anterior"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => setWeekStart((w) => addDaysToDateString(w, 7))}
+              className="rounded-md border border-slate-200 p-1.5 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              aria-label="Semana siguiente"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+        {totalTasks > 0 && (
+          <div className="mt-4" style={{ height: 140 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dailyBar} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Bar dataKey="completadas" fill="#3B82F6" radius={[4, 4, 0, 0]} barSize={22} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </Card>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {weekDays.map((d) => {
+          const dTasks = tasks.filter((t) => t.date === d);
+          const done = dTasks.filter((t) => t.completed).length;
+          const pct = dTasks.length > 0 ? Math.round((done / dTasks.length) * 100) : 0;
+          const checkin = checkins.find((c) => c.date === d) || {};
+          const isToday = d === localDateString();
+          return (
+            <Card key={d} className={`p-4 ${isToday ? "ring-2 ring-slate-900 dark:ring-white" : ""}`}>
+              <p className="text-sm font-semibold text-slate-800 dark:text-white">{WEEKDAYS_FULL[weekdayIndex(d)]}</p>
+              <p className="text-xs text-slate-400">{formatDDMM(d)}</p>
+              <div className="mt-3 flex justify-center">
+                <HabitProgressRing percent={pct} />
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {dTasks.map((t) => (
+                  <div key={t.id} className="flex items-center gap-2 text-sm">
+                    <button
+                      onClick={() => toggleTask(t)}
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${
+                        t.completed ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 text-transparent dark:border-slate-600"
+                      }`}
+                    >
+                      <Check size={10} />
+                    </button>
+                    <span className={`min-w-0 flex-1 truncate ${t.completed ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{t.title}</span>
+                    <button onClick={() => deleteTask(t)} className="shrink-0 text-slate-300 hover:text-red-500">
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+                {dTasks.length === 0 && <p className="text-xs text-slate-400">Sin tareas.</p>}
+              </div>
+              {newTaskDate === d ? (
+                <form
+                  onSubmit={(e) => { e.preventDefault(); addTask(d); }}
+                  className="mt-2 flex gap-1.5"
+                >
+                  <input
+                    autoFocus value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)}
+                    placeholder="Nueva tarea"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                  <button type="submit" className="shrink-0 rounded-lg bg-slate-900 px-2 text-xs font-medium text-white dark:bg-white dark:text-slate-900">OK</button>
+                </form>
+              ) : (
+                <button
+                  onClick={() => { setNewTaskDate(d); setNewTaskTitle(""); }}
+                  className="mt-2 flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                >
+                  <Plus size={12} /> Agregar tarea
+                </button>
+              )}
+              <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-3 dark:border-slate-800">
+                <p className="text-xs font-medium text-slate-400">Mindset check-in</p>
+                {[["mood", "Ánimo"], ["energy", "Energía"], ["focus", "Enfoque"], ["motivation", "Motivación"]].map(([field, label]) => (
+                  <div key={field} className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-500 dark:text-slate-400">{label}</span>
+                    <select
+                      value={checkin[field] ?? ""}
+                      onChange={(e) => updateCheckin(d, field, e.target.value ? Number(e.target.value) : null)}
+                      className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    >
+                      <option value="">--</option>
+                      <option value="1">Bajo</option>
+                      <option value="3">Medio</option>
+                      <option value="5">Alto</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+/* ---------------------------------------------------------------
    PRESUPUESTOS
 ------------------------------------------------------------------ */
 function BudgetsView({ fmt, year, month, categories }) {
@@ -5537,6 +6221,7 @@ const TABS = [
   { id: "expenses", label: "Gastos", icon: TrendingDown },
   { id: "savings", label: "Ahorros y Metas", icon: PiggyBank },
   { id: "budgets", label: "Presupuestos", icon: Coins },
+  { id: "habits", label: "Hábitos", icon: ListChecks },
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
 export default function FinanceApp() {
@@ -5554,6 +6239,12 @@ export default function FinanceApp() {
   // "Reporte" -- acá solo hace falta para el título de arriba (las flechitas
   // de mes son iguales en las dos vistas, así que no afectan esa parte).
   const [savingsVista, setSavingsVista] = useState("ahorros");
+  // "Hábitos" tiene el mismo patrón de interruptor: cuadrícula mensual de
+  // hábitos ("mensual") o planificador semanal ("planificador") -- este
+  // último tiene sus propias flechitas de semana (no de mes), por eso se
+  // necesita saber acá cuál vista está activa (ver título y flechitas más
+  // abajo).
+  const [habitsVista, setHabitsVista] = useState("mensual");
   const [monthOpen, setMonthOpen] = useState(null);
   const { code, setCode, format } = useCurrency();
   const [yearData, setYearData] = useState(null);
@@ -5694,6 +6385,7 @@ export default function FinanceApp() {
                 {tab === "calendar" && "Calendario de pagos"}
                 {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && (savingsVista === "ahorros" ? "Tus ahorros" : "Tus metas")}
+                {tab === "habits" && (habitsVista === "mensual" ? "Tus hábitos" : "Planificador semanal")}
               </h1>
               {tab === "reporte" && reporteVista === "anual" ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
@@ -5715,7 +6407,13 @@ export default function FinanceApp() {
                   </button>
                   <span>· actualizado en tiempo real</span>
                 </div>
-              ) : ["reporte", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
+              ) : tab === "habits" && habitsVista === "planificador" ? (
+                // El Planificador semanal tiene sus propias flechitas de
+                // semana (adentro de WeeklyPlannerView), independientes del
+                // mes/año elegido arriba -- acá solo se muestra un texto fijo,
+                // igual que hace Quincenas dentro de Reporte.
+                <p className="text-sm text-slate-400">Semana a semana · actualizado en tiempo real</p>
+              ) : ["reporte", "incomes", "expenses", "calendar", "savings", "budgets", "habits"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToMonth(-1)}
@@ -5763,6 +6461,14 @@ export default function FinanceApp() {
           {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
           {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} />}
           {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} categories={categories} />}
+          {tab === "habits" && (
+            <HabitsView
+              vista={habitsVista}
+              onChangeVista={setHabitsVista}
+              year={year}
+              month={month}
+            />
+          )}
           {tab === "savings" && (
             <SavingsGoalsView
               fmt={format}
