@@ -2334,6 +2334,18 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           </button>
         </div>
       </Card>
+      {/* Misma tarjeta punteada de "agregar" que Gastos, arriba del todo -- a
+          pedido del usuario (2026-07-31), para que quede en el mismo lugar
+          en ambas pestañas. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        >
+          <Plus size={20} />
+          <span className="text-sm font-medium">Agregar ingreso</span>
+        </button>
+      </div>
       {recurring.length > 0 && (
         <Card className="p-5">
           <CollapsibleSection
@@ -2384,9 +2396,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           />
         </div>
       </div>
-      {/* Misma forma de tarjetas + tarjeta punteada de "agregar" que Ahorros,
-          a pedido del usuario (2026-07-31). Reemplaza la lista con buscador
-          (ListCard) que tenía antes. */}
+      {/* Misma forma de tarjetas que Ahorros, a pedido del usuario
+          (2026-07-31). Reemplaza la lista con buscador (ListCard) que tenía
+          antes. La tarjeta punteada de "agregar" quedó arriba del todo (ver
+          más arriba), no repetida acá. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filteredIncomes.length === 0 && (
           <p className="col-span-full text-sm text-slate-400">
@@ -2410,13 +2423,6 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
             <p className="mt-4 text-xl font-semibold tabular-nums text-emerald-600">{fmt(i.amount)}</p>
           </Card>
         ))}
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
-        >
-          <Plus size={20} />
-          <span className="text-sm font-medium">Agregar ingreso</span>
-        </button>
       </div>
       {showModal && (
         <IncomeModal types={types} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
