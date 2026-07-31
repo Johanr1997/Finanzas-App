@@ -4402,12 +4402,6 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
           >
             <Tag size={15} /> Tipos de ahorro
           </button>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
-          >
-            <Plus size={15} /> Agregar ahorro
-          </button>
         </div>
       </Card>
       <Card className="p-5">
@@ -4427,43 +4421,60 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
           ))}
         </div>
       </Card>
-      <ListCard
-        header={
-          <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-            <select
-              value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-            >
-              <option>Todos</option>
-              {allTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </div>
-        }
-        isEmpty={filteredSavings.length === 0}
-        emptyMessage={monthSavings.length === 0 ? `Aún no has registrado ahorros en ${MONTHS_FULL[month]} ${year}.` : "No hay ahorros de este tipo."}
-      >
-        {filteredSavings.map((s) => {
-          return (
-            <div key={s.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{s.type}</p>
-                <p className="flex min-w-0 items-center gap-2 text-xs text-slate-400">
-                  <span className="shrink-0">{s.date}</span>
-                  {s.goals?.name && (
-                    <span className="inline-flex min-w-0 max-w-[45%] items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium" style={{ backgroundColor: `${s.goals.color || "#3B82F6"}1a`, color: s.goals.color || "#3B82F6" }}>
-                      <Target size={10} className="shrink-0" /> <span className="truncate">{s.goals.name}</span>
-                    </span>
-                  )}
-                </p>
+      <div className="flex items-center justify-between gap-2">
+        <Eyebrow>Ahorros de {MONTHS_FULL[month]} {year}</Eyebrow>
+        <select
+          value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+          className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+        >
+          <option>Todos</option>
+          {allTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+      </div>
+      {/* Misma forma de tarjetas + tarjeta punteada de "agregar" que Metas
+          (GoalsView), a pedido del usuario (2026-07-31): quería que agregar
+          un ahorro se viera igual que agregar una meta, y aclaró que quería
+          toda la vista así, no solo el botón. Reemplaza la lista con
+          buscador/filtro (ListCard) que tenía antes. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {filteredSavings.length === 0 && (
+          <p className="col-span-full text-sm text-slate-400">
+            {monthSavings.length === 0 ? `Aún no has registrado ahorros en ${MONTHS_FULL[month]} ${year}.` : "No hay ahorros de este tipo."}
+          </p>
+        )}
+        {filteredSavings.map((s) => (
+          <Card key={s.id} className="p-5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-500/10">
+                  <PiggyBank size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-800 dark:text-white">{s.type}</p>
+                  <p className="truncate text-xs text-slate-400">{s.date}</p>
+                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="tabular-nums font-medium text-blue-500">{fmt(s.amount)}</span>
-                <RowActions onEdit={() => setEditingSaving(s)} onDelete={() => setDeletingSaving(s)} />
-              </div>
+              <RowActions onEdit={() => setEditingSaving(s)} onDelete={() => setDeletingSaving(s)} />
             </div>
-          );
-        })}
-      </ListCard>
+            <p className="mt-4 text-xl font-semibold tabular-nums text-blue-500">{fmt(s.amount)}</p>
+            {s.goals?.name && (
+              <span
+                className="mt-2 inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium"
+                style={{ backgroundColor: `${s.goals.color || "#3B82F6"}1a`, color: s.goals.color || "#3B82F6" }}
+              >
+                <Target size={10} className="shrink-0" /> <span className="truncate">{s.goals.name}</span>
+              </span>
+            )}
+          </Card>
+        ))}
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        >
+          <Plus size={20} />
+          <span className="text-sm font-medium">Agregar ahorro</span>
+        </button>
+      </div>
       {showModal && (
         <SavingModal types={types} goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
       )}
