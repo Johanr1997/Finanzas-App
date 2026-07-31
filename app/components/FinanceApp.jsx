@@ -472,7 +472,7 @@ const STATUS_LABEL = { verde: "Saludable", amarillo: "Ajustado", rojo: "En défi
 // cambio de estilo futuro sea de una sola línea en vez de buscar y
 // reemplazar por todo el archivo. El margen superior (mt-1, mt-2...) se
 // agrega en cada lugar según haga falta, ya que varía según el contexto.
-const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
+const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition-shadow focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:ring-white/10";
 /* ---------------------------------------------------------------
    PRIMITIVES
 ------------------------------------------------------------------ */
@@ -485,6 +485,92 @@ function Card({ children, className = "" }) {
 }
 function Eyebrow({ children }) {
   return <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">{children}</p>;
+}
+// Estado vacío reutilizable (2026-07-31, pulido de UI a pedido del
+// usuario): reemplaza los mensajes de una sola línea en gris ("Aún no hay
+// gastos registrados este año.") por un bloque con ícono + mensaje breve y
+// algo más invitador, para que un gráfico o lista sin datos todavía no se
+// sienta como un error o un espacio roto. `compact` se usa dentro de
+// listas/secciones ya angostas (ej. el detalle de gastos), donde una caja
+// grande se sentiría pesada.
+function EmptyState({ icon: Icon, title, message, compact = false, className = "" }) {
+  return (
+    <div
+      className={`flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 text-center dark:border-slate-700 ${compact ? "gap-1 px-4 py-6" : "gap-2 px-6 py-10"} ${className}`}
+    >
+      {Icon && (
+        <div className={`flex items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 ${compact ? "h-8 w-8" : "h-12 w-12"}`}>
+          <Icon size={compact ? 15 : 20} />
+        </div>
+      )}
+      <p className={`font-medium text-slate-600 dark:text-slate-300 ${compact ? "text-xs" : "text-sm"}`}>{title}</p>
+      {message && <p className={`max-w-xs text-slate-400 ${compact ? "text-[11px]" : "text-xs"}`}>{message}</p>}
+    </div>
+  );
+}
+// Esqueletos de carga (2026-07-31, a pedido del usuario): reemplazan los
+// textos simples de "Cargando..." por bloques animados (`animate-pulse`,
+// utilidad nativa de Tailwind) con la misma silueta aproximada del
+// contenido real, para que la transición entre pestañas se sienta menos
+// brusca. No intentan ser pixel-perfect al contenido final -- solo dar una
+// sensación de "esto ya casi está" en vez de una pantalla en blanco con
+// una palabra.
+function Skeleton({ className = "" }) {
+  return <div className={`animate-pulse rounded-lg bg-slate-200/70 dark:bg-slate-800/70 ${className}`} />;
+}
+function StatCardSkeleton() {
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between">
+        <div className="space-y-2">
+          <Skeleton className="h-2.5 w-20" />
+          <Skeleton className="h-5 w-24" />
+        </div>
+        <Skeleton className="h-10 w-10 rounded-xl" />
+      </div>
+    </Card>
+  );
+}
+function ChartSkeleton({ height = "h-64" }) {
+  return (
+    <Card className="p-5">
+      <Skeleton className="h-2.5 w-32" />
+      <Skeleton className={`mt-4 w-full ${height}`} />
+    </Card>
+  );
+}
+function TileSkeleton() {
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="w-full space-y-2">
+          <Skeleton className="h-2.5 w-16" />
+          <Skeleton className="h-3.5 w-28" />
+        </div>
+        <Skeleton className="h-4 w-4 shrink-0 rounded" />
+      </div>
+      <Skeleton className="mt-4 h-2.5 w-20" />
+      <Skeleton className="mt-2 h-5 w-24" />
+    </Card>
+  );
+}
+function CardGridSkeleton({ count = 6 }) {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {Array.from({ length: count }, (_, i) => <TileSkeleton key={i} />)}
+    </div>
+  );
+}
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 5 }, (_, i) => <StatCardSkeleton key={i} />)}
+      </div>
+      <ChartSkeleton height="h-56" />
+      <ChartSkeleton height="h-64" />
+    </div>
+  );
 }
 // Aviso visible cuando algo falló al cargar datos de Supabase (antes solo se
 // mandaba a la consola con console.error y la pantalla quedaba igual que si
@@ -635,7 +721,7 @@ function ModalShell({ onClose, title, maxWidth = "max-w-md", zIndex = "z-50", ov
     // de llegar a ella. Antes esto no tenía overflow, así que en pantallas
     // bajas (celular) o con listas largas, ese botón quedaba inalcanzable.
     <div className={`fixed inset-0 ${zIndex} flex items-center justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm`} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className={`my-8 w-full ${maxWidth} rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900`}>
+      <div onClick={(e) => e.stopPropagation()} className={`my-8 w-full ${maxWidth} rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40`}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
@@ -730,7 +816,7 @@ function ConfirmDeleteModal({ title, message, onCancel, onConfirm }) {
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onCancel}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-500 dark:bg-red-500/10">
             <Trash2 size={18} />
@@ -813,7 +899,7 @@ function DeleteAllDataModal({ onClose, onDeleted }) {
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={deleting ? undefined : onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-500 dark:bg-red-500/10">
             <AlertTriangle size={18} />
@@ -1156,7 +1242,13 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <p className="text-sm text-slate-400">Aún no hay gastos registrados este año.</p>
+              <EmptyState
+                icon={TrendingDown}
+                title="Aún no hay gastos este año"
+                message="En cuanto registres el primero, vas a ver aquí cómo se reparte entre categorías."
+                compact
+                className="h-full"
+              />
             )}
           </div>
         </Card>
@@ -1322,7 +1414,7 @@ function CalendarDayModal({ day, items, fmt, monthLabel, onClose }) {
   const total = items.reduce((a, it) => a + (it.kind === "ingreso" ? it.amount : -it.amount), 0);
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{day} de {monthLabel}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
@@ -1492,7 +1584,7 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-4xl animate-[fadeIn_.25s_ease] rounded-2xl bg-white shadow-2xl dark:bg-slate-900"
+        className="w-full max-w-4xl animate-[fadeIn_.25s_ease] rounded-2xl border border-slate-100 bg-white shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <div className="flex items-center gap-2">
@@ -2133,7 +2225,7 @@ function GoalsView({ fmt, yearData, month }) {
     setDeletingGoal(null);
   }
   if (loading) {
-    return <p className="text-sm text-slate-400">Cargando metas...</p>;
+    return <CardGridSkeleton count={3} />;
   }
   return (
     <div className="space-y-4">
@@ -2239,7 +2331,7 @@ function GoalContributionsListModal({ goal, contributions, fmt, selectedMonthBal
   };
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Aportes · {goal.name}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
@@ -2346,7 +2438,7 @@ function GoalModal({ goal, onClose, onSaved }) {
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar meta" : "Nueva meta"}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
@@ -2492,7 +2584,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     `${i.type || ""} ${i.description || ""}`.toLowerCase().includes(search.toLowerCase())
   );
   if (loading) {
-    return <p className="text-sm text-slate-400">Cargando ingresos...</p>;
+    return <CardGridSkeleton count={6} />;
   }
   return (
     <div className="space-y-4">
@@ -2595,9 +2687,16 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           más arriba), no repetida acá. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filteredIncomes.length === 0 && (
-          <p className="col-span-full text-sm text-slate-400">
-            {monthIncomes.length === 0 ? `Aún no has registrado ingresos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
-          </p>
+          monthIncomes.length === 0 ? (
+            <EmptyState
+              icon={TrendingUp}
+              title={`Todavía no registras ingresos en ${MONTHS_FULL[month]} ${year}`}
+              message="Usa el cuadro de arriba para agregar el primero -- cada ingreso que anotes alimenta tu Reporte al instante."
+              className="col-span-full"
+            />
+          ) : (
+            <p className="col-span-full text-sm text-slate-400">Sin resultados para tu búsqueda.</p>
+          )
         )}
         {filteredIncomes.map((i) => (
           <Card key={i.id} className="p-5">
@@ -3328,7 +3427,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
     );
   }
   if (loading) {
-    return <p className="text-sm text-slate-400">Cargando gastos...</p>;
+    return <CardGridSkeleton count={6} />;
   }
   return (
     <div className="space-y-4">
@@ -3540,9 +3639,16 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
               </div>
             ))}
             {filteredExpenses.length === 0 && (
-              <p className="px-5 py-8 text-center text-sm text-slate-400">
-                {monthExpenses.length === 0 ? `Aún no has registrado gastos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
-              </p>
+              monthExpenses.length === 0 ? (
+                <EmptyState
+                  icon={TrendingDown}
+                  title={`Sin gastos registrados en ${MONTHS_FULL[month]} ${year}`}
+                  message="Anota tu primer gasto para empezar a ver el detalle aquí."
+                  compact
+                />
+              ) : (
+                <p className="px-5 py-8 text-center text-sm text-slate-400">Sin resultados para tu búsqueda.</p>
+              )
             )}
           </div>
         </CollapsibleSection>
@@ -4500,7 +4606,7 @@ function PlanPaymentsModal({ plan, overrides, fmt, onClose, onChanged }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
             Cuotas · {plan.description || plan.categories?.name || "Plan de pago"}
@@ -4679,7 +4785,7 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
     .filter((t) => t.items.length > 0)
     .sort((a, b) => b.total - a.total);
   if (loading) {
-    return <p className="text-sm text-slate-400">Cargando ahorros...</p>;
+    return <CardGridSkeleton count={6} />;
   }
   return (
     <div className="space-y-4">
@@ -4780,9 +4886,16 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
           todo (ver más arriba), no repetida acá. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filteredSavings.length === 0 && (
-          <p className="col-span-full text-sm text-slate-400">
-            {monthSavings.length === 0 ? `Aún no has registrado ahorros en ${MONTHS_FULL[month]} ${year}.` : "No hay ahorros de este tipo."}
-          </p>
+          monthSavings.length === 0 ? (
+            <EmptyState
+              icon={PiggyBank}
+              title={`Aún no tienes ahorros en ${MONTHS_FULL[month]} ${year}`}
+              message="Cada colón que apartes cuenta -- agrega tu primer ahorro con el cuadro de arriba."
+              className="col-span-full"
+            />
+          ) : (
+            <p className="col-span-full text-sm text-slate-400">No hay ahorros de este tipo.</p>
+          )
         )}
         {filteredSavings.map((s) => (
           <Card key={s.id} className="p-5">
@@ -4855,7 +4968,7 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
   const sortedItems = [...type.items].sort((a, b) => b.date.localeCompare(a.date));
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Reporte · {type.label}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
@@ -5221,7 +5334,7 @@ function BudgetsView({ fmt, year, month, categories }) {
   }
 
   if (loading) {
-    return <p className="text-sm text-slate-400">Cargando presupuestos...</p>;
+    return <CardGridSkeleton count={6} />;
   }
 
   // Presupuestos por mes: cada categoría puede tener un monto "por defecto"
@@ -5338,7 +5451,12 @@ function BudgetsView({ fmt, year, month, categories }) {
           );
         })}
         {rows.length === 0 && (
-          <p className="text-sm text-slate-400">Primero crea categorías de gasto para poder definirles un presupuesto.</p>
+          <EmptyState
+            icon={Coins}
+            title="Primero crea categorías de gasto"
+            message="En cuanto tengas categorías en Gastos, vas a poder definirles un presupuesto aquí."
+            className="col-span-full"
+          />
         )}
       </div>
       {editingBudget && (
@@ -5385,7 +5503,7 @@ function CategoryExpensesListModal({ category, expenses, fmt, onClose }) {
   const sorted = [...expenses].sort((a, b) => (b.purchase_date || b.date).localeCompare(a.purchase_date || a.date));
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 backdrop-blur-sm sm:p-8" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Gastos del mes · {category.name}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
@@ -5476,7 +5594,7 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
             {isEditing ? "Editar presupuesto" : "Definir presupuesto"} · {category.name}
@@ -5742,7 +5860,12 @@ export default function FinanceApp() {
           </div>
           <LoadErrorBanner message={yearDataError ? "No se pudieron cargar todos tus datos de este año. Revisa tu conexión e intenta recargar la página." : ""} />
           {dataLoading || !yearData ? (
-            <p className="text-sm text-slate-400">Cargando tus datos...</p>
+            // Esta carga inicial (yearData) es compartida por todas las
+            // pestañas, así que el esqueleto se elige según cuál se está
+            // viendo -- Reporte/Calendario tienen forma de tarjetas + un
+            // par de gráficos grandes; el resto (Ingresos/Gastos/Ahorros/
+            // Presupuestos) se ve más como una cuadrícula de tarjetas.
+            tab === "reporte" || tab === "calendar" ? <DashboardSkeleton /> : <CardGridSkeleton count={6} />
           ) : (
             <>
               {tab === "reporte" && (
