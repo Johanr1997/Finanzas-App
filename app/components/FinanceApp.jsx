@@ -3053,7 +3053,28 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
     refetchExpenses();
   }
   const monthExpenses = expenses.filter((e) => dateStringMonth(e.date) - 1 === month);
-  const total = monthExpenses.reduce((a, e) => a + Number(e.amount), 0);
+  // Los gastos fijos y las cuotas de planes de pago no se guardan como fila
+  // real en expenses -- se sintetizan aquí, solo para el mes elegido, para
+  // que el total de arriba sí refleje el gasto real de ese mes (igual que ya
+  // hace Reporte, vía fetchYearData), en vez de quedarse corto cuando parte
+  // del gasto del mes viene de un gasto fijo o una cuota de plan y no de un
+  // gasto suelto registrado a mano. Mismo mecanismo que ya se corrigió antes
+  // en Ingresos (monthRecurringIncomeAmount).
+  const monthRecurringExpenseAmount = recurring.reduce((sum, r) => {
+    const occurrencesThisMonth = synthesizeRecurringEntries(r, year).filter(
+      ({ date }) => dateStringMonth(date) - 1 === month
+    ).length;
+    return sum + occurrencesThisMonth * Number(r.amount);
+  }, 0);
+  const monthPlanAmount = plans.reduce((sum, p) => {
+    const totalMonths = Number(p.total_months) || 0;
+    const anchoredPlan = { ...p, start_date: planAnchorDate(p) };
+    const occurrencesThisMonth = synthesizeRecurringEntries(anchoredPlan, year, { totalMonths }).filter(
+      ({ date }) => dateStringMonth(date) - 1 === month
+    ).length;
+    return sum + occurrencesThisMonth * Number(p.monthly_amount);
+  }, 0);
+  const total = monthExpenses.reduce((a, e) => a + Number(e.amount), 0) + monthRecurringExpenseAmount + monthPlanAmount;
   const categoriasDisponibles = [...new Set(monthExpenses.map((e) => e.categories?.name).filter(Boolean))];
   const filteredExpenses = monthExpenses.filter((e) =>
     (catFilter === "Todas" || e.categories?.name === catFilter) &&
@@ -3131,6 +3152,9 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         <div>
           <Eyebrow>Gastos en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
+          {(monthRecurringExpenseAmount > 0 || monthPlanAmount > 0) && (
+            <p className="mt-0.5 text-xs text-slate-400">Incluye gastos fijos y planes de pago de este mes</p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
