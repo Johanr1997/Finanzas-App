@@ -816,50 +816,6 @@ function TrendBadge({ current, previous, invert = false }) {
     </span>
   );
 }
-// Tarjeta compartida entre Ingresos y Gastos (2026-07-31): compara, para el
-// mes elegido, cuánto entró vs. cuánto salió y cuánto sobra (o faltó). Se
-// pidió explícitamente NO fusionar esas dos pestañas en una sola (para no
-// amontonar sus flujos de trabajo, que ya son bastante completos cada uno
-// por separado) -- en cambio, esta tarjeta se agrega arriba en ambas, y
-// reutiliza `yearData` (que la app ya carga una sola vez, arriba de todo)
-// en vez de pedir datos nuevos a Supabase. Mientras yearData todavía no
-// llega (primera carga de la página), no se muestra nada -- cada pestaña ya
-// tiene su propio esqueleto de carga para el resto del contenido.
-function IncomeExpenseCompareCard({ fmt, year, month, yearData }) {
-  if (!yearData) return null;
-  const monthData = yearData[month];
-  const ingreso = monthData.ingresoTotal;
-  const gasto = monthData.gastoTotal;
-  const sobra = ingreso - gasto;
-  const compareData = [
-    { name: "Ingresos", value: ingreso, color: "#22C55E" },
-    { name: "Gastos", value: gasto, color: "#EF4444" },
-    { name: "Te sobra", value: sobra, color: sobra >= 0 ? "#22C55E" : "#EF4444" },
-  ];
-  return (
-    <Card className="p-5">
-      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-        <Eyebrow>Ingresos vs gastos de {MONTHS_FULL[month]} {year}</Eyebrow>
-        <span className={`text-xs font-medium ${sobra >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"}`}>
-          {sobra >= 0 ? `Te sobran ${fmt(sobra)}` : `Te faltaron ${fmt(Math.abs(sobra))}`} este mes
-        </span>
-      </div>
-      <div className="mt-3 h-40">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={compareData} layout="vertical" margin={{ top: 4, right: 24, bottom: 4, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
-            <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-            <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} width={70} />
-            <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-            <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={22}>
-              {compareData.map((d, i) => <Cell key={i} fill={d.color} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </Card>
-  );
-}
 function ProgressRing({ percent, color, size = 56 }) {
   const r = (size - 8) / 2;
   const c = 2 * Math.PI * r;
@@ -2668,7 +2624,7 @@ function GoalModal({ goal, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    INGRESOS
 ------------------------------------------------------------------ */
-function IncomesView({ fmt, onDataChanged, year, month, yearData }) {
+function IncomesView({ fmt, onDataChanged, year, month }) {
   const [incomes, setIncomes] = useState([]);
   const [recurring, setRecurring] = useState([]);
   // Tipos de ingreso (ej. "Salario", "Freelance"): no dependen del año/mes
@@ -2778,7 +2734,6 @@ function IncomesView({ fmt, onDataChanged, year, month, yearData }) {
   return (
     <div className="space-y-4">
       <LoadErrorBanner message={loadError} />
-      <IncomeExpenseCompareCard fmt={fmt} year={year} month={month} yearData={yearData} />
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Ingresos en {MONTHS_FULL[month]} {year}</Eyebrow>
@@ -3392,7 +3347,7 @@ function IncomeTypesReport({ types, incomes, recurring, year, month, fmt }) {
 /* ---------------------------------------------------------------
    GASTOS
 ------------------------------------------------------------------ */
-function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refetchCards, yearData }) {
+function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refetchCards }) {
   const [expenses, setExpenses] = useState([]);
   const [plans, setPlans] = useState([]);
   const [paymentOverrides, setPaymentOverrides] = useState([]);
@@ -3645,7 +3600,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   return (
     <div className="space-y-4">
       <LoadErrorBanner message={loadError} />
-      <IncomeExpenseCompareCard fmt={fmt} year={year} month={month} yearData={yearData} />
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Gastos en {MONTHS_FULL[month]} {year}</Eyebrow>
@@ -6108,8 +6062,8 @@ export default function FinanceApp() {
               {tab === "calendar" && <CalendarView fmt={format} year={year} month={month} yearData={yearData} />}
             </>
           )}
-          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} yearData={yearData} />}
-          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} yearData={yearData} />}
+          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
+          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} />}
           {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} categories={categories} />}
           {tab === "savings" && (
             <SavingsGoalsView
