@@ -521,6 +521,104 @@ function CollapsibleSection({ open, onToggle, header, buttonClassName, children 
     </>
   );
 }
+// Selector de un tipo/artículo reutilizable (tipo de ingreso, tipo de
+// ahorro, artículo de gasto) que además deja crear uno nuevo sin salir del
+// formulario -- a pedido del usuario (2026-07-31): antes, si el tipo que
+// necesitaba no existía todavía, tenía que cerrar "Agregar ingreso/ahorro",
+// ir al botón de "Tipos de X"/"Artículos", crearlo ahí, y volver a abrir
+// "Agregar" desde cero. Elegir "+ Crear nuevo..." en el selector muestra un
+// campo de texto + botón "Crear" en el momento; al crearlo, se selecciona
+// automáticamente y queda disponible para la próxima vez sin tener que
+// volver a este selector (se avisa al padre vía onCreated, que es el mismo
+// refetch que ya usa el botón "Tipos de X"/"Artículos" de cada pestaña).
+function TypeSelectWithCreate({ label, value, onChange, options, table, extraFields, onCreated, placeholder, emptyHint, namePlaceholder }) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  // Por si el padre todavía no terminó de refrescar su lista cuando este
+  // selector se vuelve a mostrar (ej. justo después de crear), se guarda acá
+  // también, para que la opción recién creada nunca desaparezca del select.
+  const [justCreated, setJustCreated] = useState([]);
+  const allOptions = [...options, ...justCreated.filter((jc) => !options.some((o) => o.id === jc.id))];
+  async function handleCreate() {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setSaving(true);
+    setErrorMsg("");
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { data, error } = await supabase
+      .from(table)
+      .insert({ user_id: userId || null, name: trimmed, ...(extraFields || {}) })
+      .select()
+      .single();
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al crear: " + error.message);
+      return;
+    }
+    setJustCreated((prev) => [...prev, data]);
+    if (onCreated) onCreated(data);
+    onChange(data.id);
+    setCreating(false);
+    setNewName("");
+  }
+  if (creating) {
+    return (
+      <div>
+        {label && <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</label>}
+        <div className="mt-1 flex gap-2">
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreate(); } }}
+            placeholder={namePlaceholder || "Nombre nuevo"}
+            className={INPUT_CLASS}
+          />
+          <button
+            type="button"
+            onClick={handleCreate}
+            disabled={saving || !newName.trim()}
+            className="shrink-0 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "..." : "Crear"}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setCreating(false); setNewName(""); setErrorMsg(""); }}
+            disabled={saving}
+            className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Cancelar
+          </button>
+        </div>
+        {errorMsg && <p className="mt-1 text-xs text-red-500">{errorMsg}</p>}
+      </div>
+    );
+  }
+  return (
+    <div>
+      {label && <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</label>}
+      <select
+        value={value}
+        onChange={(e) => {
+          if (e.target.value === "__create__") { setCreating(true); return; }
+          onChange(e.target.value);
+        }}
+        className={`mt-1 ${INPUT_CLASS}`}
+      >
+        <option value="">{placeholder || "Selecciona"}</option>
+        {allOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+        <option value="__create__">+ Crear nuevo...</option>
+      </select>
+      {allOptions.length === 0 && emptyHint && (
+        <p className="mt-1 text-xs text-slate-400">{emptyHint}</p>
+      )}
+    </div>
+  );
+}
 // Envoltorio compartido para modales: fondo oscuro + tarjeta blanca +
 // encabezado con título y botón de cerrar (X) — el mismo bloque que se
 // repetía a mano en más de 10 modales distintos de la app. Por ahora solo se
@@ -2520,10 +2618,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         ))}
       </div>
       {showModal && (
-        <IncomeModal types={types} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
+        <IncomeModal types={types} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
       )}
       {editingIncome && (
-        <IncomeModal types={types} income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} />
+        <IncomeModal types={types} income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
       )}
       {showTypesManager && (
         <IncomeTypesManagerModal types={types} onClose={() => setShowTypesManager(false)} onChanged={refetchTypes} />
@@ -2537,10 +2635,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         />
       )}
       {showRecurringModal && (
-        <RecurringIncomeModal types={types} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} />
+        <RecurringIncomeModal types={types} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} onTypesChanged={refetchTypes} />
       )}
       {editingRecurring && (
-        <RecurringIncomeModal types={types} item={editingRecurring} onClose={() => setEditingRecurring(null)} onSaved={refetchRecurring} />
+        <RecurringIncomeModal types={types} item={editingRecurring} onClose={() => setEditingRecurring(null)} onSaved={refetchRecurring} onTypesChanged={refetchTypes} />
       )}
       {deletingRecurring && (
         <ConfirmDeleteModal
@@ -2553,7 +2651,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     </div>
   );
 }
-function IncomeModal({ income, types, onClose, onSaved, defaultDate }) {
+function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultDate }) {
   const isEditing = Boolean(income);
   const today = localDateString();
   const [typeId, setTypeId] = useState(income?.type_id || "");
@@ -2562,17 +2660,18 @@ function IncomeModal({ income, types, onClose, onSaved, defaultDate }) {
   const [date, setDate] = useState(income?.date || defaultDate || today);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  // Ver el mismo comentario en SavingModal: guarda acá los tipos creados en
+  // el momento, para no depender de que el `types` del padre ya se haya
+  // refrescado antes de que la persona guarde el ingreso.
+  const [extraTypes, setExtraTypes] = useState([]);
+  const allTypes = [...types, ...extraTypes.filter((t) => !types.some((x) => x.id === t.id))];
   async function handleSubmit(e) {
     e.preventDefault();
     if (!typeId || !amount || !date) {
-      setErrorMsg(
-        types.length === 0
-          ? "Primero crea un tipo de ingreso con el botón \"Tipos de ingreso\"."
-          : "Completa el tipo, el monto y la fecha."
-      );
+      setErrorMsg("Completa el tipo, el monto y la fecha (puedes crear un tipo nuevo desde el mismo selector).");
       return;
     }
-    const selectedType = types.find((t) => t.id === typeId);
+    const selectedType = allTypes.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
     if (isEditing) {
@@ -2617,21 +2716,17 @@ function IncomeModal({ income, types, onClose, onSaved, defaultDate }) {
   return (
     <ModalShell onClose={onClose} title={isEditing ? "Editar ingreso" : "Nuevo ingreso"}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
-          <select
-            value={typeId} onChange={(e) => setTypeId(e.target.value)}
-            className={`mt-1 ${INPUT_CLASS}`}
-          >
-            <option value="">Selecciona un tipo</option>
-            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          {types.length === 0 && (
-            <p className="mt-1 text-xs text-slate-400">
-              Aún no tienes tipos de ingreso. Créalos con el botón "Tipos de ingreso".
-            </p>
-          )}
-        </div>
+        <TypeSelectWithCreate
+          label="Tipo de ingreso"
+          value={typeId}
+          onChange={setTypeId}
+          options={allTypes}
+          table="income_types"
+          onCreated={(t) => { setExtraTypes((prev) => [...prev, t]); if (onTypesChanged) onTypesChanged(); }}
+          placeholder="Selecciona un tipo"
+          namePlaceholder="Ej. Salario"
+          emptyHint="Aún no tienes tipos de ingreso."
+        />
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
           <input
@@ -2668,7 +2763,7 @@ function IncomeModal({ income, types, onClose, onSaved, defaultDate }) {
     </ModalShell>
   );
 }
-function RecurringIncomeModal({ item, types, onClose, onSaved }) {
+function RecurringIncomeModal({ item, types, onClose, onSaved, onTypesChanged }) {
   const isEditing = Boolean(item);
   const today = localDateString();
   const [typeId, setTypeId] = useState(item?.type_id || "");
@@ -2679,18 +2774,17 @@ function RecurringIncomeModal({ item, types, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const isQuincenal = frequency === "quincenal";
+  // Ver el mismo comentario en SavingModal/IncomeModal.
+  const [extraTypes, setExtraTypes] = useState([]);
+  const allTypes = [...types, ...extraTypes.filter((t) => !types.some((x) => x.id === t.id))];
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!typeId || !amount || !startDate) {
-      setErrorMsg(
-        types.length === 0
-          ? "Primero crea un tipo de ingreso con el botón \"Tipos de ingreso\"."
-          : "Completa el tipo, el monto y la fecha de inicio."
-      );
+      setErrorMsg("Completa el tipo, el monto y la fecha de inicio (puedes crear un tipo nuevo desde el mismo selector).");
       return;
     }
-    const selectedType = types.find((t) => t.id === typeId);
+    const selectedType = allTypes.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
     const payload = { type: selectedType?.name || "", type_id: typeId, description, amount: Number(amount), start_date: startDate, frequency };
@@ -2722,21 +2816,17 @@ function RecurringIncomeModal({ item, types, onClose, onSaved }) {
   return (
     <ModalShell onClose={onClose} title={isEditing ? "Editar ingreso fijo" : "Nuevo ingreso fijo"}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
-          <select
-            value={typeId} onChange={(e) => setTypeId(e.target.value)}
-            className={`mt-1 ${INPUT_CLASS}`}
-          >
-            <option value="">Selecciona un tipo</option>
-            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          {types.length === 0 && (
-            <p className="mt-1 text-xs text-slate-400">
-              Aún no tienes tipos de ingreso. Créalos con el botón "Tipos de ingreso".
-            </p>
-          )}
-        </div>
+        <TypeSelectWithCreate
+          label="Tipo de ingreso"
+          value={typeId}
+          onChange={setTypeId}
+          options={allTypes}
+          table="income_types"
+          onCreated={(t) => { setExtraTypes((prev) => [...prev, t]); if (onTypesChanged) onTypesChanged(); }}
+          placeholder="Selecciona un tipo"
+          namePlaceholder="Ej. Salario"
+          emptyHint="Aún no tienes tipos de ingreso."
+        />
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
           <input
@@ -3458,7 +3548,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         </CollapsibleSection>
       </Card>
       {showModal && (
-        <ExpenseModal categories={categories} cards={cards} items={items} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} />
+        <ExpenseModal categories={categories} cards={cards} items={items} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} onItemsChanged={refetchItems} />
       )}
       {editingExpense && (
         <ExpenseModal
@@ -3468,6 +3558,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           expense={editingExpense}
           onClose={() => setEditingExpense(null)}
           onSaved={refetchExpenses}
+          onItemsChanged={refetchItems}
         />
       )}
       {deletingExpense && (
@@ -3547,7 +3638,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
 }
 // Valor sentinela del selector de "Artículo" que significa "quiero escribir
 // uno nuevo" (mismo patrón que "Otro (escribir nombre)" en tipos de ahorro).
-function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, defaultDate }) {
+function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, onItemsChanged, defaultDate }) {
   const cardsList = cards || [];
   const itemsList = items || [];
   const isEditing = Boolean(expense);
@@ -3644,24 +3735,18 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, def
             ))}
           </select>
         </div>
-        <div>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Artículo (opcional)</label>
-          <select
-            value={itemId}
-            onChange={(e) => setItemId(e.target.value)}
-            className={`mt-1 ${INPUT_CLASS}`}
-          >
-            <option value="">Ninguno</option>
-            {itemsForCategory.map((it) => (
-              <option key={it.id} value={it.id}>{it.name}</option>
-            ))}
-          </select>
-          {itemsForCategory.length === 0 && (
-            <p className="mt-1.5 text-xs text-slate-400">
-              Esta categoría todavía no tiene artículos. Créalos desde "Artículos", dentro de "Más opciones".
-            </p>
-          )}
-        </div>
+        <TypeSelectWithCreate
+          key={categoryId}
+          label="Artículo (opcional)"
+          value={itemId}
+          onChange={setItemId}
+          options={itemsForCategory}
+          table="expense_items"
+          extraFields={{ category_id: categoryId }}
+          onCreated={onItemsChanged}
+          placeholder="Ninguno"
+          namePlaceholder="Ej. Arroz"
+        />
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
           <input
@@ -4689,10 +4774,10 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
         ))}
       </div>
       {showModal && (
-        <SavingModal types={types} goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
+        <SavingModal types={types} goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} onTypesChanged={refetchTypes} />
       )}
       {editingSaving && (
-        <SavingModal types={types} goals={goals} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} />
+        <SavingModal types={types} goals={goals} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} onTypesChanged={refetchTypes} />
       )}
       {showTypesManager && (
         <SavingsTypesManagerModal types={types} onClose={() => setShowTypesManager(false)} onChanged={refetchTypes} />
@@ -4778,7 +4863,7 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
     </div>
   );
 }
-function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, defaultDate }) {
+function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, onTypesChanged, defaultDate }) {
   const isEditing = Boolean(savingRecord);
   const today = localDateString();
   const [typeId, setTypeId] = useState(savingRecord?.type_id || "");
@@ -4787,17 +4872,20 @@ function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, def
   const [date, setDate] = useState(savingRecord?.date || defaultDate || today);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  // Tipos creados en el momento (con "+ Crear nuevo..." del selector) que
+  // todavía no llegaron de vuelta en el `types` del padre (ese refetch es
+  // async) -- se guardan acá también para que, si la persona guarda el
+  // ahorro de inmediato, el nombre del tipo nuevo sí se encuentre y no se
+  // guarde un "type" vacío por accidente.
+  const [extraTypes, setExtraTypes] = useState([]);
+  const allTypes = [...types, ...extraTypes.filter((t) => !types.some((x) => x.id === t.id))];
   async function handleSubmit(e) {
     e.preventDefault();
     if (!typeId || !amount || !date) {
-      setErrorMsg(
-        types.length === 0
-          ? "Primero crea un tipo de ahorro con el botón \"Tipos de ahorro\"."
-          : "Completa el tipo, el monto y la fecha."
-      );
+      setErrorMsg("Completa el tipo, el monto y la fecha (puedes crear un tipo nuevo desde el mismo selector).");
       return;
     }
-    const selectedType = types.find((t) => t.id === typeId);
+    const selectedType = allTypes.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
     const newGoalId = goalId || null;
@@ -4856,21 +4944,17 @@ function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, def
   return (
     <ModalShell onClose={onClose} title={isEditing ? "Editar ahorro" : "Nuevo ahorro"}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ahorro</label>
-          <select
-            value={typeId} onChange={(e) => setTypeId(e.target.value)}
-            className={`mt-1 ${INPUT_CLASS}`}
-          >
-            <option value="">Selecciona un tipo</option>
-            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          {types.length === 0 && (
-            <p className="mt-1 text-xs text-slate-400">
-              Aún no tienes tipos de ahorro. Créalos con el botón "Tipos de ahorro".
-            </p>
-          )}
-        </div>
+        <TypeSelectWithCreate
+          label="Tipo de ahorro"
+          value={typeId}
+          onChange={setTypeId}
+          options={allTypes}
+          table="savings_types"
+          onCreated={(t) => { setExtraTypes((prev) => [...prev, t]); if (onTypesChanged) onTypesChanged(); }}
+          placeholder="Selecciona un tipo"
+          namePlaceholder="Ej. Fondo de emergencia"
+          emptyHint="Aún no tienes tipos de ahorro."
+        />
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una meta (opcional)</label>
           <select
