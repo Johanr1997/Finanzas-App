@@ -2332,12 +2332,6 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           >
             <Tag size={15} /> Tipos de ingreso
           </button>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
-          >
-            <Plus size={15} /> Agregar ingreso
-          </button>
         </div>
       </Card>
       {recurring.length > 0 && (
@@ -2380,34 +2374,50 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           <IncomeTypesReport types={types} incomes={incomes} recurring={recurring} year={year} month={month} fmt={fmt} />
         </Card>
       )}
-      <ListCard
-        header={
-          <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-            <div className="relative max-w-xs">
-              <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
-              <input
-                value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por tipo o descripción..."
-                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
-            </div>
-          </div>
-        }
-        isEmpty={filteredIncomes.length === 0}
-        emptyMessage={monthIncomes.length === 0 ? `Aún no has registrado ingresos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
-      >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Eyebrow>Ingresos de {MONTHS_FULL[month]} {year}</Eyebrow>
+        <div className="relative max-w-xs">
+          <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
+          <input
+            value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por tipo o descripción..."
+            className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+          />
+        </div>
+      </div>
+      {/* Misma forma de tarjetas + tarjeta punteada de "agregar" que Ahorros,
+          a pedido del usuario (2026-07-31). Reemplaza la lista con buscador
+          (ListCard) que tenía antes. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {filteredIncomes.length === 0 && (
+          <p className="col-span-full text-sm text-slate-400">
+            {monthIncomes.length === 0 ? `Aún no has registrado ingresos en ${MONTHS_FULL[month]} ${year}.` : "Sin resultados para tu búsqueda."}
+          </p>
+        )}
         {filteredIncomes.map((i) => (
-          <div key={i.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-slate-700 dark:text-slate-200">{i.description || i.type}</p>
-              <p className="truncate text-xs text-slate-400">{i.type} · {i.date}</p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="tabular-nums font-medium text-emerald-600">{fmt(i.amount)}</span>
+          <Card key={i.id} className="p-5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
+                  <TrendingUp size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-800 dark:text-white">{i.description || i.type}</p>
+                  <p className="truncate text-xs text-slate-400">{i.type} · {i.date}</p>
+                </div>
+              </div>
               <RowActions onEdit={() => setEditingIncome(i)} onDelete={() => setDeletingIncome(i)} />
             </div>
-          </div>
+            <p className="mt-4 text-xl font-semibold tabular-nums text-emerald-600">{fmt(i.amount)}</p>
+          </Card>
         ))}
-      </ListCard>
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        >
+          <Plus size={20} />
+          <span className="text-sm font-medium">Agregar ingreso</span>
+        </button>
+      </div>
       {showModal && (
         <IncomeModal types={types} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} />
       )}
@@ -3158,14 +3168,20 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
               </button>
             </>
           )}
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-white dark:text-slate-900"
-          >
-            <Plus size={15} /> Agregar gasto
-          </button>
         </div>
       </Card>
+      {/* Misma tarjeta punteada de "agregar" que Ahorros/Ingresos, a pedido
+          del usuario (2026-07-31) -- reemplaza el botón negro de arriba. El
+          resto de la vista (fijos, planes, reporte, detalle) queda igual. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        >
+          <Plus size={20} />
+          <span className="text-sm font-medium">Agregar gasto</span>
+        </button>
+      </div>
       {(recurring.length > 0 || activePlans.length > 0 || finishedPlans.length > 0) && (
         <Card className="p-5">
           <CollapsibleSection
