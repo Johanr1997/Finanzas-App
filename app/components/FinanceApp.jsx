@@ -1447,9 +1447,24 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
 // -- un mes calendario siempre incluye los dos pagos, así que no tenía el
 // mismo problema.
 function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
-  const [modo, setModo] = useState("quincenal"); // "quincenal" | "mensual"
+  const [modo, setModo] = useState("quincenal"); // "quincenal" | "mensual" | "personalizado"
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
+  // "Personalizado": el usuario elige dos fechas cualquiera en vez de una
+  // quincena o un mes completo -- a pedido del usuario (2026-07-31), para
+  // preguntas puntuales que no calzan con esos dos ("cuánto gasté en mi
+  // viaje", "cuánto llevo desde que cobré hasta hoy"). Arranca en el mes
+  // elegido arriba (mismo mes/año de las flechitas del encabezado) para no
+  // partir de fechas vacías -- el usuario las ajusta desde ahí. Acotado al
+  // año elegido (min/max de los inputs) porque `yearData` solo trae ese año.
+  const monthLastDay = new Date(year, month + 1, 0).getDate();
+  const monthStr = String(month + 1).padStart(2, "0");
+  const [customStart, setCustomStart] = useState(`${year}-${monthStr}-01`);
+  const [customEnd, setCustomEnd] = useState(`${year}-${monthStr}-${String(monthLastDay).padStart(2, "0")}`);
+  function formatCustomDate(dateStr) {
+    if (!dateStr) return "";
+    return `${dateStringDay(dateStr)} de ${MONTHS_FULL[dateStringMonth(dateStr) - 1]}`;
+  }
   const cumulativeBalanceData = useMemo(() => computeCumulativeBalanceData(yearData), [yearData]);
   const paydayPeriods = useMemo(() => computePaydayPeriods(yearData, year), [yearData, year]);
   // Índice del período de pago elegido (0 a ~24 por año). Por defecto, el
@@ -1470,40 +1485,70 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year]);
   const isQuincenal = modo === "quincenal";
+  const isCustom = modo === "personalizado";
   const m = yearData[month];
   const currentPeriod = isQuincenal ? paydayPeriods[payIndex] : null;
   // Para el modo Quincenal, los movimientos de un período pueden venir de DOS
   // meses distintos (ej. el período que arranca el 30 de julio incluye
   // también días de agosto) -- por eso se filtra por fecha real sobre TODOS
   // los movimientos del año, en vez de sobre el mes elegido en el
-  // encabezado (que solo se usa para el modo "Mes completo").
+  // encabezado (que solo se usa para el modo "Mes completo"). El modo
+  // "Personalizado" reutiliza estos mismos arreglos planos, filtrando entre
+  // las dos fechas que elija el usuario en vez de entre los límites de una
+  // quincena.
   const allGastosFlat = useMemo(() => yearData.flatMap((mm) => mm.gastos), [yearData]);
   const allIncomesFlat = useMemo(() => yearData.flatMap((mm) => mm.incomes), [yearData]);
   const allSavingsFlat = useMemo(() => yearData.flatMap((mm) => mm.savings), [yearData]);
   const gastosPeriodo = isQuincenal
     ? allGastosFlat.filter((e) => e.fecha >= currentPeriod.start && e.fecha < currentPeriod.end)
+    : isCustom
+    ? allGastosFlat.filter((e) => e.fecha >= customStart && e.fecha <= customEnd)
     : m.gastos;
   const incomesPeriodo = isQuincenal
     ? allIncomesFlat.filter((i) => i.date >= currentPeriod.start && i.date < currentPeriod.end)
+    : isCustom
+    ? allIncomesFlat.filter((i) => i.date >= customStart && i.date <= customEnd)
     : m.incomes;
   const savingsPeriodo = isQuincenal
     ? allSavingsFlat.filter((s) => s.date >= currentPeriod.start && s.date < currentPeriod.end)
+    : isCustom
+    ? allSavingsFlat.filter((s) => s.date >= customStart && s.date <= customEnd)
     : m.savings;
-  const ingresoTotal = isQuincenal ? currentPeriod.ingreso : m.ingresoTotal;
-  const gastoTotal = isQuincenal ? currentPeriod.gasto : m.gastoTotal;
-  const ahorroTotal = isQuincenal ? currentPeriod.ahorro : m.ahorroTotal;
-  const saldoFinal = isQuincenal ? currentPeriod.saldoAcumulado : cumulativeBalanceData[month].saldoAcumulado;
+  const ingresoTotal = isQuincenal ? currentPeriod.ingreso : isCustom ? incomesPeriodo.reduce((a, i) => a + Number(i.amount), 0) : m.ingresoTotal;
+  const gastoTotal = isQuincenal ? currentPeriod.gasto : isCustom ? gastosPeriodo.reduce((a, e) => a + Number(e.monto), 0) : m.gastoTotal;
+  const ahorroTotal = isQuincenal ? currentPeriod.ahorro : isCustom ? savingsPeriodo.reduce((a, s) => a + Number(s.amount), 0) : m.ahorroTotal;
+  // Saldo inicial en modo Personalizado: la misma suma corrida de siempre
+  // (ingresos - gastos - ahorros, empezando en ₡0 el 1° de enero), pero
+  // calculada solo con lo que pasó ANTES de la fecha de inicio elegida --
+  // así "Saldo disponible" sigue siendo el monto real disponible, no solo lo
+  // que entra y sale dentro del rango.
+  const saldoInicialCustom = isCustom
+    ? allIncomesFlat.filter((i) => i.date < customStart).reduce((a, i) => a + Number(i.amount), 0) -
+      allGastosFlat.filter((e) => e.fecha < customStart).reduce((a, e) => a + Number(e.monto), 0) -
+      allSavingsFlat.filter((s) => s.date < customStart).reduce((a, s) => a + Number(s.amount), 0)
+    : 0;
   const saldoInicial = isQuincenal
     ? (payIndex > 0 ? paydayPeriods[payIndex - 1].saldoAcumulado : 0)
+    : isCustom
+    ? saldoInicialCustom
     : (month > 0 ? cumulativeBalanceData[month - 1].saldoAcumulado : 0);
-  const periodShort = isQuincenal ? currentPeriod.longLabel : m.mesFull;
+  const saldoFinal = isQuincenal
+    ? currentPeriod.saldoAcumulado
+    : isCustom
+    ? saldoInicialCustom + ingresoTotal - gastoTotal - ahorroTotal
+    : cumulativeBalanceData[month].saldoAcumulado;
+  const periodShort = isQuincenal ? currentPeriod.longLabel : isCustom ? `${formatCustomDate(customStart)} al ${formatCustomDate(customEnd)}` : m.mesFull;
   // Balance SOLO de este período (ingresos - gastos - ahorros de este período
   // puntual, sin sumarle el arrastre de antes) -- a pedido del usuario
   // (2026-07-30): "Saldo disponible" de arriba es el monto real acumulado
   // desde enero (útil para saber cuánto tenés de verdad), pero no deja ver de
   // un vistazo si ESTE ciclo puntual (este sueldo) rindió o no, sin mezclarlo
   // con lo de antes.
-  const balancePeriodo = isQuincenal ? currentPeriod.balanceDelPeriodo : cumulativeBalanceData[month].balanceDelMes;
+  const balancePeriodo = isQuincenal
+    ? currentPeriod.balanceDelPeriodo
+    : isCustom
+    ? ingresoTotal - gastoTotal - ahorroTotal
+    : cumulativeBalanceData[month].balanceDelMes;
   const filteredExpenses = gastosPeriodo.filter((e) =>
     (catFilter === "Todas" || e.categoria === catFilter) &&
     e.descripcion.toLowerCase().includes(search.toLowerCase())
@@ -1526,7 +1571,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
             <Eyebrow>Saldo disponible</Eyebrow>
           </div>
           <div className="text-right">
-            <p className="text-xs text-slate-400">Al {periodShort}</p>
+            <p className="text-xs text-slate-400">{isCustom ? `Del ${periodShort}` : `Al ${periodShort}`}</p>
             <p className={`text-2xl font-semibold tabular-nums ${saldoFinal >= 0 ? "text-slate-900 dark:text-white" : "text-red-500"}`}>
               {fmt(saldoFinal)}
             </p>
@@ -1538,8 +1583,26 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
             <select value={modo} onChange={(e) => setModo(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
               <option value="quincenal">Quincenal</option>
               <option value="mensual">Mes completo</option>
+              <option value="personalizado">Personalizado</option>
             </select>
           </div>
+          {isCustom && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="date" value={customStart}
+                min={`${year}-01-01`} max={customEnd || `${year}-12-31`}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+              <span className="text-sm text-slate-400">a</span>
+              <input
+                type="date" value={customEnd}
+                min={customStart || `${year}-01-01`} max={`${year}-12-31`}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+          )}
           {isQuincenal && (
             <div className="flex items-center gap-1">
               <button
@@ -1575,40 +1638,45 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
           {fmt(balancePeriodo)}
         </span>
       </div>
-      <Card className="p-5">
-        <Eyebrow>Saldo acumulado {isQuincenal ? "por quincena" : "por mes"}</Eyebrow>
-        <p className="mt-1 text-xs text-slate-400">Clic en un punto para saltar {isQuincenal ? "a ese período" : "a ese mes"}.</p>
-        <div className="mt-2 h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={chartData}
-              margin={{ left: 4, right: 12 }}
-              onClick={(e) => {
-                if (!e || typeof e.activeTooltipIndex !== "number") return;
-                if (isQuincenal) setPayIndex(e.activeTooltipIndex);
-                else onJumpToMonth(e.activeTooltipIndex);
-              }}
-              style={{ cursor: "pointer" }}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey={isQuincenal ? "label" : "mes"} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval={isQuincenal ? 1 : 0} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-              <Tooltip
-                formatter={(v) => fmt(v)}
-                labelFormatter={(l) => (isQuincenal ? paydayPeriods.find((d) => d.label === l)?.longLabel : l) || l}
-                contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }}
-              />
-              {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
-                  señal real de "te quedaste sin dinero", no solo un período
-                  con balance aislado negativo (ver statusOf en Resumen, que
-                  sigue usando el acumulado MENSUAL para el semáforo de
-                  "Panorama del año"). */}
-              <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
-              <Line type="monotone" dataKey="saldoAcumulado" name="Saldo acumulado" stroke="#6366F1" strokeWidth={2} dot={{ r: 3, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
+      {/* En modo Personalizado no hay una secuencia de períodos que graficar
+          (es un solo rango puntual), así que esta tarjeta se omite en vez de
+          mostrar un gráfico que no tendría un eje natural. */}
+      {!isCustom && (
+        <Card className="p-5">
+          <Eyebrow>Saldo acumulado {isQuincenal ? "por quincena" : "por mes"}</Eyebrow>
+          <p className="mt-1 text-xs text-slate-400">Clic en un punto para saltar {isQuincenal ? "a ese período" : "a ese mes"}.</p>
+          <div className="mt-2 h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={chartData}
+                margin={{ left: 4, right: 12 }}
+                onClick={(e) => {
+                  if (!e || typeof e.activeTooltipIndex !== "number") return;
+                  if (isQuincenal) setPayIndex(e.activeTooltipIndex);
+                  else onJumpToMonth(e.activeTooltipIndex);
+                }}
+                style={{ cursor: "pointer" }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey={isQuincenal ? "label" : "mes"} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval={isQuincenal ? 1 : 0} />
+                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                <Tooltip
+                  formatter={(v) => fmt(v)}
+                  labelFormatter={(l) => (isQuincenal ? paydayPeriods.find((d) => d.label === l)?.longLabel : l) || l}
+                  contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }}
+                />
+                {/* Línea de referencia en ₡0: cruzar por debajo de ella es la
+                    señal real de "te quedaste sin dinero", no solo un período
+                    con balance aislado negativo (ver statusOf en Resumen, que
+                    sigue usando el acumulado MENSUAL para el semáforo de
+                    "Panorama del año"). */}
+                <ReferenceLine y={0} stroke="#cbd5e1" strokeDasharray="4 4" />
+                <Line type="monotone" dataKey="saldoAcumulado" name="Saldo acumulado" stroke="#6366F1" strokeWidth={2} dot={{ r: 3, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
           <Eyebrow>Ingresos del período</Eyebrow>
