@@ -12,6 +12,7 @@ import {
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
   Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
+  Minus, Clock,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -783,6 +784,38 @@ function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
     </Card>
   );
 }
+// Insignia de tendencia ("+8% vs mes anterior") para los encabezados de
+// Ingresos/Gastos/Ahorros -- reutiliza yearData/estado que cada pestaña ya
+// carga (mismo año completo), sin ninguna consulta nueva a Supabase. Si no
+// hay mes anterior con el que comparar (ej. estás viendo enero, cuyo mes
+// anterior sería diciembre del año pasado, que esa pestaña no carga) o el
+// mes anterior fue ₡0, no se muestra nada -- un porcentaje contra cero no
+// dice nada útil. `invert` es para Gastos: ahí que suba es la mala noticia.
+function TrendBadge({ current, previous, invert = false }) {
+  if (!previous || previous <= 0) return null;
+  const diffPct = ((current - previous) / previous) * 100;
+  if (Math.abs(diffPct) < 1) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+        <Minus size={12} /> Igual que el mes anterior
+      </span>
+    );
+  }
+  const isUp = diffPct > 0;
+  const isGood = invert ? !isUp : isUp;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${
+        isGood
+          ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
+          : "bg-red-50 text-red-500 dark:bg-red-500/10 dark:text-red-400"
+      }`}
+    >
+      {isUp ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+      {Math.abs(diffPct).toFixed(0)}% vs mes anterior
+    </span>
+  );
+}
 function ProgressRing({ percent, color, size = 56 }) {
   const r = (size - 8) / 2;
   const c = 2 * Math.PI * r;
@@ -1115,6 +1148,42 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const currentMonth = yearData[currentIdx];
   const prevMonth = yearData[prevIdx];
   const isRealCurrentMonth = isCurrentYear && month === now.getMonth();
+  // "Actividad reciente": mezcla ingresos, gastos y ahorros del mes elegido
+  // (currentMonth ya viene de yearData, que esta pantalla ya tenía cargado --
+  // ninguna consulta nueva a Supabase), ordenados por fecha descendente y con
+  // un tope de 8 para que el panel no crezca sin límite en un mes con muchos
+  // movimientos. Los ahorros no tienen un campo de descripción propio en la
+  // base de datos (solo tipo), así que usan su tipo como etiqueta.
+  const recentActivity = useMemo(() => {
+    const items = [
+      ...currentMonth.incomes.map((i) => ({
+        id: `inc-${i.id}`,
+        kind: "ingreso",
+        label: i.description || i.type || "Ingreso",
+        sub: i.type,
+        date: i.date,
+        amount: Number(i.amount),
+      })),
+      ...currentMonth.gastos.map((g) => ({
+        id: `gasto-${g.id}`,
+        kind: "gasto",
+        label: g.descripcion,
+        sub: g.categoria,
+        date: g.fecha,
+        amount: g.monto,
+        color: g.color,
+      })),
+      ...currentMonth.savings.map((s) => ({
+        id: `ahorro-${s.id}`,
+        kind: "ahorro",
+        label: s.type || "Ahorro",
+        sub: "Ahorro",
+        date: s.date,
+        amount: Number(s.amount),
+      })),
+    ];
+    return items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 8);
+  }, [currentMonth]);
   const insights = [];
   if (prevMonth.gastoTotal > 0) {
     const pct = Math.abs(Math.round((1 - currentMonth.gastoTotal / prevMonth.gastoTotal) * 100));
@@ -1189,10 +1258,16 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
           })}
         </div>
       </Card>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="p-5">
+      {/* "Bento grid": el gráfico de flujo de caja (el que más se consulta)
+          ocupa dos tercios del ancho como pieza principal, con el desglose
+          por categoría al lado -- y se invierte en la fila de abajo (ahorro
+          acumulado angosto, balance mensual ancho) para que no se vea como
+          una simple repetición de tarjetas iguales. Mismos gráficos y datos
+          de siempre (Recharts), solo reacomodados. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <Card className="p-5 lg:col-span-2">
           <Eyebrow>Ingresos vs gastos</Eyebrow>
-          <div className="mt-4 h-64">
+          <div className="mt-4 h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -1207,30 +1282,8 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
           </div>
         </Card>
         <Card className="p-5">
-          <Eyebrow>Evolución del ahorro acumulado</Eyebrow>
-          <div className="mt-4 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={lineData}>
-                <defs>
-                  <linearGradient id="ahorroGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.25} />
-                    <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-                <Area type="monotone" dataKey="Ahorro" stroke="#3B82F6" strokeWidth={2} fill="url(#ahorroGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="p-5">
           <Eyebrow>Gastos por categoría (año completo)</Eyebrow>
-          <div className="mt-4 h-64">
+          <div className="mt-4 h-72">
             {catTotalsYear.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -1252,7 +1305,29 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
             )}
           </div>
         </Card>
+      </div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="p-5">
+          <Eyebrow>Evolución del ahorro acumulado</Eyebrow>
+          <div className="mt-4 h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={lineData}>
+                <defs>
+                  <linearGradient id="ahorroGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.25} />
+                    <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                <Area type="monotone" dataKey="Ahorro" stroke="#3B82F6" strokeWidth={2} fill="url(#ahorroGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        <Card className="p-5 lg:col-span-2">
           <Eyebrow>Balance mensual (comparación entre meses)</Eyebrow>
           <div className="mt-4 h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -1279,6 +1354,63 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
             <li key={i} className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">{t}</li>
           ))}
         </ul>
+      </Card>
+      {/* Panel inferior de actividad reciente: mezcla ingresos, gastos y
+          ahorros del mes elegido (recentActivity, ver arriba), lo más nuevo
+          primero -- para tener, de un vistazo, "qué pasó últimamente" sin
+          tener que entrar a Ingresos/Gastos/Ahorros por separado. */}
+      <Card className="p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock size={16} className="text-slate-400" />
+            <Eyebrow>Actividad reciente</Eyebrow>
+          </div>
+          <span className="text-xs text-slate-400">{currentMonth.mesFull} {year}</span>
+        </div>
+        {recentActivity.length === 0 ? (
+          <EmptyState
+            icon={Clock}
+            title="Sin movimientos este mes todavía"
+            message="Los ingresos, gastos y ahorros que registres van a aparecer aquí, con lo más reciente primero."
+            compact
+          />
+        ) : (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {recentActivity.map((item) => {
+              const isIncome = item.kind === "ingreso";
+              const isSaving = item.kind === "ahorro";
+              const Icon = isIncome ? TrendingUp : isSaving ? PiggyBank : (CATEGORY_META[item.sub]?.icon || MoreHorizontal);
+              const color = isIncome ? "#22C55E" : isSaving ? "#3B82F6" : (item.color || CATEGORY_META[item.sub]?.color || "#64748B");
+              const amountClass = isIncome
+                ? "text-emerald-600 dark:text-emerald-400"
+                : isSaving
+                ? "text-blue-500 dark:text-blue-400"
+                : "text-red-500 dark:text-red-400";
+              const sign = isIncome ? "+" : "-";
+              return (
+                <div key={item.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                      style={{ backgroundColor: `${color}1a`, color }}
+                    >
+                      <Icon size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">{item.label}</p>
+                      <p className="truncate text-xs text-slate-400">
+                        {item.sub ? `${item.sub} · ` : ""}{item.date}
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`shrink-0 tabular-nums text-sm font-semibold ${amountClass}`}>
+                    {sign}{fmt(item.amount)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -2580,6 +2712,19 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     return sum + occurrencesThisMonth * Number(r.amount);
   }, 0);
   const total = monthIncomes.reduce((a, i) => a + Number(i.amount), 0) + monthRecurringIncomeAmount;
+  // Total del mes anterior, solo para la insignia de tendencia del
+  // encabezado -- mismo cálculo de arriba pero contra month - 1. Si month es
+  // 0 (enero), el mes anterior sería diciembre del año pasado, que esta
+  // pestaña no carga (solo trae el año elegido), así que se deja en 0 y
+  // TrendBadge simplemente no muestra nada en ese caso.
+  const prevMonthIncomes = month > 0 ? incomes.filter((i) => dateStringMonth(i.date) - 1 === month - 1) : [];
+  const prevMonthRecurringIncomeAmount = month > 0 ? recurring.reduce((sum, r) => {
+    const occurrencesPrevMonth = synthesizeRecurringEntries(r, year).filter(
+      ({ date }) => dateStringMonth(date) - 1 === month - 1
+    ).length;
+    return sum + occurrencesPrevMonth * Number(r.amount);
+  }, 0) : 0;
+  const prevTotal = month > 0 ? prevMonthIncomes.reduce((a, i) => a + Number(i.amount), 0) + prevMonthRecurringIncomeAmount : 0;
   const filteredIncomes = monthIncomes.filter((i) =>
     `${i.type || ""} ${i.description || ""}`.toLowerCase().includes(search.toLowerCase())
   );
@@ -2592,7 +2737,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Ingresos en {MONTHS_FULL[month]} {year}</Eyebrow>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-2xl font-semibold tabular-nums text-emerald-600">{fmt(total)}</p>
+            <TrendBadge current={total} previous={prevTotal} />
+          </div>
           {monthRecurringIncomeAmount > 0 && (
             <p className="mt-0.5 text-xs text-slate-400">Incluye ingresos fijos de este mes</p>
           )}
@@ -3359,6 +3507,26 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
     return sum + occurrencesThisMonth * Number(p.monthly_amount);
   }, 0);
   const total = monthExpenses.reduce((a, e) => a + Number(e.amount), 0) + monthRecurringExpenseAmount + monthPlanAmount;
+  // Total del mes anterior, solo para la insignia de tendencia -- mismo
+  // cálculo de arriba (incluye gastos fijos y cuotas de planes) pero contra
+  // month - 1. En enero (month === 0) se deja en 0 porque el año anterior no
+  // está cargado en esta pestaña; TrendBadge no muestra nada en ese caso.
+  const prevMonthExpenses = month > 0 ? expenses.filter((e) => dateStringMonth(e.date) - 1 === month - 1) : [];
+  const prevMonthRecurringExpenseAmount = month > 0 ? recurring.reduce((sum, r) => {
+    const occurrencesPrevMonth = synthesizeRecurringEntries(r, year).filter(
+      ({ date }) => dateStringMonth(date) - 1 === month - 1
+    ).length;
+    return sum + occurrencesPrevMonth * Number(r.amount);
+  }, 0) : 0;
+  const prevMonthPlanAmount = month > 0 ? plans.reduce((sum, p) => {
+    const totalMonths = Number(p.total_months) || 0;
+    const anchoredPlan = { ...p, start_date: planAnchorDate(p) };
+    const occurrencesPrevMonth = synthesizeRecurringEntries(anchoredPlan, year, { totalMonths }).filter(
+      ({ date }) => dateStringMonth(date) - 1 === month - 1
+    ).length;
+    return sum + occurrencesPrevMonth * Number(p.monthly_amount);
+  }, 0) : 0;
+  const prevTotal = month > 0 ? prevMonthExpenses.reduce((a, e) => a + Number(e.amount), 0) + prevMonthRecurringExpenseAmount + prevMonthPlanAmount : 0;
   const categoriasDisponibles = [...new Set(monthExpenses.map((e) => e.categories?.name).filter(Boolean))];
   const filteredExpenses = monthExpenses.filter((e) =>
     (catFilter === "Todas" || e.categories?.name === catFilter) &&
@@ -3435,7 +3603,10 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Gastos en {MONTHS_FULL[month]} {year}</Eyebrow>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-2xl font-semibold tabular-nums text-red-500">{fmt(total)}</p>
+            <TrendBadge current={total} previous={prevTotal} invert />
+          </div>
           {(monthRecurringExpenseAmount > 0 || monthPlanAmount > 0) && (
             <p className="mt-0.5 text-xs text-slate-400">Incluye gastos fijos y planes de pago de este mes</p>
           )}
@@ -4760,6 +4931,11 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
   }
   const monthSavings = savings.filter((s) => dateStringMonth(s.date) - 1 === month);
   const total = monthSavings.reduce((a, s) => a + Number(s.amount), 0);
+  // Total del mes anterior, solo para la insignia de tendencia -- ver el
+  // mismo comentario en Ingresos/Gastos sobre por qué enero (month === 0)
+  // se deja en 0 (el mes anterior no está cargado en esta pestaña).
+  const prevMonthSavings = month > 0 ? savings.filter((s) => dateStringMonth(s.date) - 1 === month - 1) : [];
+  const prevTotal = month > 0 ? prevMonthSavings.reduce((a, s) => a + Number(s.amount), 0) : 0;
   const filteredSavings = monthSavings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
   // Además de los tipos ya creados en "Tipos de ahorro", cualquier tipo que
   // haya quedado en un ahorro (ej. uno cuyo tipo ya se borró de la lista, o
@@ -4793,7 +4969,10 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
       <Card className="p-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <Eyebrow>Ahorrado en {MONTHS_FULL[month]} {year}</Eyebrow>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-blue-500">{fmt(total)}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-2xl font-semibold tabular-nums text-blue-500">{fmt(total)}</p>
+            <TrendBadge current={total} previous={prevTotal} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
