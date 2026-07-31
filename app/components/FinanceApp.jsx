@@ -4494,6 +4494,18 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
           </button>
         </div>
       </Card>
+      {/* Misma tarjeta punteada de "agregar", ahora arriba del todo -- a
+          pedido del usuario (2026-07-31), para que quede en el mismo lugar
+          que en Ingresos y Gastos. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        >
+          <Plus size={20} />
+          <span className="text-sm font-medium">Agregar ahorro</span>
+        </button>
+      </div>
       <Card className="p-5">
         <Eyebrow>Resumen por tipo en {year}</Eyebrow>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -4521,11 +4533,10 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
           {allTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
       </div>
-      {/* Misma forma de tarjetas + tarjeta punteada de "agregar" que Metas
-          (GoalsView), a pedido del usuario (2026-07-31): quería que agregar
-          un ahorro se viera igual que agregar una meta, y aclaró que quería
-          toda la vista así, no solo el botón. Reemplaza la lista con
-          buscador/filtro (ListCard) que tenía antes. */}
+      {/* Misma forma de tarjetas que Metas (GoalsView), a pedido del usuario
+          (2026-07-31). Reemplaza la lista con buscador/filtro (ListCard) que
+          tenía antes. La tarjeta punteada de "agregar" quedó arriba del
+          todo (ver más arriba), no repetida acá. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filteredSavings.length === 0 && (
           <p className="col-span-full text-sm text-slate-400">
@@ -4557,13 +4568,6 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
             )}
           </Card>
         ))}
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
-        >
-          <Plus size={20} />
-          <span className="text-sm font-medium">Agregar ahorro</span>
-        </button>
       </div>
       {showModal && (
         <SavingModal types={types} goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
