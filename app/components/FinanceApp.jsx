@@ -1063,7 +1063,7 @@ function CalendarView({ fmt, year, month, yearData }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <Eyebrow>Programado en {MONTHS_FULL[month]} {year}</Eyebrow>
           <p className="max-w-xs text-xs text-slate-400">
-            Cuotas de planes de pago, gastos fijos e ingresos fijos. Lo que registras a mano (gastos e ingresos sueltos) no aparece aquí.
+            Solo lo programado (cuotas, fijos). Lo que registras a mano no aparece aquí.
           </p>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:max-w-xs">
@@ -1352,7 +1352,7 @@ function MonthDetail({ index, year, fmt, onClose, onNav, yearData }) {
               <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
                 {m.savings.length === 0 && <p className="px-4 py-4 text-sm text-slate-400">Sin ahorros registrados.</p>}
                 {m.savings.map((s) => (
-                  <Row key={s.id} label={SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type} value={fmt(s.amount)} />
+                  <Row key={s.id} label={s.type} value={fmt(s.amount)} />
                 ))}
                 <Row label="Total del mes" value={fmt(m.ahorroTotal)} bold />
               </div>
@@ -1524,9 +1524,6 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <Eyebrow>Saldo disponible</Eyebrow>
-            <p className="mt-1 text-xs text-slate-400">
-              El monto real que tenés disponible: se arrastra de período en período (empieza en ₡0 el 1° de enero de {year}) -- si en un período no gastás/ahorrás todo, ese sobrante se suma al siguiente, y así sucesivamente.
-            </p>
           </div>
           <div className="text-right">
             <p className="text-xs text-slate-400">Al {periodShort}</p>
@@ -1539,7 +1536,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
           <div className="max-w-xs">
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Modo</label>
             <select value={modo} onChange={(e) => setModo(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
-              <option value="quincenal">Quincenal (según mis días de pago: 15 y 30)</option>
+              <option value="quincenal">Quincenal</option>
               <option value="mensual">Mes completo</option>
             </select>
           </div>
@@ -1572,7 +1569,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
       </div>
       <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3 ${balancePeriodo >= 0 ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-red-50 dark:bg-red-500/10"}`}>
         <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-          Balance de {isQuincenal ? "esta quincena" : "este mes"} (ingresos − gastos − ahorros de este período, sin contar lo que traías de antes)
+          Balance de {isQuincenal ? "esta quincena" : "este mes"}
         </span>
         <span className={`text-lg font-semibold tabular-nums ${balancePeriodo >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
           {fmt(balancePeriodo)}
@@ -1580,7 +1577,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
       </div>
       <Card className="p-5">
         <Eyebrow>Saldo acumulado {isQuincenal ? "por quincena" : "por mes"}</Eyebrow>
-        <p className="mt-1 text-xs text-slate-400">Clic en un punto de la gráfica para saltar a {isQuincenal ? "ese período" : "ese mes"}.</p>
+        <p className="mt-1 text-xs text-slate-400">Clic en un punto para saltar {isQuincenal ? "a ese período" : "a ese mes"}.</p>
         <div className="mt-2 h-64">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
@@ -1627,7 +1624,7 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
           <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {savingsPeriodo.length === 0 && <p className="px-4 py-4 text-sm text-slate-400">Sin ahorros registrados.</p>}
             {savingsPeriodo.map((s) => (
-              <Row key={s.id} label={SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type} value={fmt(s.amount)} />
+              <Row key={s.id} label={s.type} value={fmt(s.amount)} />
             ))}
             <Row label="Total del período" value={fmt(ahorroTotal)} bold />
           </div>
@@ -2011,11 +2008,10 @@ function GoalContributionsListModal({ goal, contributions, fmt, selectedMonthBal
         )}
         <div className="max-h-[55vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
           {contributions.map((c) => {
-            const label = SAVINGS_TYPES.find((t) => t.value === c.type)?.label || c.type;
             return (
               <div key={c.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{label}</p>
+                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{c.type}</p>
                   <p className="text-xs text-slate-400">{c.date}</p>
                 </div>
                 <span className="shrink-0 tabular-nums font-medium text-blue-500">{fmt(c.amount)}</span>
@@ -2284,9 +2280,6 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
             header={
               <div>
                 <Eyebrow>Ingresos fijos</Eyebrow>
-                <p className="mt-1 text-xs text-slate-400">
-                  Salario u otro ingreso fijo. Se cuenta automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlo.
-                </p>
               </div>
             }
           >
@@ -2549,9 +2542,6 @@ function RecurringIncomeModal({ item, types, onClose, onSaved }) {
   }
   return (
     <ModalShell onClose={onClose} title={isEditing ? "Editar ingreso fijo" : "Nuevo ingreso fijo"}>
-      <p className="mb-4 text-xs text-slate-400">
-        Para un salario u otro ingreso que se repite por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
-      </p>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ingreso</label>
@@ -2605,7 +2595,7 @@ function RecurringIncomeModal({ item, types, onClose, onSaved }) {
         </div>
         {isQuincenal && (
           <p className="text-xs text-slate-400">
-            Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
+            Se cuenta siempre en los días 15 y 30 (o fin de mes), empezando en la primera de esas fechas a partir de la que elijas.
           </p>
         )}
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
@@ -2661,9 +2651,6 @@ function IncomeTypesManagerModal({ types, onClose, onChanged }) {
       }
     >
       <div className="space-y-4">
-        <p className="text-xs text-slate-400">
-          Crea aquí los tipos de ingreso que quieras registrar (ej. "Salario", "Freelance", "Regalo"). Luego, al agregar un ingreso, podrás elegirlos desde ese formulario.
-        </p>
         {sortedTypes.length === 0 ? (
           <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400 dark:border-slate-700">
             Aún no hay tipos de ingreso.
@@ -3119,9 +3106,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
             header={
               <div>
                 <Eyebrow>Fijo y programado</Eyebrow>
-                <p className="mt-1 text-xs text-slate-400">
-                  Gastos fijos y planes de pago: lo que ya sabes que viene, sin tener que revisarlo cada mes.
-                </p>
                 <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
                   {[
                     recurring.length > 0 && `${recurring.length} gasto${recurring.length === 1 ? "" : "s"} fijo${recurring.length === 1 ? "" : "s"}`,
@@ -3136,9 +3120,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
               {recurring.length > 0 && (
                 <div>
                   <Eyebrow>Gastos fijos</Eyebrow>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Alquiler, suscripciones, gimnasio y similares. Se cuentan automáticamente cada mes o cada quincena desde su fecha de inicio, sin tener que volver a registrarlos.
-                  </p>
                   <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {recurring.map((r) => {
                       const color = r.categories?.color || "#64748B";
@@ -3169,9 +3150,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
               {activePlans.length > 0 && (
                 <div>
                   <Eyebrow>Planes de pago activos</Eyebrow>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Préstamos y compras a plazos. La cuota del mes que estás viendo arriba se suma automáticamente a tus gastos, sin llenar esta lista de filas repetidas.
-                  </p>
                   <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {activePlans.map(renderPlanCard)}
                   </div>
@@ -3181,7 +3159,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
                 <div>
                   <Eyebrow>Planes pagados</Eyebrow>
                   <p className="mt-1 text-xs text-slate-400">
-                    Ya no les queda ninguna cuota pendiente en {MONTHS_FULL[month]} {year}. Puedes eliminarlos de tu lista cuando quieras.
+                    Sin cuota pendiente en {MONTHS_FULL[month]} {year}.
                   </p>
                   <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {finishedPlans.map(renderPlanCard)}
@@ -3469,11 +3447,11 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, def
               <option key={it.id} value={it.id}>{it.name}</option>
             ))}
           </select>
-          <p className="mt-1.5 text-xs text-slate-400">
-            {itemsForCategory.length > 0
-              ? "Útil para llevar el detalle de compras dentro de esta categoría (ej. cuánto gastaste en arroz este mes)."
-              : "Esta categoría todavía no tiene artículos. Créalos desde \"Artículos\", dentro de \"Más opciones\"."}
-          </p>
+          {itemsForCategory.length === 0 && (
+            <p className="mt-1.5 text-xs text-slate-400">
+              Esta categoría todavía no tiene artículos. Créalos desde "Artículos", dentro de "Más opciones".
+            </p>
+          )}
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
@@ -3519,9 +3497,6 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, def
             )}
           </div>
         )}
-        <p className="text-xs text-slate-400">
-          ¿Es un gasto fijo que se repite todos los meses (alquiler, suscripción, gimnasio)? Usa el botón "Gasto fijo" en vez de este formulario, así no tienes que volver a registrarlo cada mes.
-        </p>
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
@@ -3699,9 +3674,6 @@ function ExpenseItemsManagerModal({ categories, items, onClose, onChanged }) {
       }
     >
       <div className="space-y-4">
-        <p className="text-xs text-slate-400">
-          Crea aquí los artículos que quieras registrar por separado dentro de cada categoría (ej. "Arroz", "Frijoles" en Alimentación). Luego, al agregar un gasto, podrás elegirlos desde ese formulario.
-        </p>
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
           <select
@@ -3820,9 +3792,6 @@ function CreditCardsManagerModal({ cards, onClose, onChanged, onDeleteCard }) {
         </>
       }
     >
-      <p className="mb-4 text-xs text-slate-400">
-        Registra el día de corte y el día de pago de cada tarjeta. Al agregar un gasto con esa tarjeta, la app calcula sola en qué mes realmente vas a pagarlo, en vez de contarlo en el mes de la compra.
-      </p>
       <div className="space-y-2">
         {cards.length === 0 && (
           <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-700">
@@ -3998,9 +3967,6 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
   }
   return (
     <ModalShell onClose={onClose} title={isEditing ? "Editar plan de pago" : "Nuevo plan de pago"}>
-      <p className="mb-4 text-xs text-slate-400">
-        Para préstamos o compras a plazos. Se guarda como un solo plan; la cuota del mes correspondiente se suma automáticamente a tus gastos cada mes, sin crear una fila por cuota.
-      </p>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
@@ -4033,9 +3999,6 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
-            <p className="mt-1.5 text-xs text-slate-400">
-              Elige una tarjeta si esto es una compra a plazos que se cobra en el estado de cuenta (como Conape, elige "Ninguna").
-            </p>
           </div>
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -4138,9 +4101,6 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
   }
   return (
     <ModalShell onClose={onClose} title={isEditing ? "Editar gasto fijo" : "Nuevo gasto fijo"}>
-      <p className="mb-4 text-xs text-slate-400">
-        Para alquiler, suscripciones, gimnasio y otros pagos que se repiten por tiempo indefinido. Se cuenta automáticamente cada mes o cada quincena desde la fecha de inicio, hasta que lo elimines.
-      </p>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</label>
@@ -4190,7 +4150,7 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
         </div>
         {isQuincenal && (
           <p className="text-xs text-slate-400">
-            Siempre se va a contar los días 15 y 30 de cada mes (el último día del mes en los meses más cortos, como febrero), empezando en la primera de esas fechas que sea igual o posterior a la que pongas aquí.
+            Se cuenta siempre en los días 15 y 30 (o fin de mes), empezando en la primera de esas fechas a partir de la que elijas.
           </p>
         )}
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
@@ -4297,18 +4257,58 @@ function PlanPaymentsModal({ plan, overrides, fmt, onClose, onChanged }) {
 /* ---------------------------------------------------------------
    AHORROS
 ------------------------------------------------------------------ */
-const SAVINGS_TYPES = [
-  { value: "emergencia", label: "Fondo de emergencia" },
-  { value: "inversiones", label: "Inversiones" },
-  { value: "libre", label: "Ahorro libre" },
-];
+// Fusión de las pestañas "Ahorros" y "Metas" en una sola, a pedido del
+// usuario (2026-07-31) -- eligió verlas con un interruptor (mismo patrón que
+// "Reporte": Anual / Mensual y Quincenal), en vez de apiladas. Ninguna de las
+// dos vistas cambió su lógica de datos por esto: Ahorros sigue alimentando el
+// balance mensual de toda la app igual que antes, y un ahorro sigue sin
+// necesitar una meta vinculada -- solo se decidió cuál de las dos se ve a la
+// vez, dentro de una sola pestaña del menú.
+function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, vista, onChangeVista }) {
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onChangeVista("ahorros")}
+          className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
+            vista === "ahorros"
+              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+              : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+          }`}
+        >
+          <PiggyBank size={15} /> Ahorros
+        </button>
+        <button
+          onClick={() => onChangeVista("metas")}
+          className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
+            vista === "metas"
+              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+              : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+          }`}
+        >
+          <Target size={15} /> Metas
+        </button>
+      </div>
+      {vista === "ahorros" ? (
+        <SavingsView fmt={fmt} onDataChanged={onDataChanged} year={year} month={month} />
+      ) : (
+        <GoalsView fmt={fmt} yearData={yearData} month={month} />
+      )}
+    </div>
+  );
+}
 function SavingsView({ fmt, onDataChanged, year, month }) {
   const [savings, setSavings] = useState([]);
   const [goals, setGoals] = useState([]);
+  // Tipos de ahorro (ej. "Fondo de emergencia", "Viaje a Argentina"): no
+  // dependen del año/mes elegido, así que se cargan una sola vez -- mismo
+  // patrón que los tipos de ingreso en Ingresos.
+  const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingSaving, setEditingSaving] = useState(null);
   const [deletingSaving, setDeletingSaving] = useState(null);
+  const [showTypesManager, setShowTypesManager] = useState(false);
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [viewingTypeReport, setViewingTypeReport] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -4320,6 +4320,10 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
       .order("date", { ascending: false });
     setSavings(data || []);
     if (onDataChanged) onDataChanged();
+  }
+  async function refetchTypes() {
+    const { data } = await supabase.from("savings_types").select("*").order("name", { ascending: true });
+    setTypes(data || []);
   }
   useEffect(() => {
     async function fetchAll() {
@@ -4343,6 +4347,9 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
     }
     fetchAll();
   }, [year]);
+  useEffect(() => {
+    refetchTypes();
+  }, []);
   async function handleDelete(record) {
     const { error } = await supabase.from("savings").delete().eq("id", record.id);
     if (error) throw error;
@@ -4354,17 +4361,18 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
   const monthSavings = savings.filter((s) => dateStringMonth(s.date) - 1 === month);
   const total = monthSavings.reduce((a, s) => a + Number(s.amount), 0);
   const filteredSavings = monthSavings.filter((s) => typeFilter === "Todos" || s.type === typeFilter);
-  // Además de los 3 tipos fijos, cualquier tipo personalizado que la persona
-  // haya escrito (SavingModal, opción "Otro") también aparece aquí, para que
-  // el resumen por tipo y el filtro lo incluyan igual que a los demás.
-  const knownTypeValues = SAVINGS_TYPES.map((t) => t.value);
+  // Además de los tipos ya creados en "Tipos de ahorro", cualquier tipo que
+  // haya quedado en un ahorro (ej. uno cuyo tipo ya se borró de la lista, o
+  // de antes de que existiera esta lista) también aparece aquí, para que el
+  // resumen por tipo y el filtro no dejen ningún ahorro fuera.
+  const knownTypeValues = types.map((t) => t.name);
   const customTypeValues = [];
   savings.forEach((s) => {
     if (s.type && !knownTypeValues.includes(s.type) && !customTypeValues.includes(s.type)) {
       customTypeValues.push(s.type);
     }
   });
-  const allTypes = [...SAVINGS_TYPES, ...customTypeValues.map((v) => ({ value: v, label: v }))];
+  const allTypes = [...types.map((t) => ({ value: t.name, label: t.name })), ...customTypeValues.map((v) => ({ value: v, label: v }))];
   const totalsByType = allTypes.map((t) => {
     const items = savings.filter((s) => s.type === t.value);
     return { ...t, items, total: items.reduce((a, s) => a + Number(s.amount), 0) };
@@ -4382,11 +4390,17 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => exportToCSV("ahorros.csv", filteredSavings.map((s) => ({ Tipo: SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type, Meta: s.goals?.name || "", Monto: s.amount, Fecha: s.date })))}
+            onClick={() => exportToCSV("ahorros.csv", filteredSavings.map((s) => ({ Tipo: s.type, Meta: s.goals?.name || "", Monto: s.amount, Fecha: s.date })))}
             disabled={filteredSavings.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Download size={15} /> Exportar CSV
+          </button>
+          <button
+            onClick={() => setShowTypesManager(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Tag size={15} /> Tipos de ahorro
           </button>
           <button
             onClick={() => setShowModal(true)}
@@ -4429,11 +4443,10 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
         emptyMessage={monthSavings.length === 0 ? `Aún no has registrado ahorros en ${MONTHS_FULL[month]} ${year}.` : "No hay ahorros de este tipo."}
       >
         {filteredSavings.map((s) => {
-          const label = SAVINGS_TYPES.find((t) => t.value === s.type)?.label || s.type;
           return (
             <div key={s.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{label}</p>
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{s.type}</p>
                 <p className="flex min-w-0 items-center gap-2 text-xs text-slate-400">
                   <span className="shrink-0">{s.date}</span>
                   {s.goals?.name && (
@@ -4452,10 +4465,13 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
         })}
       </ListCard>
       {showModal && (
-        <SavingModal goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
+        <SavingModal types={types} goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} />
       )}
       {editingSaving && (
-        <SavingModal goals={goals} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} />
+        <SavingModal types={types} goals={goals} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} />
+      )}
+      {showTypesManager && (
+        <SavingsTypesManagerModal types={types} onClose={() => setShowTypesManager(false)} onChanged={refetchTypes} />
       )}
       {deletingSaving && (
         <ConfirmDeleteModal
@@ -4538,46 +4554,35 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
     </div>
   );
 }
-// Además de los 3 tipos fijos (Fondo de emergencia, Inversiones, Ahorro
-// libre), se puede elegir "Otro" y escribir el nombre que se quiera —
-// "type" en la base es texto libre (igual que en Ingresos/Gastos fijos),
-// así que un tipo personalizado no requiere ningún cambio de esquema.
-const CUSTOM_TYPE_VALUE = "otro";
-function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDate }) {
+function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, defaultDate }) {
   const isEditing = Boolean(savingRecord);
   const today = localDateString();
-  const knownTypeValues = SAVINGS_TYPES.map((t) => t.value);
-  const startsAsCustom = Boolean(savingRecord?.type) && !knownTypeValues.includes(savingRecord.type);
-  const [selectValue, setSelectValue] = useState(startsAsCustom ? CUSTOM_TYPE_VALUE : (savingRecord?.type || "libre"));
-  const [type, setType] = useState(savingRecord?.type || "libre");
+  const [typeId, setTypeId] = useState(savingRecord?.type_id || "");
   const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
   const [date, setDate] = useState(savingRecord?.date || defaultDate || today);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  function handleSelectChange(value) {
-    setSelectValue(value);
-    if (value !== CUSTOM_TYPE_VALUE) setType(value);
-    else if (!startsAsCustom) setType("");
-  }
   async function handleSubmit(e) {
     e.preventDefault();
-    if (selectValue === CUSTOM_TYPE_VALUE && !type.trim()) {
-      setErrorMsg("Escribe un nombre para el tipo de ahorro.");
+    if (!typeId || !amount || !date) {
+      setErrorMsg(
+        types.length === 0
+          ? "Primero crea un tipo de ahorro con el botón \"Tipos de ahorro\"."
+          : "Completa el tipo, el monto y la fecha."
+      );
       return;
     }
-    if (!amount || !date) {
-      setErrorMsg("Completa al menos el monto y la fecha.");
-      return;
-    }
+    const selectedType = types.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
     const newGoalId = goalId || null;
     const newAmount = Number(amount);
-    const finalType = type.trim();
+    const finalType = selectedType?.name || "";
     if (isEditing) {
       const { error } = await supabase.from("savings").update({
         type: finalType,
+        type_id: typeId,
         goal_id: newGoalId,
         amount: newAmount,
         date,
@@ -4608,6 +4613,7 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
     const { error } = await supabase.from("savings").insert({
       user_id: userId || null,
       type: finalType,
+      type_id: typeId,
       goal_id: newGoalId,
       amount: newAmount,
       date,
@@ -4629,20 +4635,16 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de ahorro</label>
           <select
-            value={selectValue} onChange={(e) => handleSelectChange(e.target.value)}
+            value={typeId} onChange={(e) => setTypeId(e.target.value)}
             className={`mt-1 ${INPUT_CLASS}`}
           >
-            {SAVINGS_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-            <option value={CUSTOM_TYPE_VALUE}>Otro (escribir nombre)</option>
+            <option value="">Selecciona un tipo</option>
+            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
-          {selectValue === CUSTOM_TYPE_VALUE && (
-            <input
-              type="text" value={type} onChange={(e) => setType(e.target.value)}
-              placeholder="Ej. Ahorro para viaje, Colegio de los niños..."
-              className={`mt-2 ${INPUT_CLASS}`}
-            />
+          {types.length === 0 && (
+            <p className="mt-1 text-xs text-slate-400">
+              Aún no tienes tipos de ahorro. Créalos con el botón "Tipos de ahorro".
+            </p>
           )}
         </div>
         <div>
@@ -4683,6 +4685,129 @@ function SavingModal({ saving: savingRecord, goals, onClose, onSaved, defaultDat
           className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar ahorro"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+// Espacio para armar la lista de tipos de ahorro, separado a propósito del
+// formulario de "Agregar ahorro" (mismo patrón que
+// IncomeTypesManagerModal/IncomeTypeModal de Ingresos): un lugar para
+// crear/editar/borrar tipos, y otro distinto para registrar ahorros
+// usándolos.
+function SavingsTypesManagerModal({ types, onClose, onChanged }) {
+  const [showTypeModal, setShowTypeModal] = useState(false);
+  const [editingType, setEditingType] = useState(null);
+  const [deletingType, setDeletingType] = useState(null);
+  const sortedTypes = [...types].sort((a, b) => a.name.localeCompare(b.name));
+  async function handleDeleteType(id) {
+    const { error } = await supabase.from("savings_types").delete().eq("id", id);
+    if (!error) {
+      onChanged();
+      setDeletingType(null);
+    }
+  }
+  return (
+    <ModalShell
+      onClose={onClose}
+      title="Tipos de ahorro"
+      overlayExtras={
+        <>
+          {showTypeModal && (
+            <SavingsTypeModal onClose={() => setShowTypeModal(false)} onSaved={onChanged} />
+          )}
+          {editingType && (
+            <SavingsTypeModal type={editingType} onClose={() => setEditingType(null)} onSaved={onChanged} />
+          )}
+          {deletingType && (
+            <ConfirmDeleteModal
+              title="Eliminar tipo de ahorro"
+              message={`¿Seguro que quieres eliminar "${deletingType.name}"? Los ahorros que ya registraste con este tipo no se borran, solo quedan sin tipo asociado.`}
+              onCancel={() => setDeletingType(null)}
+              onConfirm={() => handleDeleteType(deletingType.id)}
+            />
+          )}
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {sortedTypes.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400 dark:border-slate-700">
+            Aún no hay tipos de ahorro.
+          </p>
+        ) : (
+          <div className="max-h-[40vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {sortedTypes.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{t.name}</p>
+                <RowActions onEdit={() => setEditingType(t)} onDelete={() => setDeletingType(t)} />
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowTypeModal(true)}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <Plus size={15} /> Agregar tipo
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+function SavingsTypeModal({ type, onClose, onSaved }) {
+  const isEditing = Boolean(type);
+  const [name, setName] = useState(type?.name || "");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) {
+      setErrorMsg("Escribe un nombre.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("savings_types").update({ name: name.trim() }).eq("id", type.id);
+      setSaving(false);
+      if (error) {
+        setErrorMsg("Error al guardar: " + error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("savings_types").insert({ user_id: userId || null, name: name.trim() });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <ModalShell onClose={onClose} title={isEditing ? "Editar tipo de ahorro" : "Nuevo tipo de ahorro"} maxWidth="max-w-sm" zIndex="z-[60]">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre</label>
+          <input
+            value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            placeholder="Ej. Fondo de emergencia"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tipo"}
         </button>
       </form>
     </ModalShell>
@@ -4782,7 +4907,6 @@ function BudgetsView({ fmt, year, month, categories }) {
       <LoadErrorBanner message={loadError} />
       <Card className="p-5">
         <Eyebrow>Presupuestos de {MONTHS_FULL[month]} {year}</Eyebrow>
-        <p className="mt-1 text-sm text-slate-400">Define un límite mensual por categoría y sigue tu progreso en tiempo real. Puedes usar el mismo monto todos los meses, o uno especial solo para el mes que estás viendo.</p>
       </Card>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {rows.map(({ category, budget, isOverride, spent, pct, categoryExpenses }) => {
@@ -5066,8 +5190,7 @@ const TABS = [
   { id: "reporte", label: "Reporte", icon: Wallet },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
-  { id: "savings", label: "Ahorros", icon: PiggyBank },
-  { id: "goals", label: "Metas", icon: Target },
+  { id: "savings", label: "Ahorros y Metas", icon: PiggyBank },
   { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
@@ -5081,6 +5204,11 @@ export default function FinanceApp() {
   // mostrar en el encabezado (de AÑO para "anual", de MES para "periodo") —
   // ver más abajo, en el título de cada pestaña.
   const [reporteVista, setReporteVista] = useState("anual");
+  // "Ahorros y Metas" fusiona lo que antes eran dos pestañas separadas, a
+  // pedido del usuario (2026-07-31), con el mismo patrón de interruptor que
+  // "Reporte" -- acá solo hace falta para el título de arriba (las flechitas
+  // de mes son iguales en las dos vistas, así que no afectan esa parte).
+  const [savingsVista, setSavingsVista] = useState("ahorros");
   const [monthOpen, setMonthOpen] = useState(null);
   const { code, setCode, format } = useCurrency();
   const [yearData, setYearData] = useState(null);
@@ -5212,8 +5340,7 @@ export default function FinanceApp() {
                 {tab === "expenses" && "Tus gastos"}
                 {tab === "calendar" && "Calendario de pagos"}
                 {tab === "budgets" && "Presupuestos"}
-                {tab === "savings" && "Tus ahorros"}
-                {tab === "goals" && "Tus metas"}
+                {tab === "savings" && (savingsVista === "ahorros" ? "Tus ahorros" : "Tus metas")}
               </h1>
               {tab === "reporte" && reporteVista === "anual" ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
@@ -5235,7 +5362,7 @@ export default function FinanceApp() {
                   </button>
                   <span>· actualizado en tiempo real</span>
                 </div>
-              ) : ["reporte", "incomes", "expenses", "calendar", "savings", "budgets", "goals"].includes(tab) ? (
+              ) : ["reporte", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToMonth(-1)}
@@ -5283,8 +5410,17 @@ export default function FinanceApp() {
           {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
           {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} />}
           {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} categories={categories} />}
-          {tab === "savings" && <SavingsView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
-          {tab === "goals" && <GoalsView fmt={format} yearData={yearData} month={month} />}
+          {tab === "savings" && (
+            <SavingsGoalsView
+              fmt={format}
+              onDataChanged={loadYearData}
+              yearData={yearData}
+              year={year}
+              month={month}
+              vista={savingsVista}
+              onChangeVista={setSavingsVista}
+            />
+          )}
         </main>
         {monthOpen !== null && yearData && (
           <MonthDetail index={monthOpen} year={year} fmt={format} onClose={() => setMonthOpen(null)} onNav={navMonth} yearData={yearData} />
