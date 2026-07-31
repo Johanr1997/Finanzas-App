@@ -4667,10 +4667,17 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
     }
   });
   const allTypes = [...types.map((t) => ({ value: t.name, label: t.name })), ...customTypeValues.map((v) => ({ value: v, label: v }))];
-  const totalsByType = allTypes.map((t) => {
-    const items = savings.filter((s) => s.type === t.value);
-    return { ...t, items, total: items.reduce((a, s) => a + Number(s.amount), 0) };
-  });
+  // Solo los tipos que ya tienen al menos un ahorro entran al gráfico "Ahorro
+  // por tipo" (antes eran tarjetas con el total de cada tipo, aunque
+  // estuviera en ₡0) -- ordenado de mayor a menor, mismo criterio que ya usan
+  // "Ingreso por tipo" (Ingresos) y "Gasto por artículo" (Gastos).
+  const totalsByType = allTypes
+    .map((t) => {
+      const items = savings.filter((s) => s.type === t.value);
+      return { ...t, items, total: items.reduce((a, s) => a + Number(s.amount), 0) };
+    })
+    .filter((t) => t.items.length > 0)
+    .sort((a, b) => b.total - a.total);
   if (loading) {
     return <p className="text-sm text-slate-400">Cargando ahorros...</p>;
   }
@@ -4710,23 +4717,53 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
           <span className="text-sm font-medium">Agregar ahorro</span>
         </button>
       </div>
-      <Card className="p-5">
-        <Eyebrow>Resumen por tipo en {year}</Eyebrow>
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {totalsByType.map((t) => (
-            <div key={t.value} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
-              <p className="text-xs font-medium text-slate-400">{t.label}</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums text-blue-500">{fmt(t.total)}</p>
-              <button
-                onClick={() => setViewingTypeReport(t)}
-                className="mt-3 w-full rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                Ver reporte
-              </button>
-            </div>
-          ))}
-        </div>
-      </Card>
+      {/* Antes eran tarjetas con el total anual de cada tipo -- el usuario
+          notó (2026-07-31) que, con un solo ahorro por tipo en el mes, se
+          veía igual que la tarjeta individual de abajo. Se cambió a un
+          gráfico de barras (mismo patrón que "Ingreso por tipo"/"Gasto por
+          artículo"), que sí aporta algo que las tarjetas del mes no dan: el
+          acumulado del AÑO completo comparado entre tipos, no solo julio. */}
+      {allTypes.length > 0 && (
+        <Card className="p-5">
+          <Eyebrow>Ahorro por tipo en {year}</Eyebrow>
+          {totalsByType.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-400">Aún no has registrado ahorros con un tipo asignado.</p>
+          ) : (
+            <>
+              <div className="mt-4" style={{ height: Math.max(120, totalsByType.length * 40) }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={totalsByType} layout="vertical" margin={{ left: 8, right: 16 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                    <YAxis type="category" dataKey="label" width={90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
+                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                    <Bar dataKey="total" fill="#3B82F6" radius={[0, 4, 4, 0]} barSize={18} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+                {totalsByType.map((t) => (
+                  <div key={t.value} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-slate-700 dark:text-slate-200">{t.label}</p>
+                      <p className="text-xs text-slate-400">{t.items.length} aporte{t.items.length === 1 ? "" : "s"}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="tabular-nums font-medium text-blue-500">{fmt(t.total)}</span>
+                      <button
+                        onClick={() => setViewingTypeReport(t)}
+                        className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                      >
+                        Ver reporte
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Card>
+      )}
       <div className="flex items-center justify-between gap-2">
         <Eyebrow>Ahorros de {MONTHS_FULL[month]} {year}</Eyebrow>
         <select
