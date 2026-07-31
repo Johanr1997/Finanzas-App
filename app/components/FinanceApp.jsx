@@ -663,6 +663,101 @@ function ConfirmDeleteModal({ title, message, onCancel, onConfirm }) {
     </div>
   );
 }
+// Borra TODA la información de la cuenta que inició sesión (ingresos, gastos,
+// ahorros, metas, presupuestos, planes de pago, gastos/ingresos fijos,
+// tarjetas y los tipos guardados de cada uno) -- en todas las pestañas de la
+// app, a pedido del usuario (2026-07-31), ej. para "empezar de cero" o
+// limpiar datos de prueba. "categories" queda fuera a propósito: es una
+// lista compartida entre cuentas (no información personal), la app nunca
+// crea categorías nuevas por su cuenta y no tiene sentido borrarla.
+// Por seguridad (es irreversible) pide escribir "ELIMINAR" para habilitar el
+// botón, además del típico modal de confirmar.
+function DeleteAllDataModal({ onClose, onDeleted }) {
+  const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const canConfirm = confirmText.trim().toUpperCase() === "ELIMINAR";
+  async function handleConfirm() {
+    if (!canConfirm) return;
+    setDeleting(true);
+    setErrorMsg("");
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData?.user?.id;
+      if (!userId) throw new Error("No se pudo identificar tu cuenta.");
+      // Orden pensado para no chocar con las relaciones entre tablas (ej.
+      // borrar las cuotas marcadas de un plan de pago antes que el plan
+      // mismo, los ahorros antes que las metas a las que puedan estar
+      // vinculados, los ingresos/gastos antes que sus tipos/artículos, etc.)
+      for (const table of [
+        "installment_payment_status",
+        "expenses",
+        "savings",
+        "incomes",
+        "recurring_incomes",
+        "recurring_expenses",
+        "installment_plans",
+        "goals",
+        "income_types",
+        "savings_types",
+        "expense_items",
+        "credit_cards",
+        "budgets",
+      ]) {
+        const { error } = await supabase.from(table).delete().eq("user_id", userId);
+        if (error) throw new Error(`${table}: ${error.message}`);
+      }
+      if (onDeleted) onDeleted();
+    } catch (err) {
+      setErrorMsg("Error al eliminar: " + (err?.message || "intenta de nuevo."));
+      setDeleting(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={deleting ? undefined : onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-500 dark:bg-red-500/10">
+            <AlertTriangle size={18} />
+          </div>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Eliminar toda mi información</h2>
+        </div>
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+          Esto borra todos tus ingresos, gastos, ahorros, metas, presupuestos, planes de pago, gastos/ingresos fijos, tarjetas y tipos guardados -- de todas las pestañas de la app. No se puede deshacer.
+        </p>
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          Para confirmar, escribe <span className="font-semibold text-slate-700 dark:text-slate-200">ELIMINAR</span> abajo.
+        </p>
+        <input
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder="ELIMINAR"
+          disabled={deleting}
+          className={`${INPUT_CLASS} mt-2`}
+        />
+        {errorMsg && <p className="mt-2 text-xs text-red-500">{errorMsg}</p>}
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={deleting || !canConfirm}
+            className="flex-1 rounded-lg bg-red-500 py-2.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {deleting ? "Eliminando..." : "Eliminar todo"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 function RowActions({ onEdit, onDelete }) {
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -5361,6 +5456,7 @@ export default function FinanceApp() {
   // a la base de datos por la misma información.
   const [categories, setCategories] = useState([]);
   const [cards, setCards] = useState([]);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   async function refetchCards() {
     const { data } = await supabase.from("credit_cards").select("*").order("name", { ascending: true });
     setCards(data || []);
@@ -5434,6 +5530,13 @@ export default function FinanceApp() {
               >
                 {Object.keys(CURRENCIES).map((c) => <option key={c}>{c}</option>)}
               </select>
+              <button
+                onClick={() => setShowDeleteAllModal(true)}
+                title="Eliminar toda mi información"
+                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 hover:border-red-200 hover:bg-red-50 hover:text-red-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-red-500/30 dark:hover:bg-red-500/10"
+              >
+                <Trash2 size={15} />
+              </button>
               <button
                 onClick={handleLogout}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
@@ -5553,6 +5656,17 @@ export default function FinanceApp() {
         </main>
         {monthOpen !== null && yearData && (
           <MonthDetail index={monthOpen} year={year} fmt={format} onClose={() => setMonthOpen(null)} onNav={navMonth} yearData={yearData} />
+        )}
+        {showDeleteAllModal && (
+          <DeleteAllDataModal
+            onClose={() => setShowDeleteAllModal(false)}
+            // Después de borrar todo, se recarga la página completa en vez
+            // de solo refrescar yearData -- así cada pestaña (que guarda su
+            // propia lista en su estado local, ej. tipos, tarjetas,
+            // artículos) también parte de cero, sin arrastrar nada viejo en
+            // memoria.
+            onDeleted={() => window.location.reload()}
+          />
         )}
       </div>
     </div>
