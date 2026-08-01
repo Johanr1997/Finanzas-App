@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, AreaChart,
-  Line, LineChart, ReferenceLine,
+  Line, LineChart, ReferenceLine, LabelList,
 } from "recharts";
 import {
   Wallet, TrendingUp, TrendingDown, PiggyBank, Target,
@@ -24,6 +24,12 @@ const MONTHS_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","A
 // Ahorros/Presupuestos — para ver de antemano ingresos fijos, gastos fijos y
 // planes de pago que ya están programados para esos años.
 const MAX_FUTURE_YEARS = 10;
+// Método de pago / cuenta de un ingreso (2026-08-01) -- lista fija y simple
+// (no un manager como Tipos de ingreso o Categorías) porque no hace falta
+// gestionar cuentas propias, solo dejar constancia de por dónde entró el
+// dinero. Campo opcional -- los ingresos de antes de este cambio no tienen
+// ninguno guardado y siguen mostrándose bien (ver payment_method en incomes).
+const PAYMENT_METHODS = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Tarjeta", "Otro"];
 const CATEGORY_META = {
   Vivienda: { icon: Home, color: "#EF4444" },
   Alimentación: { icon: Utensils, color: "#F97316" },
@@ -756,31 +762,20 @@ function ListCard({ header, isEmpty, emptyMessage, children }) {
     </Card>
   );
 }
-function StatCard({ label, value, icon: Icon, accent, delta, deltaGood }) {
-  const accents = {
-    slate: "text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800",
-    green: "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10",
-    red: "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10",
-    blue: "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10",
-    amber: "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10",
-  };
+// Tarjeta "hero" de KPI (2026-08-01) -- rediseño de Reporte/Anual a partir de
+// dos imágenes de referencia que trajo el usuario: franja de color sólido
+// arriba (en vez de un ícono chico a la derecha, como StatCard) y el número
+// mucho más grande, para que las 4 cifras principales del año salten a la
+// vista de inmediato en vez de competir en tamaño con el resto de tarjetas.
+function HeroStat({ label, value, accent, note }) {
   return (
-    <Card className="p-5 hover:-translate-y-0.5 transition-transform duration-300">
-      <div className="flex items-start justify-between">
-        <div>
-          <Eyebrow>{label}</Eyebrow>
-          <p className="mt-2 text-2xl font-semibold tabular-nums text-slate-900 dark:text-white">{value}</p>
-        </div>
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${accents[accent]}`}>
-          <Icon size={18} strokeWidth={2} />
-        </div>
+    <Card className="overflow-hidden">
+      <div className="h-1.5 w-full" style={{ backgroundColor: accent }} />
+      <div className="p-5">
+        <Eyebrow>{label}</Eyebrow>
+        <p className="mt-2 text-[26px] font-extrabold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{value}</p>
+        {note && <p className="mt-1 text-xs font-medium text-slate-400">{note}</p>}
       </div>
-      {delta !== undefined && (
-        <div className={`mt-3 inline-flex items-center gap-1 text-xs font-medium ${deltaGood ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"}`}>
-          {deltaGood ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-          {delta}
-        </div>
-      )}
     </Card>
   );
 }
@@ -1077,6 +1072,23 @@ function computePaydayPeriods(yearData, year) {
   let running = 0;
   return out.map((d) => { running += d.balanceDelPeriodo; return { ...d, saldoAcumulado: running }; });
 }
+// Etiqueta de % directo sobre cada porción del donut de "Gastos por
+// categoría" (2026-08-01, a partir de las imágenes de referencia que trajo
+// el usuario) -- en vez de tener que mirar la leyenda para saber el peso de
+// cada categoría. Se oculta en porciones muy chicas (<5%) para no amontonar
+// texto encima de una porción angosta.
+const DONUT_LABEL_RADIAN = Math.PI / 180;
+function renderDonutSliceLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
+  if (percent < 0.05) return null;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.6;
+  const x = cx + radius * Math.cos(-midAngle * DONUT_LABEL_RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * DONUT_LABEL_RADIAN);
+  return (
+    <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700}>
+      {`${Math.round(percent * 100)}%`}
+    </text>
+  );
+}
 function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const [goals, setGoals] = useState([]);
   const [goalsError, setGoalsError] = useState(false);
@@ -1094,6 +1106,30 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
     const balance = ingresos - gastos - ahorros;
     return { ingresos, gastos, ahorros, balance, saldo: ingresos - gastos };
   }, [yearData]);
+  // Indicador de salud financiera (2026-08-01): un vistazo rápido de "¿cómo
+  // voy?" sin tener que leer y comparar las 5 tarjetas de arriba. Se basa en
+  // el % de tus ingresos del año que lograste ahorrar, PERO si el Balance
+  // neto salió negativo (gastaste más de lo que entró, incluso contando los
+  // ahorros) eso pesa más que cualquier % y manda directo a "Alerta" -- no
+  // tendría sentido decir "Bien" solo porque ahorraste algo si en la práctica
+  // terminaste debiendo. Umbrales simples a propósito (no una fórmula con
+  // muchas variables) para que se pueda explicar con una frase.
+  const savingsRate = totals.ingresos > 0 ? (totals.ahorros / totals.ingresos) * 100 : 0;
+  const healthStatus = useMemo(() => {
+    if (totals.ingresos === 0) {
+      return { label: "Sin datos", color: "#94A3B8", accentClass: "text-slate-500 dark:text-slate-400" };
+    }
+    if (totals.balance < 0 || savingsRate < 1) {
+      return { label: "Alerta", color: "#EF4444", accentClass: "text-red-500 dark:text-red-400" };
+    }
+    if (savingsRate >= 20) {
+      return { label: "Excelente", color: "#22C55E", accentClass: "text-emerald-600 dark:text-emerald-400" };
+    }
+    if (savingsRate >= 10) {
+      return { label: "Bien", color: "#3B82F6", accentClass: "text-blue-600 dark:text-blue-400" };
+    }
+    return { label: "Cuidado", color: "#F59E0B", accentClass: "text-amber-600 dark:text-amber-400" };
+  }, [totals, savingsRate]);
   // El progreso mostrado aquí viene de tus metas reales (pestaña Metas), no
   // de un número fijo — así los dos lados de la app siempre concuerdan.
   const totalMetaObjetivo = useMemo(() => goals.reduce((a, g) => a + Number(g.target_amount), 0), [goals]);
@@ -1125,6 +1161,15 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
       };
     });
   }, [yearData]);
+  // "Top 5 categorías de gasto" (2026-08-01): mismo dato que ya calcula
+  // catTotalsYear de arriba, solo un segundo ángulo para verlo -- el donut
+  // muestra proporción (qué tan grande es cada porción del total), esto
+  // muestra ranking (cuáles son, en orden, las que más pesan). No hace falta
+  // ninguna consulta nueva.
+  const topCategoriasGasto = useMemo(
+    () => [...catTotalsYear].sort((a, b) => b.value - a.value).slice(0, 5),
+    [catTotalsYear]
+  );
   const monthCompare = yearData.map((m) => ({ mes: m.mes, Balance: m.balance }));
   // Saldo acumulado: a diferencia del resto de la app (que calcula cada mes
   // aislado, sin arrastrar nada del anterior), esto suma mes a mes lo que
@@ -1213,26 +1258,50 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   return (
     <div className="space-y-6">
       <LoadErrorBanner message={goalsError ? "No se pudieron cargar tus metas — el progreso de metas de abajo puede no ser exacto. Revisa tu conexión e intenta recargar la página." : ""} />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Saldo disponible" value={fmt(totals.saldo)} icon={Wallet} accent="slate" />
-        <StatCard label="Ingresos del año" value={fmt(totals.ingresos)} icon={TrendingUp} accent="green" />
-        <StatCard label="Gastos del año" value={fmt(totals.gastos)} icon={TrendingDown} accent="red" />
-        <StatCard label="Ahorros del año" value={fmt(totals.ahorros)} icon={PiggyBank} accent="blue" />
-        <StatCard label="Balance neto" value={fmt(totals.balance)} icon={Wallet} accent={totals.balance >= 0 ? "green" : "red"} />
-        <Card className="p-5 flex items-center gap-4">
+      {/* Rediseño de Reporte/Anual (2026-08-01) a partir de dos imágenes de
+          referencia que trajo el usuario -- mismos datos y gráficos de
+          siempre, reacomodados con más jerarquía visual: 4 números "hero"
+          bien grandes arriba, una fila secundaria más chica debajo, y el
+          desglose por categoría con % directo sobre el donut + un ranking en
+          barras (mismo dato, dos ángulos). "Saldo disponible" se dejó de
+          mostrar como tarjeta aparte -- "Balance neto" ya es la versión
+          completa (también resta los ahorros), tenerlas las dos del mismo
+          tamaño era redundante. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <HeroStat label="Ingresos del año" value={fmt(totals.ingresos)} accent="#10B981" />
+        <HeroStat label="Gastos del año" value={fmt(totals.gastos)} accent="#EF4444" />
+        <HeroStat label="Ahorros del año" value={fmt(totals.ahorros)} accent="#3B82F6" />
+        <HeroStat
+          label="Balance neto"
+          value={fmt(totals.balance)}
+          accent={totals.balance >= 0 ? "#10B981" : "#EF4444"}
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Card className="p-4 flex items-center gap-4">
+          <ProgressRing percent={Math.min(100, Math.max(0, Math.round(savingsRate)))} color={healthStatus.color} size={48} />
+          <div>
+            <Eyebrow>Salud financiera</Eyebrow>
+            <p className={`mt-0.5 text-base font-bold ${healthStatus.accentClass}`}>{healthStatus.label}</p>
+            <p className="text-xs text-slate-400">
+              {totals.ingresos > 0 ? `Ahorras un ${Math.round(savingsRate)}% de tus ingresos` : "Registra ingresos para verlo"}
+            </p>
+          </div>
+        </Card>
+        <Card className="p-4 flex items-center gap-4">
           {totalMetaObjetivo > 0 ? (
             <>
-              <ProgressRing percent={metaProgreso} color="#F59E0B" size={56} />
+              <ProgressRing percent={metaProgreso} color="#F59E0B" size={48} />
               <div>
                 <Eyebrow>Progreso de tus metas</Eyebrow>
-                <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{metaProgreso}%</p>
+                <p className="mt-0.5 text-base font-bold text-slate-900 dark:text-white">{metaProgreso}%</p>
                 <p className="text-xs text-slate-400">{fmt(totalMetaActual)} de {fmt(totalMetaObjetivo)}</p>
               </div>
             </>
           ) : (
             <div>
               <Eyebrow>Progreso de tus metas</Eyebrow>
-              <p className="mt-1 text-sm text-slate-400">Crea una meta en la pestaña Metas para ver tu progreso aquí.</p>
+              <p className="mt-0.5 text-sm text-slate-400">Crea una meta en la pestaña Metas para ver tu progreso aquí.</p>
             </div>
           )}
         </Card>
@@ -1258,36 +1327,18 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
           })}
         </div>
       </Card>
-      {/* "Bento grid": el gráfico de flujo de caja (el que más se consulta)
-          ocupa dos tercios del ancho como pieza principal, con el desglose
-          por categoría al lado -- y se invierte en la fila de abajo (ahorro
-          acumulado angosto, balance mensual ancho) para que no se vea como
-          una simple repetición de tarjetas iguales. Mismos gráficos y datos
-          de siempre (Recharts), solo reacomodados. */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-2">
-          <Eyebrow>Ingresos vs gastos</Eyebrow>
-          <div className="mt-4 h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Ingresos" fill="#22C55E" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Gastos" fill="#EF4444" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-5">
           <Eyebrow>Gastos por categoría (año completo)</Eyebrow>
           <div className="mt-4 h-72">
             {catTotalsYear.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={catTotalsYear} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={2}>
+                  <Pie
+                    data={catTotalsYear} dataKey="value" nameKey="name"
+                    innerRadius={55} outerRadius={90} paddingAngle={2}
+                    label={renderDonutSliceLabel} labelLine={false}
+                  >
                     {catTotalsYear.map((d, i) => <Cell key={i} fill={d.color} />)}
                   </Pie>
                   <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
@@ -1305,8 +1356,53 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
             )}
           </div>
         </Card>
+        <Card className="p-5">
+          <Eyebrow>Top 5 categorías de gasto</Eyebrow>
+          <div className="mt-4 h-72">
+            {topCategoriasGasto.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={topCategoriasGasto} layout="vertical" margin={{ top: 4, right: 44, bottom: 4, left: 8 }}>
+                  <XAxis type="number" hide />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} width={100} />
+                  <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                  <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={22}>
+                    {topCategoriasGasto.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    <LabelList dataKey="value" position="right" formatter={(v) => `${Math.round(v / 1000)}k`} style={{ fontSize: 11, fontWeight: 700, fill: "#475569" }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState
+                icon={TrendingDown}
+                title="Aún no hay gastos este año"
+                message="En cuanto registres el primero, vas a ver aquí tu ranking de categorías."
+                compact
+                className="h-full"
+              />
+            )}
+          </div>
+        </Card>
       </div>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      {/* "Ingresos vs gastos" pasa a ocupar todo el ancho -- es el gráfico
+          que más se consulta, así que en vez de compartir fila con otro (como
+          antes) queda como la pieza principal, sin línea de cuadrícula para
+          que se sienta más limpio (mismo criterio en los otros dos de abajo). */}
+      <Card className="p-5">
+        <Eyebrow>Ingresos vs gastos</Eyebrow>
+        <div className="mt-4 h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={barData}>
+              <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Ingresos" fill="#22C55E" radius={[4, 4, 0, 0]} barSize={22} />
+              <Bar dataKey="Gastos" fill="#EF4444" radius={[4, 4, 0, 0]} barSize={22} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-5">
           <Eyebrow>Evolución del ahorro acumulado</Eyebrow>
           <div className="mt-4 h-64">
@@ -1318,7 +1414,6 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
                     <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
                 <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
@@ -1327,16 +1422,15 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
             </ResponsiveContainer>
           </div>
         </Card>
-        <Card className="p-5 lg:col-span-2">
+        <Card className="p-5">
           <Eyebrow>Balance mensual (comparación entre meses)</Eyebrow>
           <div className="mt-4 h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthCompare}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="mes" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
                 <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-                <Bar dataKey="Balance" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="Balance" radius={[4, 4, 0, 0]} barSize={22}>
                   {monthCompare.map((d, i) => <Cell key={i} fill={d.Balance >= 0 ? "#22C55E" : "#EF4444"} />)}
                 </Bar>
               </BarChart>
@@ -2747,7 +2841,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => exportToCSV("ingresos.csv", filteredIncomes.map((i) => ({ Tipo: i.type, Descripcion: i.description || "", Monto: i.amount, Fecha: i.date })))}
+            onClick={() => exportToCSV("ingresos.csv", filteredIncomes.map((i) => ({ Tipo: i.type, Descripcion: i.description || "", Monto: i.amount, Fecha: i.date, MetodoDePago: i.payment_method || "" })))}
             disabled={filteredIncomes.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
@@ -2855,7 +2949,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium text-slate-800 dark:text-white">{i.description || i.type}</p>
-                  <p className="truncate text-xs text-slate-400">{i.type} · {i.date}</p>
+                  <p className="truncate text-xs text-slate-400">{i.type} · {i.date}{i.payment_method ? ` · ${i.payment_method}` : ""}</p>
                 </div>
               </div>
               <RowActions onEdit={() => setEditingIncome(i)} onDelete={() => setDeletingIncome(i)} />
@@ -2905,6 +2999,7 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
   const [description, setDescription] = useState(income?.description || "");
   const [amount, setAmount] = useState(income ? String(income.amount) : "");
   const [date, setDate] = useState(income?.date || defaultDate || today);
+  const [paymentMethod, setPaymentMethod] = useState(income?.payment_method || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   // Ver el mismo comentario en SavingModal: guarda acá los tipos creados en
@@ -2930,6 +3025,7 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
         description,
         amount: Number(amount),
         date,
+        payment_method: paymentMethod || null,
       }).eq("id", income.id);
       setSaving(false);
       if (error) {
@@ -2951,6 +3047,7 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
       description,
       amount: Number(amount),
       date,
+      payment_method: paymentMethod || null,
     });
     setSaving(false);
     if (error) {
@@ -2998,6 +3095,13 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
               className={`mt-1 ${INPUT_CLASS}`}
             />
           </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Cuenta / método de pago (opcional)</label>
+          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+            <option value="">Sin especificar</option>
+            {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
         </div>
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
