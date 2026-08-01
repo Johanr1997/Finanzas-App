@@ -2278,49 +2278,16 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
   );
 }
 /* ---------------------------------------------------------------
-   REPORTE
+   REPORTE (Anual / Mensual)
 ------------------------------------------------------------------ */
-// Fusiona lo que antes eran dos pestañas separadas ("Resumen" y "Quincenas")
-// en una sola -- a pedido del usuario (2026-07-30), quien primero pidió
-// juntarlas y luego aclaró que no las quería ver las dos a la vez apiladas,
-// sino elegir cuál ver con un interruptor "Anual" / "Mensual y quincenal" al
-// entrar a la pestaña. Ninguna de las dos vistas cambió por dentro (siguen
-// siendo exactamente `Dashboard` y `QuincenasView`, sin tocar su lógica) --
-// este componente es solo el interruptor que decide cuál mostrar. Empieza en
-// "Anual" (mismo punto de partida que tenía antes la pestaña "Resumen").
-function ReporteView({ fmt, onSelectMonth, yearData, year, month, onJumpToMonth, vista, onChangeVista }) {
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => onChangeVista("anual")}
-          className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-            vista === "anual"
-              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
-          }`}
-        >
-          Anual
-        </button>
-        <button
-          onClick={() => onChangeVista("periodo")}
-          className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-            vista === "periodo"
-              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
-          }`}
-        >
-          <CalendarRange size={15} /> Mensual / Quincenal
-        </button>
-      </div>
-      {vista === "anual" ? (
-        <Dashboard fmt={fmt} onSelectMonth={onSelectMonth} yearData={yearData} year={year} month={month} />
-      ) : (
-        <QuincenasView fmt={fmt} yearData={yearData} year={year} month={month} onJumpToMonth={onJumpToMonth} />
-      )}
-    </div>
-  );
-}
+// Nota histórica: esto fue una sola pestaña "Reporte" con un interruptor
+// interno "Anual" / "Mensual y quincenal" (agregado el 2026-07-30, fusionando
+// lo que antes eran dos pestañas separadas). El 2026-08-01 el usuario decidió
+// volver a separarlas en dos pestañas propias -- "Anual" y "Mensual" -- para
+// que Reporte no fuera la única pestaña de la app con una vista escondida
+// detrás de un selector interno. `Dashboard` y `QuincenasView` (más abajo) no
+// cambiaron por dentro; ahora se renderizan directo desde `FinanceApp` según
+// el tab elegido, sin ningún componente interruptor en el medio.
 function StatMini({ label, value, color }) {
   return (
     <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60">
@@ -5933,7 +5900,8 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
    APP SHELL
 ------------------------------------------------------------------ */
 const TABS = [
-  { id: "reporte", label: "Reporte", icon: Wallet },
+  { id: "anual", label: "Anual", icon: Wallet },
+  { id: "mensual", label: "Mensual", icon: CalendarRange },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
   { id: "savings", label: "Ahorros y Metas", icon: PiggyBank },
@@ -5941,15 +5909,17 @@ const TABS = [
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
 export default function FinanceApp() {
-  const [tab, setTab] = useState("reporte");
-  // "Reporte" fusiona lo que antes eran dos pestañas separadas ("Resumen" y
-  // "Quincenas") a pedido del usuario (2026-07-30): en vez de mostrar las dos
-  // vistas apiladas, ahora se elige cuál ver con un interruptor "Anual" /
-  // "Mensual y quincenal" adentro de la pestaña (ver ReporteView). Este
-  // estado vive acá (no dentro de ReporteView) porque decide qué flechitas
-  // mostrar en el encabezado (de AÑO para "anual", de MES para "periodo") —
-  // ver más abajo, en el título de cada pestaña.
-  const [reporteVista, setReporteVista] = useState("anual");
+  const [tab, setTab] = useState("anual");
+  // "Reporte" (una sola pestaña con un interruptor interno "Anual" /
+  // "Mensual y quincenal", agregado el 2026-07-30) se volvió a separar en dos
+  // pestañas propias -- "Anual" y "Mensual" -- a pedido del usuario
+  // (2026-08-01): el interruptor escondido adentro de una sola pestaña era la
+  // única pestaña de la app que funcionaba distinto al resto (Ingresos,
+  // Gastos, etc. son una cosa por pestaña), y esa inconsistencia era parte de
+  // por qué esa pantalla se sentía cargada. "Mensual" muestra exactamente lo
+  // mismo que antes era la vista "Quincenas" (QuincenasView), solo con el
+  // nombre de pestaña cambiado -- decisión explícita del usuario, para no
+  // duplicar contenido que ya existe en otro lado de la app.
   // "Ahorros y Metas" fusiona lo que antes eran dos pestañas separadas, a
   // pedido del usuario (2026-07-31), con el mismo patrón de interruptor que
   // "Reporte" -- acá solo hace falta para el título de arriba (las flechitas
@@ -6089,14 +6059,15 @@ export default function FinanceApp() {
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h1 className="text-xl font-semibold">
-                {tab === "reporte" && (reporteVista === "anual" ? "Resumen del año" : "Control por período")}
+                {tab === "anual" && "Resumen del año"}
+                {tab === "mensual" && "Control por período"}
                 {tab === "incomes" && "Tus ingresos"}
                 {tab === "expenses" && "Tus gastos"}
                 {tab === "calendar" && "Calendario de pagos"}
                 {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && (savingsVista === "ahorros" ? "Tus ahorros" : "Tus metas")}
               </h1>
-              {tab === "reporte" && reporteVista === "anual" ? (
+              {tab === "anual" ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToYear(year - 1)}
@@ -6116,7 +6087,7 @@ export default function FinanceApp() {
                   </button>
                   <span>· actualizado en tiempo real</span>
                 </div>
-              ) : ["reporte", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
+              ) : ["mensual", "incomes", "expenses", "calendar", "savings", "budgets"].includes(tab) ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToMonth(-1)}
@@ -6145,23 +6116,17 @@ export default function FinanceApp() {
           {dataLoading || !yearData ? (
             // Esta carga inicial (yearData) es compartida por todas las
             // pestañas, así que el esqueleto se elige según cuál se está
-            // viendo -- Reporte/Calendario tienen forma de tarjetas + un
-            // par de gráficos grandes; el resto (Ingresos/Gastos/Ahorros/
+            // viendo -- Anual/Mensual/Calendario tienen forma de tarjetas +
+            // gráficos grandes; el resto (Ingresos/Gastos/Ahorros/
             // Presupuestos) se ve más como una cuadrícula de tarjetas.
-            tab === "reporte" || tab === "calendar" ? <DashboardSkeleton /> : <CardGridSkeleton count={6} />
+            tab === "anual" || tab === "mensual" || tab === "calendar" ? <DashboardSkeleton /> : <CardGridSkeleton count={6} />
           ) : (
             <>
-              {tab === "reporte" && (
-                <ReporteView
-                  fmt={format}
-                  onSelectMonth={openMonth}
-                  yearData={yearData}
-                  year={year}
-                  month={month}
-                  onJumpToMonth={setMonth}
-                  vista={reporteVista}
-                  onChangeVista={setReporteVista}
-                />
+              {tab === "anual" && (
+                <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} />
+              )}
+              {tab === "mensual" && (
+                <QuincenasView fmt={format} yearData={yearData} year={year} month={month} onJumpToMonth={setMonth} />
               )}
               {tab === "calendar" && <CalendarView fmt={format} year={year} month={month} yearData={yearData} />}
             </>
