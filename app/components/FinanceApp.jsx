@@ -2210,14 +2210,19 @@ function QuincenasView({ fmt, yearData, year, month, onJumpToMonth }) {
         </div>
         <Card className="p-5">
           <Eyebrow>Gastos por categoría</Eyebrow>
-          <div className="mt-2 h-52">
+          <div className="mt-4 h-72">
             {pieData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                  <Pie
+                    data={pieData} dataKey="value" nameKey="name"
+                    innerRadius={55} outerRadius={90} paddingAngle={2}
+                    label={renderDonutSliceLabel} labelLine={false}
+                  >
                     {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
                   </Pie>
                   <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} layout="vertical" align="right" verticalAlign="middle" />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -5610,34 +5615,95 @@ function BudgetsView({ fmt, year, month, categories }) {
     ? Math.max(0, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate())
     : null;
 
+  // Las que tienen gasto este mes van arriba (y entre ellas, primero las
+  // más urgentes: sin presupuesto pero con gasto, luego por % usado
+  // descendente). Después, las que tienen presupuesto pero sin movimiento
+  // este mes. Al final, las que ni siquiera tienen presupuesto definido.
+  // Así lo más importante de ver está siempre primero, sin tener que
+  // escanear toda la cuadrícula.
+  const sortedRows = [...rows].sort((a, b) => {
+    const aActive = a.spent > 0;
+    const bActive = b.spent > 0;
+    if (aActive !== bActive) return aActive ? -1 : 1;
+    if (aActive) {
+      const aUrgency = a.pct === null ? Infinity : a.pct;
+      const bUrgency = b.pct === null ? Infinity : b.pct;
+      if (aUrgency !== bUrgency) return bUrgency - aUrgency;
+    }
+    const aHasBudget = Boolean(a.budget);
+    const bHasBudget = Boolean(b.budget);
+    if (aHasBudget !== bHasBudget) return aHasBudget ? -1 : 1;
+    return a.category.name.localeCompare(b.category.name);
+  });
+
   return (
     <div className="space-y-4">
       <LoadErrorBanner message={loadError} />
       <Card className="p-5">
         <Eyebrow>Presupuestos de {MONTHS_FULL[month]} {year}</Eyebrow>
+        {isCurrentRealMonth && (
+          <p className="mt-1 text-xs text-slate-400">
+            Quedan {daysLeftInMonth} {daysLeftInMonth === 1 ? "día" : "días"} del mes
+          </p>
+        )}
       </Card>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {rows.map(({ category, budget, isOverride, spent, pct, categoryExpenses }) => {
+      <Card className="divide-y divide-slate-100 p-0 dark:divide-slate-800">
+        {sortedRows.map(({ category, budget, isOverride, spent, pct, categoryExpenses }) => {
           const color = category.color || "#64748B";
           const over = pct !== null && pct >= 100;
           const near = pct !== null && pct >= 80 && pct < 100;
+          const barColor = over ? "bg-red-500" : near ? "bg-amber-400" : "bg-emerald-500";
+          const pctColor = over ? "text-red-500" : near ? "text-amber-500" : "text-emerald-600";
           return (
-            <Card key={category.id} className="p-5">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-semibold" style={{ backgroundColor: `${color}1a`, color }}>
-                    {category.name.charAt(0)}
-                  </div>
-                  <div>
-                    <p className="font-medium text-slate-800 dark:text-white">{category.name}</p>
-                    <p className="text-xs text-slate-400">
-                      {budget ? `${fmt(spent)} de ${fmt(budget.monthly_amount)}` : "Sin presupuesto definido"}
-                    </p>
+            <div key={category.id} className="flex items-center gap-3 px-4 py-3 sm:px-5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold" style={{ backgroundColor: `${color}1a`, color }}>
+                {category.name.charAt(0)}
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingCategoryExpenses({ category, expenses: categoryExpenses })}
+                className="min-w-0 flex-1 text-left"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="truncate text-sm font-medium text-slate-800 dark:text-white">
+                    {category.name}
                     {budget && isOverride && (
-                      <p className="mt-0.5 text-[11px] font-medium text-amber-500">Especial de {MONTHS_FULL[month]}</p>
+                      <span className="ml-1.5 text-[10px] font-medium text-amber-500">· especial</span>
+                    )}
+                  </p>
+                  {budget ? (
+                    <span className={`shrink-0 text-sm font-semibold tabular-nums ${pctColor}`}>{pct}%</span>
+                  ) : (
+                    <span className="shrink-0 text-xs text-slate-400">{spent > 0 ? fmt(spent) : "Sin presupuesto"}</span>
+                  )}
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    {budget && (
+                      <div className={`h-full rounded-full transition-all duration-700 ease-out ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
                     )}
                   </div>
+                  {budget && (
+                    <span className={`shrink-0 text-[11px] tabular-nums ${over ? "text-red-500" : "text-slate-400"}`}>
+                      {over
+                        ? `${fmt(spent - Number(budget.monthly_amount))} de más`
+                        : `${fmt(Number(budget.monthly_amount) - spent)} libres`}
+                    </span>
+                  )}
                 </div>
+              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                {budget && !isOverride && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingBudget({ category, budget: null, isOverride: false, forceScope: "specific" })}
+                    aria-label={`Monto especial de ${MONTHS_FULL[month]}`}
+                    title={`Monto especial de ${MONTHS_FULL[month]}`}
+                    className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                  >
+                    <Clock size={14} />
+                  </button>
+                )}
                 {budget ? (
                   <RowActions onEdit={() => setEditingBudget({ category, budget, isOverride })} onDelete={() => setDeletingBudget({ ...budget, isOverride })} />
                 ) : (
@@ -5650,54 +5716,7 @@ function BudgetsView({ fmt, year, month, categories }) {
                   </button>
                 )}
               </div>
-              {budget && (
-                <>
-                  <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ease-out ${over ? "bg-red-500" : near ? "bg-amber-400" : "bg-emerald-500"}`}
-                      style={{ width: `${Math.min(100, pct)}%` }}
-                    />
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className={`text-sm font-semibold tabular-nums ${over ? "text-red-500" : near ? "text-amber-500" : "text-emerald-600"}`}>{pct}%</p>
-                      <p className="text-[11px] text-slate-400">usado</p>
-                    </div>
-                    <div>
-                      <p className={`text-sm font-semibold tabular-nums ${over ? "text-red-500" : "text-slate-700 dark:text-slate-200"}`}>
-                        {fmt(Math.abs(Number(budget.monthly_amount) - spent))}
-                      </p>
-                      <p className="text-[11px] text-slate-400">{over ? "te pasaste" : "te quedan"}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{daysLeftInMonth ?? "—"}</p>
-                      <p className="text-[11px] text-slate-400">
-                        {isCurrentRealMonth ? (daysLeftInMonth === 1 ? "día restante" : "días restantes") : isPastMonth ? "mes cerrado" : "mes futuro"}
-                      </p>
-                    </div>
-                  </div>
-                  {over && (
-                    <p className="mt-2 flex items-center gap-1 text-xs text-red-500">
-                      <AlertTriangle size={12} /> Pasaste el límite
-                    </p>
-                  )}
-                </>
-              )}
-              {budget && !isOverride && (
-                <button
-                  onClick={() => setEditingBudget({ category, budget: null, isOverride: false, forceScope: "specific" })}
-                  className="mt-3 w-full rounded-lg border border-dashed border-slate-200 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-                >
-                  Definir monto especial para {MONTHS_FULL[month]}
-                </button>
-              )}
-              <button
-                onClick={() => setViewingCategoryExpenses({ category, expenses: categoryExpenses })}
-                className="mt-3 w-full rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                Ver gastos del mes
-              </button>
-            </Card>
+            </div>
           );
         })}
         {rows.length === 0 && (
@@ -5705,10 +5724,9 @@ function BudgetsView({ fmt, year, month, categories }) {
             icon={Coins}
             title="Primero crea categorías de gasto"
             message="En cuanto tengas categorías en Gastos, vas a poder definirles un presupuesto aquí."
-            className="col-span-full"
           />
         )}
-      </div>
+      </Card>
       {editingBudget && (
         <BudgetModal
           category={editingBudget.category}
