@@ -1089,7 +1089,7 @@ function renderDonutSliceLabel({ cx, cy, midAngle, innerRadius, outerRadius, per
     </text>
   );
 }
-function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
+function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [], onNavigateTab }) {
   const [goals, setGoals] = useState([]);
   const [goalsError, setGoalsError] = useState(false);
   useEffect(() => {
@@ -1097,6 +1097,24 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
       if (error) console.error("Error cargando metas:", error.message);
       setGoalsError(Boolean(error));
       setGoals(data || []);
+    });
+  }, []);
+  // Datos para "Patrimonio neto" y "Atención" (rediseño "centro de control
+  // financiero", 2026-08-07): a diferencia del resto de esta pantalla, estos
+  // tres no dependen del año que se está viendo (yearData) -- se piden UNA
+  // sola vez, con TODA la historia, porque patrimonio neto no tendría
+  // sentido si se reiniciara cada enero como sí hace el "saldo acumulado" de
+  // más abajo.
+  const [patrimonioRaw, setPatrimonioRaw] = useState(null);
+  const [patrimonioError, setPatrimonioError] = useState(false);
+  useEffect(() => {
+    Promise.all([
+      supabase.from("savings").select("amount, date"),
+      supabase.from("installment_plans").select("*, credit_cards(name, cutoff_day, payment_day)"),
+      supabase.from("budgets").select("*"),
+    ]).then(([{ data: sav, error: savErr }, { data: pl, error: plErr }, { data: buds, error: budErr }]) => {
+      setPatrimonioError(Boolean(savErr || plErr || budErr));
+      setPatrimonioRaw({ savings: sav || [], plans: pl || [], budgets: buds || [] });
     });
   }, []);
   const totals = useMemo(() => {
@@ -1193,6 +1211,164 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const currentMonth = yearData[currentIdx];
   const prevMonth = yearData[prevIdx];
   const isRealCurrentMonth = isCurrentYear && month === now.getMonth();
+  // A diferencia de "prevMonth" de arriba (que se queda en el mismo mes si
+  // estás en enero, solo para no romper los "insights" de más abajo), este
+  // "previous" es null en enero a propósito -- TrendBadge ya sabe no
+  // mostrar nada cuando previous es null, en vez de mostrar "0% vs mes
+  // anterior" de forma engañosa.
+  const prevMonthForTrend = month > 0 ? yearData[month - 1] : null;
+  // Patrimonio neto (aproximado): ahorros acumulados de TODA la historia
+  // hasta el fin del mes que se está viendo, menos el saldo pendiente de
+  // todos los planes de pago a esa misma fecha. Es una aproximación
+  // intencional -- la app todavía no tiene el concepto de "cuenta bancaria"
+  // ni rastrea el saldo real de una tarjeta de crédito, así que ninguno de
+  // los dos entra en esta cuenta todavía. Como usa datos de toda la
+  // historia (no solo el año seleccionado), la comparación "vs. mes
+  // anterior" funciona bien incluso cruzando de diciembre a enero.
+  const patrimonio = useMemo(() => {
+    if (!patrimonioRaw) return null;
+    const { savings, plans } = patrimonioRaw;
+    const endOfMonthStr = (y, m) => {
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      return `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    };
+    const activosHasta = (y, m) => {
+      const cutoff = endOfMonthStr(y, m);
+      return savings.filter((s) => s.date <= cutoff).reduce((a, s) => a + Number(s.amount), 0);
+    };
+    const pasivosHasta = (y, m) => plans.reduce((a, p) => a + planSaldoPendiente(p, [], y, m), 0);
+    const prevY = month === 0 ? year - 1 : year;
+    const prevM = month === 0 ? 11 : month - 1;
+    const activos = activosHasta(year, month);
+    const pasivos = pasivosHasta(year, month);
+    const neto = activos - pasivos;
+    const netoPrev = activosHasta(prevY, prevM) - pasivosHasta(prevY, prevM);
+    return { activos, pasivos, neto, delta: neto - netoPrev };
+  }, [patrimonioRaw, year, month]);
+  // Próximos compromisos (próximos 30 días reales): a diferencia de todo lo
+  // demás en esta pantalla, esto SIEMPRE mira la fecha real de hoy, no el
+  // mes que se está navegando con las flechitas -- no tendría sentido
+  // "anticipar pagos" de un año que ya pasó. Solo funciona mientras se esté
+  // viendo el año real actual (yearData del año navegado es el único que
+  // hay cargado); si se está viendo otro año, se muestra un aviso en vez de
+  // datos vacíos que parezcan un error.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const proximosPagos = useMemo(() => {
+    if (!isCurrentYear) return { items: [], totalComprometido: 0, hasMore: false, disabled: true };
+    const todayStr = localDateString(now);
+    const limitDate = new Date(now);
+    limitDate.setDate(limitDate.getDate() + 30);
+    const limitStr = localDateString(limitDate);
+    const realMonthIdx = now.getMonth();
+    const sourceMonths = [yearData[realMonthIdx]];
+    if (realMonthIdx < 11) sourceMonths.push(yearData[realMonthIdx + 1]);
+    const pool = [];
+    sourceMonths.forEach((md) => {
+      md.gastos
+        .filter((g) => String(g.id).startsWith("plan-") || String(g.id).startsWith("recexp-"))
+        .forEach((g) => pool.push({ id: g.id, kind: "gasto", label: g.descripcion, date: g.fecha, amount: g.monto }));
+      md.incomes
+        .filter((i) => String(i.id).startsWith("recinc-"))
+        .forEach((i) => pool.push({ id: i.id, kind: "ingreso", label: i.description || i.type || "Ingreso fijo", date: i.date, amount: Number(i.amount) }));
+    });
+    const upcoming = pool.filter((it) => it.date >= todayStr && it.date <= limitStr).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const totalComprometido = upcoming.filter((it) => it.kind === "gasto").reduce((a, it) => a + it.amount, 0);
+    return { items: upcoming.slice(0, 6), totalComprometido, hasMore: upcoming.length > 6, disabled: false };
+  }, [isCurrentYear, yearData]);
+  // Centro de "Atención": en vez de que la persona tenga que interpretar
+  // varios gráficos para darse cuenta de que algo necesita su atención, se
+  // arma una lista corta de avisos accionables a partir de datos que esta
+  // pantalla ya tiene a mano. Si no hay nada que valga la pena avisar, no se
+  // fuerza ningún aviso solo por llenar espacio (a propósito).
+  const alerts = useMemo(() => {
+    const list = [];
+    if (currentMonth.balance < 0) {
+      list.push({
+        id: "balance-negativo",
+        severity: "bad",
+        text: `Este mes tus gastos y ahorros superaron tus ingresos por ${fmt(Math.abs(currentMonth.balance))}.`,
+        onClick: () => onNavigateTab?.("expenses"),
+      });
+    }
+    if (currentIdx >= 1) {
+      const priorIdxs = [];
+      for (let i = Math.max(0, currentIdx - 3); i < currentIdx; i++) priorIdxs.push(i);
+      const byCatNow = {};
+      currentMonth.gastos.forEach((g) => { byCatNow[g.categoria] = (byCatNow[g.categoria] || 0) + g.monto; });
+      let worst = null;
+      Object.entries(byCatNow).forEach(([cat, amount]) => {
+        const priorTotal = priorIdxs.reduce((a, i) => a + yearData[i].gastos.filter((g) => g.categoria === cat).reduce((s, g) => s + g.monto, 0), 0);
+        const avg = priorIdxs.length > 0 ? priorTotal / priorIdxs.length : 0;
+        if (avg > 0 && amount > avg * 1.3 && amount - avg > currentMonth.gastoTotal * 0.05) {
+          const increase = amount - avg;
+          if (!worst || increase > worst.increase) worst = { cat, amount, avg, increase };
+        }
+      });
+      if (worst) {
+        const pct = Math.round(((worst.amount - worst.avg) / worst.avg) * 100);
+        list.push({
+          id: "categoria-disparada",
+          severity: "warn",
+          text: `Tu gasto en ${worst.cat} subió ${pct}% este mes frente a tu promedio reciente.`,
+          onClick: () => onNavigateTab?.("expenses"),
+        });
+      }
+    }
+    const budgetsForAlerts = patrimonioRaw?.budgets || [];
+    if (budgetsForAlerts.length > 0 && categories.length > 0) {
+      const effective = resolveEffectiveBudgets(budgetsForAlerts, year, month + 1);
+      const rows = categories
+        .map((c) => {
+          const entry = effective[c.id];
+          if (!entry) return null;
+          const spent = currentMonth.gastos.filter((g) => g.categoria === c.name).reduce((a, g) => a + g.monto, 0);
+          return { name: c.name, pct: Math.round((spent / Number(entry.row.monthly_amount)) * 100) };
+        })
+        .filter(Boolean);
+      const exceeded = rows.filter((r) => r.pct >= 100).sort((a, b) => b.pct - a.pct)[0];
+      const near = rows.filter((r) => r.pct >= 80 && r.pct < 100).sort((a, b) => b.pct - a.pct)[0];
+      if (exceeded) {
+        list.push({
+          id: "presupuesto-excedido",
+          severity: "bad",
+          text: `Tu presupuesto de ${exceeded.name} está excedido (${exceeded.pct}%).`,
+          onClick: () => onNavigateTab?.("budgets"),
+        });
+      } else if (near) {
+        list.push({
+          id: "presupuesto-cerca",
+          severity: "warn",
+          text: `Tu presupuesto de ${near.name} está cerca del límite (${near.pct}%).`,
+          onClick: () => onNavigateTab?.("budgets"),
+        });
+      }
+    }
+    if (currentIdx >= 1) {
+      const prevAhorro = yearData[currentIdx - 1].ahorroTotal;
+      if (prevAhorro > 0) {
+        const pct = Math.round(((currentMonth.ahorroTotal - prevAhorro) / prevAhorro) * 100);
+        if (pct >= 10) {
+          list.push({
+            id: "ahorro-subio",
+            severity: "good",
+            text: `Tu ahorro aumentó ${pct}% respecto al mes anterior.`,
+            onClick: () => onNavigateTab?.("savings"),
+          });
+        }
+      }
+    }
+    if (proximosPagos.totalComprometido > 0) {
+      list.push({
+        id: "pagos-proximos",
+        severity: "info",
+        text: `Tienes ${fmt(proximosPagos.totalComprometido)} en pagos programados para los próximos 30 días.`,
+        onClick: () => onNavigateTab?.("calendar"),
+      });
+    }
+    const order = { bad: 0, warn: 1, info: 2, good: 3 };
+    return list.sort((a, b) => order[a.severity] - order[b.severity]).slice(0, 4);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMonth, yearData, currentIdx, patrimonioRaw, categories, year, month, proximosPagos]);
   // "Actividad reciente": mezcla ingresos, gastos y ahorros del mes elegido
   // (currentMonth ya viene de yearData, que esta pantalla ya tenía cargado --
   // ninguna consulta nueva a Supabase), ordenados por fecha descendente y con
@@ -1258,6 +1434,129 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   return (
     <div className="space-y-6">
       <LoadErrorBanner message={goalsError ? "No se pudieron cargar tus metas — el progreso de metas de abajo puede no ser exacto. Revisa tu conexión e intenta recargar la página." : ""} />
+      <LoadErrorBanner message={patrimonioError ? "No se pudo cargar todo lo necesario para Patrimonio neto y Atención. Revisa tu conexión e intenta recargar la página." : ""} />
+      {/* "Centro de control financiero" (Fase 1, 2026-08-07): lo nuevo de
+          esta ronda va arriba de todo -- patrimonio neto, resumen del mes,
+          Atención y Próximos compromisos -- pensado para responder en
+          segundos "¿cómo estoy?" sin tener que leer varios gráficos. Todo lo
+          que ya existía debajo (los 4 números "hero" del año, Panorama del
+          año, donut, Ingresos vs gastos, etc.) se dejó tal cual, sin
+          quitarle nada. */}
+      <Card className="p-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <Eyebrow>Patrimonio neto</Eyebrow>
+            {patrimonio ? (
+              <>
+                <p className="mt-1 text-[32px] font-extrabold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{fmt(patrimonio.neto)}</p>
+                {patrimonio.delta !== 0 && (
+                  <p className={`mt-1 text-sm font-semibold ${patrimonio.delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"}`}>
+                    {patrimonio.delta >= 0 ? "↑" : "↓"} {fmt(Math.abs(patrimonio.delta))} este mes
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="mt-1 text-sm text-slate-400">Calculando…</p>
+            )}
+          </div>
+          {patrimonio && (
+            <div className="flex gap-6">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Activos</p>
+                <p className="text-base font-bold text-emerald-600 dark:text-emerald-400">{fmt(patrimonio.activos)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Pasivos</p>
+                <p className="text-base font-bold text-red-500 dark:text-red-400">{fmt(patrimonio.pasivos)}</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <p className="mt-3 text-[11px] text-slate-400">
+          Aproximado: ahorros acumulados menos saldo pendiente de planes de pago. Todavía no incluye cuentas bancarias, efectivo ni deuda de tarjeta de crédito.
+        </p>
+      </Card>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-4">
+          <Eyebrow>Disponible</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(cumulativeBalanceData[month].saldoAcumulado)}</p>
+          {month > 0 && (
+            <span className={`mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${currentMonth.balance >= 0 ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400" : "bg-red-50 text-red-500 dark:bg-red-500/10 dark:text-red-400"}`}>
+              {currentMonth.balance >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />} {fmt(Math.abs(currentMonth.balance))} este mes
+            </span>
+          )}
+        </Card>
+        <Card className="p-4">
+          <Eyebrow>Ingresos</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(currentMonth.ingresoTotal)}</p>
+          <div className="mt-1.5"><TrendBadge current={currentMonth.ingresoTotal} previous={prevMonthForTrend?.ingresoTotal} /></div>
+        </Card>
+        <Card className="p-4">
+          <Eyebrow>Gastos</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(currentMonth.gastoTotal)}</p>
+          <div className="mt-1.5"><TrendBadge current={currentMonth.gastoTotal} previous={prevMonthForTrend?.gastoTotal} invert /></div>
+        </Card>
+        <Card className="p-4">
+          <Eyebrow>Ahorro</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">
+            {fmt(currentMonth.ahorroTotal)}
+            {currentMonth.ingresoTotal > 0 && (
+              <span className="ml-1.5 text-xs font-semibold text-slate-400">· {Math.round((currentMonth.ahorroTotal / currentMonth.ingresoTotal) * 100)}%</span>
+            )}
+          </p>
+          <div className="mt-1.5"><TrendBadge current={currentMonth.ahorroTotal} previous={prevMonthForTrend?.ahorroTotal} /></div>
+        </Card>
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card className="p-5">
+          <Eyebrow>Atención</Eyebrow>
+          <div className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+            {alerts.length === 0 ? (
+              <p className="py-2 text-sm text-slate-400">No hay nada que necesite tu atención en este momento.</p>
+            ) : (
+              alerts.map((a) => (
+                <button key={a.id} onClick={a.onClick} className="flex w-full items-start gap-2.5 py-2.5 text-left first:pt-0 last:pb-0">
+                  <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                    a.severity === "bad" ? "bg-red-500" : a.severity === "warn" ? "bg-amber-400" : a.severity === "good" ? "bg-emerald-500" : "bg-blue-500"
+                  }`} />
+                  <span className="flex-1 text-sm text-slate-700 dark:text-slate-200">{a.text}</span>
+                  <ChevronRight size={14} className="mt-0.5 shrink-0 text-slate-300 dark:text-slate-600" />
+                </button>
+              ))
+            )}
+          </div>
+        </Card>
+        <Card className="p-5">
+          <Eyebrow>Próximos compromisos</Eyebrow>
+          {proximosPagos.disabled ? (
+            <p className="mt-3 text-sm text-slate-400">Cambia al año actual para ver tus próximos pagos.</p>
+          ) : proximosPagos.items.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-400">No tienes pagos ni ingresos programados en los próximos 30 días.</p>
+          ) : (
+            <>
+              <div className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+                {proximosPagos.items.map((it) => (
+                  <div key={it.id} className="flex items-center justify-between gap-2 py-2 text-sm first:pt-0">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span className="w-14 shrink-0 text-xs font-medium text-slate-400">
+                        {dateStringDay(it.date)} {MONTHS[dateStringMonth(it.date) - 1]}
+                      </span>
+                      <span className="truncate text-slate-700 dark:text-slate-200">{it.label}</span>
+                    </div>
+                    <span className={`shrink-0 tabular-nums font-medium ${it.kind === "ingreso" ? "text-emerald-600" : "text-red-500"}`}>
+                      {it.kind === "ingreso" ? "+" : "-"}{fmt(it.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center justify-between border-t border-dashed border-slate-200 pt-2 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                <button onClick={() => onNavigateTab?.("calendar")} className="hover:text-slate-700 dark:hover:text-slate-200">Ver calendario completo</button>
+                <span>Comprometido: {fmt(proximosPagos.totalComprometido)}</span>
+              </div>
+            </>
+          )}
+        </Card>
+      </div>
       {/* Rediseño de Reporte/Anual (2026-08-01) a partir de dos imágenes de
           referencia que trajo el usuario -- mismos datos y gráficos de
           siempre, reacomodados con más jerarquía visual: 4 números "hero"
@@ -5918,7 +6217,7 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
    APP SHELL
 ------------------------------------------------------------------ */
 const TABS = [
-  { id: "anual", label: "Anual", icon: Wallet },
+  { id: "inicio", label: "Inicio", icon: Home },
   { id: "mensual", label: "Mensual", icon: CalendarRange },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
@@ -5927,7 +6226,7 @@ const TABS = [
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
 export default function FinanceApp() {
-  const [tab, setTab] = useState("anual");
+  const [tab, setTab] = useState("inicio");
   // "Reporte" (una sola pestaña con un interruptor interno "Anual" /
   // "Mensual y quincenal", agregado el 2026-07-30) se volvió a separar en dos
   // pestañas propias -- "Anual" y "Mensual" -- a pedido del usuario
@@ -6077,7 +6376,7 @@ export default function FinanceApp() {
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h1 className="text-xl font-semibold">
-                {tab === "anual" && "Resumen del año"}
+                {tab === "inicio" && "Centro de control financiero"}
                 {tab === "mensual" && "Control por período"}
                 {tab === "incomes" && "Tus ingresos"}
                 {tab === "expenses" && "Tus gastos"}
@@ -6085,7 +6384,7 @@ export default function FinanceApp() {
                 {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && (savingsVista === "ahorros" ? "Tus ahorros" : "Tus metas")}
               </h1>
-              {tab === "anual" ? (
+              {tab === "inicio" ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToYear(year - 1)}
@@ -6137,11 +6436,11 @@ export default function FinanceApp() {
             // viendo -- Anual/Mensual/Calendario tienen forma de tarjetas +
             // gráficos grandes; el resto (Ingresos/Gastos/Ahorros/
             // Presupuestos) se ve más como una cuadrícula de tarjetas.
-            tab === "anual" || tab === "mensual" || tab === "calendar" ? <DashboardSkeleton /> : <CardGridSkeleton count={6} />
+            tab === "inicio" || tab === "mensual" || tab === "calendar" ? <DashboardSkeleton /> : <CardGridSkeleton count={6} />
           ) : (
             <>
-              {tab === "anual" && (
-                <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} />
+              {tab === "inicio" && (
+                <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} categories={categories} onNavigateTab={setTab} />
               )}
               {tab === "mensual" && (
                 <QuincenasView fmt={format} yearData={yearData} year={year} month={month} onJumpToMonth={setMonth} />
