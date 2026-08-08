@@ -6890,6 +6890,158 @@ function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, vista, on
     </div>
   );
 }
+// Mismo azul que ya usa toda la pestaña Ahorros (total ahorrado, gráfico de
+// "Ahorro por tipo", monto de cada ahorro individual) -- a diferencia de
+// una Meta, un tipo de ahorro no tiene un color propio elegible, así que se
+// usa este fijo para que la tarjeta con anillo se sienta parte de la misma
+// pestaña.
+const SAVINGS_TYPE_GOAL_COLOR = "#3B82F6";
+// Tarjeta con anillo de progreso para un tipo de ahorro CON monto objetivo
+// (2026-08-08, a pedido del usuario: "lo que hiciste en metas también en
+// ahorros" -- ver la conversación completa en las notas de progreso, esto
+// fue lo que de verdad quiso decir). Visualmente es la misma tarjeta que ya
+// se armó para Metas (GoalRing + Depositar/Retirar), pero el progreso viene
+// de la suma REAL de tus ahorros de este tipo (currentTotal, calculado en
+// SavingsView con TODOS los años, no solo el que se está viendo) -- no hay
+// un número aparte que se pueda ajustar a mano como sí pasa con una Meta.
+function SavingsTypeGoalCard({ type, currentTotal, fmt, onDeposit, onWithdraw, onEdit, onDelete }) {
+  const target = Number(type.target_amount) || 0;
+  const pct = target > 0 ? Math.min(100, Math.round((currentTotal / target) * 100)) : 0;
+  const color = SAVINGS_TYPE_GOAL_COLOR;
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: `${color}1a`, color }}>
+            <PiggyBank size={18} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-medium text-slate-800 dark:text-white">{type.name}</p>
+            <p className="truncate text-xs text-slate-400">Tipo de ahorro</p>
+          </div>
+        </div>
+        <RowActions onEdit={onEdit} onDelete={onDelete} />
+      </div>
+      <div className="mt-4 flex items-center gap-4">
+        <div className="relative shrink-0" style={{ width: 92, height: 92 }}>
+          <GoalRing pct={pct} color={color} size={92} strokeWidth={9} />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-lg font-bold tabular-nums" style={{ color }}>{pct}%</span>
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-2xl font-bold tabular-nums" style={{ color }}>{pct}%</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Ahorrado</p>
+          <p className="mt-1 truncate text-lg font-semibold text-slate-800 dark:text-white">{fmt(currentTotal)}</p>
+          <p className="truncate text-xs text-slate-400">de {fmt(target)}</p>
+        </div>
+      </div>
+      {pct >= 100 && (
+        <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+          <Check size={12} /> Meta alcanzada
+        </p>
+      )}
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          onClick={onDeposit}
+          className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+          style={{ backgroundColor: color }}
+        >
+          <ArrowUp size={13} /> Depositar
+        </button>
+        <button
+          onClick={onWithdraw}
+          disabled={currentTotal <= 0}
+          className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          style={{ backgroundColor: `${color}1a`, color }}
+        >
+          <ArrowDown size={13} /> Retirar
+        </button>
+      </div>
+    </Card>
+  );
+}
+// "Depositar" en un tipo de ahorro con monto objetivo abre el mismo
+// formulario de "Agregar ahorro" de siempre (SavingModal, con el tipo ya
+// elegido) -- crea un registro real, así el total (que es la suma de esos
+// registros) queda correcto solo. "Retirar" es distinto: no hay un número
+// aparte que se pueda bajar a mano como con una Meta, así que esto SÍ crea
+// un registro real en el historial de Ahorros, con el monto en NEGATIVO,
+// para que el total baje de verdad -- transparente sobre lo que hace, y
+// consistente con que "Depositar" también deja un registro real.
+function SavingsTypeWithdrawModal({ type, currentTotal, fmt, onClose, onSaved }) {
+  const today = localDateString();
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const value = Number(amount);
+    if (!value || value <= 0) {
+      setErrorMsg("Ingresa un monto mayor a 0.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    const withdrawAmount = Math.min(value, currentTotal);
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("savings").insert({
+      user_id: userId || null,
+      type: type.name,
+      type_id: type.id,
+      amount: -withdrawAmount,
+      date,
+      year: dateStringYear(date),
+      month: dateStringMonth(date),
+    });
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved();
+      onClose();
+    }
+  }
+  return (
+    <ModalShell onClose={onClose} title={`Retirar de "${type.name}"`}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <p className="-mt-2 text-xs text-slate-400">
+          El total de este tipo es la suma de tus ahorros reales (no un número aparte editable), así que esto registra un ahorro en NEGATIVO en tu historial de Ahorros (llevas {fmt(currentTotal)}) -- queda ahí igual que cualquier otro, para que el total baje de verdad.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto a retirar</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="50000" autoFocus
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+            {currentTotal > 0 && (
+              <p className="mt-1.5 text-xs text-slate-400">Si retiras más de {fmt(currentTotal)}, el total de este tipo queda en cero (no puede quedar negativo).</p>
+            )}
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
+            <input
+              type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
+          style={{ backgroundColor: SAVINGS_TYPE_GOAL_COLOR }}
+        >
+          {saving ? "Guardando..." : "Retirar"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
 function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccounts }) {
   const [savings, setSavings] = useState([]);
   const [goals, setGoals] = useState([]);
@@ -6905,6 +7057,12 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [viewingTypeReport, setViewingTypeReport] = useState(null);
   const [loadError, setLoadError] = useState("");
+  // Depositar/Retirar/Editar/Eliminar de un tipo de ahorro CON monto
+  // objetivo (2026-08-08, ver SavingsTypeGoalCard más arriba).
+  const [depositingType, setDepositingType] = useState(null);
+  const [withdrawingType, setWithdrawingType] = useState(null);
+  const [editingType, setEditingType] = useState(null);
+  const [deletingType, setDeletingType] = useState(null);
   async function refetchSavings() {
     const { data } = await supabase
       .from("savings")
@@ -6912,12 +7070,28 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
       .gte("date", `${year}-01-01`).lte("date", `${year}-12-31`)
       .order("date", { ascending: false });
     setSavings(data || []);
+    refetchAllTimeTotalsByType();
     if (onDataChanged) onDataChanged();
   }
   async function refetchTypes() {
     const { data } = await supabase.from("savings_types").select("*").order("name", { ascending: true });
     setTypes(data || []);
   }
+  // Total ahorrado de TODOS los tiempos por tipo (no solo del año que se
+  // está viendo con las flechitas) -- a diferencia del gráfico "Ahorro por
+  // tipo en {year}" de más abajo (que sí es por año, para comparar entre
+  // años), el progreso de un tipo CON monto objetivo no debería reiniciarse
+  // cada enero, igual que el progreso de una Meta tampoco se reinicia.
+  const [allTimeTotalsByType, setAllTimeTotalsByType] = useState({});
+  async function refetchAllTimeTotalsByType() {
+    const { data } = await supabase.from("savings").select("type_id, amount").not("type_id", "is", null);
+    const map = {};
+    (data || []).forEach((s) => { map[s.type_id] = (map[s.type_id] || 0) + Number(s.amount); });
+    setAllTimeTotalsByType(map);
+  }
+  useEffect(() => {
+    refetchAllTimeTotalsByType();
+  }, []);
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
@@ -6954,6 +7128,13 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
     setSavings((prev) => prev.filter((s) => s.id !== record.id));
     if (onDataChanged) onDataChanged();
     setDeletingSaving(null);
+  }
+  async function handleDeleteType(id) {
+    const { error } = await supabase.from("savings_types").delete().eq("id", id);
+    if (!error) {
+      refetchTypes();
+      setDeletingType(null);
+    }
   }
   const monthSavings = savings.filter((s) => dateStringMonth(s.date) - 1 === month);
   const total = monthSavings.reduce((a, s) => a + Number(s.amount), 0);
@@ -7029,6 +7210,26 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
         <Plus size={20} />
         <span className="text-sm font-medium">Agregar ahorro</span>
       </button>
+      {/* Tipos de ahorro CON monto objetivo (2026-08-08, a pedido del
+          usuario), con el mismo anillo de progreso + Depositar/Retirar que
+          las tarjetas de Metas. Los tipos SIN monto objetivo se quedan como
+          hasta ahora, en "Ahorro por tipo en {year}" más abajo. */}
+      {types.filter((t) => t.target_amount != null).length > 0 && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {types.filter((t) => t.target_amount != null).map((t) => (
+            <SavingsTypeGoalCard
+              key={t.id}
+              type={t}
+              currentTotal={allTimeTotalsByType[t.id] || 0}
+              fmt={fmt}
+              onDeposit={() => setDepositingType(t)}
+              onWithdraw={() => setWithdrawingType(t)}
+              onEdit={() => setEditingType(t)}
+              onDelete={() => setDeletingType(t)}
+            />
+          ))}
+        </div>
+      )}
       {/* Antes eran tarjetas con el total anual de cada tipo -- el usuario
           notó (2026-07-31) que, con un solo ahorro por tipo en el mes, se
           veía igual que la tarjeta individual de abajo. Se cambió a un
@@ -7167,6 +7368,36 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           onClose={() => setViewingTypeReport(null)}
         />
       )}
+      {depositingType && (
+        <SavingModal
+          types={types} goals={goals} accounts={accounts}
+          initialTypeId={depositingType.id}
+          defaultDate={defaultDateForMonth(month, year)}
+          onClose={() => setDepositingType(null)}
+          onSaved={() => { refetchSavings(); if (refetchAccounts) refetchAccounts(); }}
+          onTypesChanged={refetchTypes}
+        />
+      )}
+      {withdrawingType && (
+        <SavingsTypeWithdrawModal
+          type={withdrawingType}
+          currentTotal={allTimeTotalsByType[withdrawingType.id] || 0}
+          fmt={fmt}
+          onClose={() => setWithdrawingType(null)}
+          onSaved={refetchSavings}
+        />
+      )}
+      {editingType && (
+        <SavingsTypeModal type={editingType} onClose={() => setEditingType(null)} onSaved={refetchTypes} />
+      )}
+      {deletingType && (
+        <ConfirmDeleteModal
+          title="Eliminar tipo de ahorro"
+          message={`¿Seguro que quieres eliminar "${deletingType.name}"? Los ahorros que ya registraste con este tipo no se borran, solo quedan sin tipo asociado.`}
+          onCancel={() => setDeletingType(null)}
+          onConfirm={() => handleDeleteType(deletingType.id)}
+        />
+      )}
     </div>
   );
 }
@@ -7232,10 +7463,13 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
     </div>
   );
 }
-function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, onSaved, onTypesChanged, defaultDate }) {
+// `initialTypeId` (2026-08-08, para el botón "Depositar" de un tipo de
+// ahorro con monto objetivo, ver SavingsTypeGoalCard) solo prellena el tipo
+// al CREAR un ahorro nuevo -- no activa el modo de edición.
+function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, onSaved, onTypesChanged, defaultDate, initialTypeId }) {
   const isEditing = Boolean(savingRecord);
   const today = localDateString();
-  const [typeId, setTypeId] = useState(savingRecord?.type_id || "");
+  const [typeId, setTypeId] = useState(savingRecord?.type_id || initialTypeId || "");
   const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
   const [date, setDate] = useState(savingRecord?.date || defaultDate || today);
@@ -7448,7 +7682,12 @@ function SavingsTypesManagerModal({ types, onClose, onChanged }) {
           <div className="max-h-[40vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {sortedTypes.map((t) => (
               <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{t.name}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{t.name}</p>
+                  {t.target_amount != null && (
+                    <p className="text-xs text-slate-400">Con meta de {Number(t.target_amount).toLocaleString("es-CR")}</p>
+                  )}
+                </div>
                 <RowActions onEdit={() => setEditingType(t)} onDelete={() => setDeletingType(t)} />
               </div>
             ))}
@@ -7468,6 +7707,13 @@ function SavingsTypesManagerModal({ types, onClose, onChanged }) {
 function SavingsTypeModal({ type, onClose, onSaved }) {
   const isEditing = Boolean(type);
   const [name, setName] = useState(type?.name || "");
+  // Monto objetivo (2026-08-08, a pedido del usuario, a partir de la misma
+  // captura de referencia que ya usamos para Metas): OPCIONAL -- si se
+  // deja vacío, este tipo de ahorro se sigue mostrando igual que siempre
+  // (fila con gráfico de barras). Si se pone un monto, el tipo pasa a
+  // mostrarse como una tarjeta con anillo de progreso y Depositar/Retirar,
+  // igual que una Meta -- ver SavingsTypeGoalCard.
+  const [targetAmount, setTargetAmount] = useState(type?.target_amount != null ? String(type.target_amount) : "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   async function handleSubmit(e) {
@@ -7478,8 +7724,12 @@ function SavingsTypeModal({ type, onClose, onSaved }) {
     }
     setSaving(true);
     setErrorMsg("");
+    const payload = {
+      name: name.trim(),
+      target_amount: targetAmount ? Number(targetAmount) : null,
+    };
     if (isEditing) {
-      const { error } = await supabase.from("savings_types").update({ name: name.trim() }).eq("id", type.id);
+      const { error } = await supabase.from("savings_types").update(payload).eq("id", type.id);
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -7491,7 +7741,7 @@ function SavingsTypeModal({ type, onClose, onSaved }) {
     }
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData?.user?.id;
-    const { error } = await supabase.from("savings_types").insert({ user_id: userId || null, name: name.trim() });
+    const { error } = await supabase.from("savings_types").insert({ user_id: userId || null, ...payload });
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
@@ -7510,6 +7760,17 @@ function SavingsTypeModal({ type, onClose, onSaved }) {
             placeholder="Ej. Fondo de emergencia"
             className={`mt-1 ${INPUT_CLASS}`}
           />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto objetivo (opcional)</label>
+          <input
+            type="number" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)}
+            placeholder="Ej. 500000"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+          <p className="mt-1.5 text-xs text-slate-400">
+            Si le pones un monto, este tipo se muestra como una tarjeta con anillo de progreso y botones de Depositar/Retirar, igual que una meta. Si lo dejas vacío, se sigue viendo como hasta ahora.
+          </p>
         </div>
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
