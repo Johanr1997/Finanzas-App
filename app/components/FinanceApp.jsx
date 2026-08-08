@@ -1314,25 +1314,17 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   useEffect(() => {
     refetchRecurringRaw();
   }, []);
-  // Cuánto se le ha sumado (ingresos fijos) o restado (gastos fijos) ya a
-  // cada cuenta ligada, contando todas las ocurrencias que ya "tocaban"
-  // desde que cada ítem empezó hasta hoy (recurringElapsedOccurrences) --
-  // se suma sobre el current_balance guardado, sin escribir nada en la
-  // base cada mes.
-  const recurringAccrualByAccount = useMemo(() => {
-    const map = {};
-    (recurringRaw.incomes || []).forEach((it) => {
-      if (!it.account_id) return;
-      const occ = recurringElapsedOccurrences(it);
-      map[it.account_id] = (map[it.account_id] || 0) + occ.length * Number(it.amount);
-    });
-    (recurringRaw.expenses || []).forEach((it) => {
-      if (!it.account_id) return;
-      const occ = recurringElapsedOccurrences(it);
-      map[it.account_id] = (map[it.account_id] || 0) - occ.length * Number(it.amount);
-    });
-    return map;
-  }, [recurringRaw]);
+  // Antes (2026-08-08) esta pantalla le sumaba al saldo de cada cuenta una
+  // proyección de su ingreso fijo ligado (todas las ocurrencias que ya
+  // "tocaban" desde que ese ingreso fijo empezó), sin importar si esa plata
+  // ya se había gastado, ahorrado o transferido a otro lado -- eso hacía que
+  // la tarjeta de la cuenta mostrara dinero que en la realidad ya no estaba
+  // ahí (2026-08-08, reportado por el usuario: "me muestra 287000... y yo
+  // ese dinero le hice una transferencia"). Se quitó por el mismo criterio
+  // que ya se aplicó a "Dinero Actual": la tarjeta de una cuenta debe
+  // mostrar el saldo real guardado, no una proyección. Si quieres reflejar
+  // un ingreso fijo en el saldo, regístralo a mano cuando llegue, como
+  // cualquier otro ingreso.
   // Deuda que le suma a una tarjeta cada gasto fijo ligado a ella: todas las
   // ocurrencias ya vencidas, MENOS las que ya se marcaron como pagadas (con
   // el botón "Marcar como pagado" de CardDetailModal, sea que se hayan
@@ -1398,7 +1390,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   const accountCarouselItems = useMemo(() => {
     const accountItems = accounts.map((a) => ({
       kind: "cuenta", id: a.id, data: a,
-      balance: Number(a.current_balance) + (recurringAccrualByAccount[a.id] || 0),
+      balance: Number(a.current_balance),
     }));
     const cardItems = cards.map((c) => ({
       kind: "tarjeta",
@@ -1407,7 +1399,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
       balance: Number(c.initial_balance || 0) + (cardCharges[c.id] || 0) + (planChargesByCard[c.id] || 0) + (recurringChargesByCard[c.id] || 0),
     }));
     return [...accountItems, ...cardItems];
-  }, [accounts, cards, cardCharges, planChargesByCard, recurringAccrualByAccount, recurringChargesByCard]);
+  }, [accounts, cards, cardCharges, planChargesByCard, recurringChargesByCard]);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
