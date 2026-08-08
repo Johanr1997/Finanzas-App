@@ -12,7 +12,7 @@ import {
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
   Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
-  Minus, Clock, Wifi, Receipt,
+  Minus, Clock, Wifi, Receipt, ArrowUp, ArrowDown,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -431,6 +431,19 @@ function addMonthsToDateString(dateStr, monthsToAdd) {
   const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
   const targetDay = Math.min(d, lastDayOfTargetMonth);
   return `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
+}
+// Cuántos días hay entre dos fechas "YYYY-MM-DD" (2026-08-08, para "X días
+// para alcanzar tu meta" en la tarjeta de una meta). Igual que las demás
+// funciones de fecha de este archivo, arma el Date con año/mes/día sueltos
+// en vez de parsear el string directo -- así queda en la hora LOCAL del
+// navegador en vez de medianoche UTC, y no se corre un día por el huso
+// horario de Costa Rica.
+function daysBetweenDateStrings(fromStr, toStr) {
+  const [fy, fm, fd] = fromStr.split("-").map(Number);
+  const [ty, tm, td] = toStr.split("-").map(Number);
+  const fromDate = new Date(fy, fm - 1, fd);
+  const toDate = new Date(ty, tm - 1, td);
+  return Math.round((toDate - fromDate) / (1000 * 60 * 60 * 24));
 }
 // A partir de la fecha real de una compra con tarjeta de crédito, calcula la
 // fecha en la que realmente toca pagarla (según el día de corte y el día de
@@ -3484,6 +3497,10 @@ function GoalsView({ fmt, yearData, month }) {
   const [editingGoal, setEditingGoal] = useState(null);
   const [deletingGoal, setDeletingGoal] = useState(null);
   const [viewingContributionsGoal, setViewingContributionsGoal] = useState(null);
+  // Depositar/retirar rápido desde la tarjeta (2026-08-08, a pedido del
+  // usuario, a partir de una captura de referencia): { goal, mode }, con
+  // mode "depositar" o "retirar". Ver GoalQuickAdjustModal más abajo.
+  const [adjustingGoal, setAdjustingGoal] = useState(null);
   async function refetchGoals() {
     const { data } = await supabase.from("goals").select("*");
     setGoals(data || []);
@@ -3524,6 +3541,12 @@ function GoalsView({ fmt, yearData, month }) {
         const pct = Math.min(100, Math.round((g.current_amount / g.target_amount) * 100));
         const Icon = Target;
         const forecast = estimateGoalForecast(g, contributions.filter((c) => c.goal_id === g.id));
+        // Días para alcanzar la meta al ritmo promedio de los aportes reales
+        // (mismo cálculo que antes daba "la completarías en agosto 2026",
+        // ahora en días -- a pedido del usuario, a partir de una captura de
+        // referencia de otra app). Solo se muestra cuando hay suficientes
+        // datos para estimarlo (forecast.status === "ok").
+        const daysToGoal = forecast.status === "ok" ? Math.max(1, daysBetweenDateStrings(localDateString(), forecast.targetDate)) : null;
         return (
           <Card key={g.id} className="p-5">
             <div className="flex items-start justify-between gap-2">
@@ -3533,28 +3556,53 @@ function GoalsView({ fmt, yearData, month }) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium text-slate-800 dark:text-white">{g.name}</p>
-                  <p className="truncate text-xs text-slate-400">{fmt(g.current_amount)} de {fmt(g.target_amount)}</p>
+                  <p className="truncate text-xs text-slate-400">Meta de ahorro</p>
                 </div>
               </div>
               <RowActions onEdit={() => setEditingGoal(g)} onDelete={() => setDeletingGoal(g)} />
             </div>
-            <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-              <div
-                className="h-full rounded-full transition-all duration-700 ease-out"
-                style={{ width: `${pct}%`, backgroundColor: g.color }}
-              />
+            {/* Anillo de progreso en vez de la barra de antes (2026-08-08, a
+                partir de una captura de referencia que mandó el usuario). */}
+            <div className="mt-4 flex items-center gap-4">
+              <div className="relative shrink-0" style={{ width: 92, height: 92 }}>
+                <GoalRing pct={pct} color={g.color} size={92} strokeWidth={9} />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-lg font-bold tabular-nums" style={{ color: g.color }}>{pct}%</span>
+                </div>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-2xl font-bold tabular-nums" style={{ color: g.color }}>{pct}%</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Ahorrado</p>
+                <p className="mt-1 truncate text-lg font-semibold text-slate-800 dark:text-white">{fmt(g.current_amount)}</p>
+                <p className="truncate text-xs text-slate-400">de {fmt(g.target_amount)}</p>
+              </div>
             </div>
-            <div className="mt-2 flex items-center justify-between text-xs">
-              <span className="font-medium" style={{ color: g.color }}>{pct}% completado</span>
-              {pct >= 100 && <span className="inline-flex items-center gap-1 text-emerald-600"><Check size={12} /> Meta alcanzada</span>}
-            </div>
-            {forecast.status === "ok" && (
-              <p className="mt-1.5 text-xs text-slate-400">
-                A este ritmo (~{fmt(Math.round(forecast.avgMonthly))}/mes), la completarías en{" "}
-                <span className="font-medium text-slate-600 dark:text-slate-300">
-                  {MONTHS_FULL[dateStringMonth(forecast.targetDate) - 1]} {dateStringYear(forecast.targetDate)}
-                </span>.
+            {pct >= 100 && (
+              <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+                <Check size={12} /> Meta alcanzada
               </p>
+            )}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setAdjustingGoal({ goal: g, mode: "depositar" })}
+                className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                style={{ backgroundColor: g.color }}
+              >
+                <ArrowUp size={13} /> Depositar
+              </button>
+              <button
+                onClick={() => setAdjustingGoal({ goal: g, mode: "retirar" })}
+                disabled={Number(g.current_amount) <= 0}
+                className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                style={{ backgroundColor: `${g.color}1a`, color: g.color }}
+              >
+                <ArrowDown size={13} /> Retirar
+              </button>
+            </div>
+            {daysToGoal != null && (
+              <div className="mt-3 flex items-center justify-center gap-1.5 rounded-full border border-slate-100 py-1.5 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                <Clock size={12} /> {daysToGoal} día{daysToGoal === 1 ? "" : "s"} para alcanzar tu meta
+              </div>
             )}
             <div className="mt-3">
               <button
@@ -3598,8 +3646,102 @@ function GoalsView({ fmt, yearData, month }) {
           onClose={() => setViewingContributionsGoal(null)}
         />
       )}
+      {adjustingGoal && (
+        <GoalQuickAdjustModal
+          goal={adjustingGoal.goal}
+          mode={adjustingGoal.mode}
+          fmt={fmt}
+          onClose={() => setAdjustingGoal(null)}
+          onSaved={refetchGoals}
+        />
+      )}
       </div>
     </div>
+  );
+}
+// Anillo de progreso circular para la tarjeta de una meta (2026-08-08, a
+// partir de una captura de referencia que mandó el usuario) -- reemplaza a
+// la barra que había antes. Dibujado con un <circle> de fondo (la "pista")
+// y otro encima con stroke-dasharray/stroke-dashoffset para el arco de
+// progreso, rotado -90° para que empiece arriba (a las 12) en vez de a la
+// derecha (a las 3), como cualquier anillo de progreso normal.
+function GoalRing({ pct, color, size = 92, strokeWidth = 9 }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const clamped = Math.min(100, Math.max(0, pct));
+  const offset = circumference * (1 - clamped / 100);
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+      <circle
+        cx={size / 2} cy={size / 2} r={radius} fill="none"
+        strokeWidth={strokeWidth} className="stroke-slate-100 dark:stroke-slate-800"
+      />
+      <circle
+        cx={size / 2} cy={size / 2} r={radius} fill="none"
+        stroke={color} strokeWidth={strokeWidth} strokeLinecap="round"
+        strokeDasharray={circumference} strokeDashoffset={offset}
+        style={{ transition: "stroke-dashoffset 700ms ease-out" }}
+      />
+    </svg>
+  );
+}
+// Depositar/retirar rápido en una meta (2026-08-08, a pedido del usuario, a
+// partir de la misma captura de referencia): ajusta current_amount al
+// instante con un solo campo de monto -- sin dejar un registro en el
+// historial de Ahorros ni tocar ninguna cuenta. Es, a propósito, el mismo
+// criterio que ya existía con "Monto actual" al editar una meta (ver
+// GoalModal), solo que accesible con un clic desde la tarjeta en vez de
+// tener que abrir "Editar". Si la persona quiere que un aporte quede
+// registrado en su historial de Ahorros (y opcionalmente ligado a una
+// cuenta), sigue pudiendo hacerlo como siempre desde "Agregar ahorro".
+function GoalQuickAdjustModal({ goal, mode, fmt, onClose, onSaved }) {
+  const isDeposit = mode === "depositar";
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const current = Number(goal.current_amount) || 0;
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const value = Number(amount);
+    if (!value || value <= 0) {
+      setErrorMsg("Ingresa un monto mayor a 0.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    const delta = isDeposit ? value : -Math.min(value, current);
+    await adjustGoalAmount(goal.id, delta);
+    setSaving(false);
+    onSaved();
+    onClose();
+  }
+  return (
+    <ModalShell onClose={onClose} title={`${isDeposit ? "Depositar en" : "Retirar de"} "${goal.name}"`}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <p className="-mt-2 text-xs text-slate-400">
+          Se {isDeposit ? "suma" : "resta"} de una vez al progreso de esta meta (llevas {fmt(current)}) -- no queda un registro en tu historial de Ahorros ni afecta ninguna cuenta. Si prefieres que quede registrado, hazlo desde "Agregar ahorro" en Ahorros.
+        </p>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto a {isDeposit ? "depositar" : "retirar"}</label>
+          <input
+            type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+            placeholder="50000" autoFocus
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+          {!isDeposit && current > 0 && (
+            <p className="mt-1.5 text-xs text-slate-400">Si retiras más de {fmt(current)}, el progreso de la meta queda en cero (no puede quedar negativo).</p>
+          )}
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
+          style={{ backgroundColor: goal.color }}
+        >
+          {saving ? "Guardando..." : isDeposit ? "Depositar" : "Retirar"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 // Solo lectura: muestra los ahorros de la pestaña Ahorros que se vincularon
