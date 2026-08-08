@@ -42,7 +42,7 @@ const ACCOUNT_TYPES = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Inv
 // convence.
 const BANKS = [
   { name: "BAC Credomatic", from: "#C8102E", to: "#6E0A1B" },
-  { name: "Banco Nacional (BN)", from: "#00205B", to: "#E30613" },
+  { name: "Banco Nacional (BN)", from: "#E6C455", to: "#8A6D1D" },
   { name: "Banco de Costa Rica (BCR)", from: "#004C97", to: "#00274D" },
   { name: "Banco Popular", from: "#F26A21", to: "#A8390A" },
   { name: "Scotiabank", from: "#EC111A", to: "#8C0B12" },
