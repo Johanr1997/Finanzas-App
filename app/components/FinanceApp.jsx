@@ -891,7 +891,7 @@ function HeroStat({ label, value, accent, note }) {
       <div className="h-1.5 w-full" style={{ backgroundColor: accent }} />
       <div className="p-5">
         <Eyebrow>{label}</Eyebrow>
-        <p className="mt-2 text-[26px] font-extrabold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{value}</p>
+        <p className="mt-2 text-[26px] font-bold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{value}</p>
         {note && <p className="mt-1 text-xs font-medium text-slate-400">{note}</p>}
       </div>
     </Card>
@@ -1651,7 +1651,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
         <Eyebrow>Dinero Actual</Eyebrow>
         {patrimonio ? (
           <>
-            <p className="mt-1 text-[32px] font-extrabold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{fmt(patrimonio.activos)}</p>
+            <p className="mt-1 text-[32px] font-bold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{fmt(patrimonio.activos)}</p>
             {patrimonio.deltaActivos !== 0 && (
               <p className={`mt-1 text-sm font-semibold ${patrimonio.deltaActivos >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"}`}>
                 {patrimonio.deltaActivos >= 0 ? "↑" : "↓"} {fmt(Math.abs(patrimonio.deltaActivos))} este mes
@@ -2184,7 +2184,16 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
       <div className="relative flex items-start justify-between gap-3 pr-14">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">{isCard ? "Debes actualmente" : "Saldo actual"}</p>
-          <p className="mt-1 truncate text-[32px] font-extrabold leading-tight tracking-tight text-white sm:text-[36px]">
+          {/* "font-bold" en vez de "font-extrabold" (2026-08-08, reportado
+              por el usuario en Safari): con el peso 800 de la fuente
+              variable, al refrescar la página los dígitos a veces se veían
+              con símbolos incorrectos hasta cambiar de tarjeta (un bug
+              conocido de Safari al interpolar pesos "extra" de fuentes
+              variables) -- el peso 700 (bold) es un peso con nombre propio
+              de la fuente, mucho menos propenso a este problema. Se agregó
+              también "tabular-nums" (no lo tenía) para que los dígitos no
+              salten de ancho al cambiar de tarjeta. */}
+          <p className="mt-1 truncate text-[32px] font-bold leading-tight tracking-tight tabular-nums text-white sm:text-[36px]">
             {fmt(view.balance)}
           </p>
         </div>
@@ -2214,32 +2223,38 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
     </div>
   );
 }
-// Carrusel de cuentas y tarjetas (2026-08-08, a pedido del usuario, a partir
-// de una captura de referencia): una tarjeta a la vez con flechitas a los
-// lados en pantallas grandes, flechitas debajo en móvil, y puntos indicando
-// cuántas hay. Si solo hay una, no se muestran ni flechitas ni puntos. Las
-// tarjetas de crédito (kind === "tarjeta") además muestran un botón
+// Carrusel de cuentas y tarjetas (2026-08-08, a partir de una captura de
+// referencia, ajustado el mismo día a pedido del usuario). En escritorio se
+// ven 2 tarjetas a la vez, con flechitas a los lados -- YA NO se puede
+// arrastrar/deslizar con el mouse o el trackpad ahí (al usuario no le gustó
+// esa sensación). En celular se sigue viendo una tarjeta a la vez y SÍ se
+// puede deslizar con el dedo para cambiar, exactamente como hasta ahora.
+// Si solo hay una cuenta/tarjeta en total, no se muestran flechitas ni
+// puntos en ningún lado; en escritorio tampoco se muestran si hay
+// exactamente 2 (ya se ven las dos a la vez, no hay nada más que avanzar).
+// Las tarjetas de crédito (kind === "tarjeta") además muestran un botón
 // "Registrar pago" debajo, para bajar su deuda.
 function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail }) {
   const [index, setIndex] = useState(0);
   const count = items.length;
   const safeIndex = count ? ((index % count) + count) % count : 0;
   const item = items[safeIndex];
+  // Segunda tarjeta visible en escritorio -- la siguiente en la lista, con
+  // wraparound (si hay 2 en total, es simplemente la otra).
+  const secondIndex = count ? (safeIndex + 1) % count : 0;
+  const secondItem = items[secondIndex];
   function prev() {
     setIndex((i) => (i - 1 + count) % count);
   }
   function next() {
     setIndex((i) => (i + 1) % count);
   }
-  // Deslizar con el dedo (celular) o arrastrar con 2 dedos en el trackpad
-  // (Mac) para cambiar de tarjeta, sin tener que usar las flechitas
-  // (2026-08-08, a pedido del usuario). `dragX` es el corrimiento en vivo
-  // mientras se arrastra, para que la tarjeta se sienta "seguir el
-  // dedo/gesto" tanto en táctil como en trackpad; al soltar, si pasó el
-  // umbral cambia de tarjeta, si no vuelve a su lugar con una animación
-  // corta. `dragXRef` guarda el mismo valor que el estado, pero se puede
-  // leer sin quedar "atascado" (stale) dentro del temporizador que decide
-  // cuándo terminó un gesto de trackpad (ver más abajo).
+  // Deslizar con el dedo para cambiar de tarjeta (2026-08-08) -- ahora SOLO
+  // en celular (ver el bloque "sm:hidden" más abajo); en escritorio ya no
+  // existe este gesto, ver comentario de arriba. `dragX` es el corrimiento
+  // en vivo mientras se arrastra, para que la tarjeta se sienta "seguir el
+  // dedo"; al soltar, si pasó el umbral cambia de tarjeta, si no vuelve a
+  // su lugar con una animación corta.
   const [dragX, setDragX] = useState(0);
   const dragXRef = useRef(0);
   const isDragging = useRef(false);
@@ -2249,14 +2264,9 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
     setDragX(clamped);
   }
   // Velocidad del gesto (px por milisegundo, con signo), para poder
-  // reconocer un "flick" -- un deslizón rápido y corto, como los que se ven
-  // en el carrusel del App Store -- y cambiar de tarjeta aunque no haya
-  // llegado a moverse los 60px del umbral de distancia (2026-08-08, a
-  // pedido del usuario, a partir de una grabación mostrando ese mismo
-  // carrusel nativo de macOS). Se actualiza en cada muestra del gesto
-  // (touchmove o wheel) comparando contra la muestra anterior -- así, si al
-  // soltar la última muestra fue rápida, cuenta como flick aunque el resto
-  // del gesto haya sido lento.
+  // reconocer un "flick" -- un deslizón rápido y corto -- y cambiar de
+  // tarjeta aunque no haya llegado a moverse los 60px del umbral de
+  // distancia.
   const velocityRef = useRef(0);
   const lastSampleTime = useRef(0);
   const lastSampleX = useRef(0);
@@ -2281,46 +2291,19 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
     lastSampleTime.current = 0;
     setDragX(0);
   }
-  // Deslizar con el dedo (celular) o arrastrar con 2 dedos en el trackpad
-  // (Mac), ambos como listeners NATIVOS (no como props onTouchMove/onWheel
-  // de React, que React registra "passive" por defecto y ahí
-  // preventDefault() no sirve de nada) -- así se puede bloquear de verdad
-  // los gestos del navegador/sistema que compiten con este mismo
-  // movimiento: en Mac, deslizar 2 dedos en el trackpad "vuelve a la
-  // página anterior"; en el celular (iOS Safari sobre todo), deslizar el
-  // dedo hacia la derecha desde cerca del borde hace lo mismo, mostrando
-  // una vista previa/"imagen" de la página anterior en pleno gesto
-  // (2026-08-08, reportado por el usuario en ambos casos: "en Mac no
-  // cambia la tarjeta" y "en el celular, al deslizar a la derecha la
-  // página hace una imagen rara").
-  //
-  // Táctil: se decide con el PRIMER movimiento claro si el gesto es
+  // Listener NATIVO (no prop onTouchMove de React, que React registra
+  // "passive" por defecto y ahí preventDefault() no sirve de nada) -- así
+  // se bloquea de verdad el gesto nativo de iOS Safari que compite con
+  // este movimiento (deslizar desde el borde para "volver a la página
+  // anterior"). Se decide con el PRIMER movimiento claro si el gesto es
   // horizontal (cambiar de tarjeta) o vertical (scroll normal de la
-  // página) -- una vez que se decide horizontal, se llama preventDefault()
-  // en cada evento siguiente del mismo gesto para que el navegador no
-  // dispare su propio "volver atrás".
-  //
-  // Trackpad ("wheel"): a diferencia del táctil, cada evento individual
-  // puede traer un poco de ruido en el eje que no es (aunque el gesto sea
-  // claramente horizontal), así que decidir evento por evento cuál eje
-  // domina (como se hacía antes) dejaba pasar de largo la mayoría de los
-  // eventos -- la tarjeta casi no se movía. Ahora se acumula el
-  // movimiento desde que empieza el gesto y se decide UNA sola vez cuál
-  // eje ganó apenas se junta un mínimo (6px); a partir de ahí, todos los
-  // eventos de ese mismo gesto se tratan igual (ya no evento por evento),
-  // hasta que el gesto "termina" (no llega otro evento en 120ms, el
-  // "wheel" no tiene un evento de "solté los dedos" como el táctil).
+  // página).
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
-  const wheelEndTimer = useRef(null);
-  const wheelLockedAxis = useRef(null); // null = todavía no se decide, "x" u "y" ya decidido
-  const wheelAccumX = useRef(0);
-  const wheelAccumY = useRef(0);
   const cardWrapRef = useRef(null);
   useEffect(() => {
     const el = cardWrapRef.current;
     if (!el || count <= 1) return;
-
     function onTouchStart(e) {
       touchStartX.current = e.touches[0].clientX;
       touchStartY.current = e.touches[0].clientY;
@@ -2341,9 +2324,6 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
           return;
         }
       }
-      // Ya se decidió que es un deslizón horizontal: se bloquea el gesto
-      // nativo del navegador (como el "volver atrás" de iOS) además de
-      // mover la tarjeta.
       e.preventDefault();
       sampleVelocity(e.touches[0].clientX);
       setDrag(dx);
@@ -2354,177 +2334,146 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
       touchStartY.current = null;
       if (isDragging.current) commitOrResetDrag();
     }
-    function onWheelEnd() {
-      commitOrResetDrag();
-      wheelLockedAxis.current = null;
-      wheelAccumX.current = 0;
-      wheelAccumY.current = 0;
-    }
-    // Igual que sampleVelocity, pero a partir de un delta (lo que da
-    // "wheel") en vez de una posición absoluta (lo que da "touch") --
-    // mismo signo que dx en el táctil: el "wheel" mueve dragX restando
-    // deltaX (ver más abajo), así que la velocidad también se calcula
-    // sobre -deltaX para que el umbral de FLICK_VELOCITY signifique lo
-    // mismo en los dos casos.
-    function sampleWheelVelocity(deltaX) {
-      const now = performance.now();
-      if (lastSampleTime.current) {
-        const dt = now - lastSampleTime.current;
-        if (dt > 0) velocityRef.current = -deltaX / dt;
-      }
-      lastSampleTime.current = now;
-    }
-    function onNativeWheel(e) {
-      if (wheelLockedAxis.current === null) {
-        wheelAccumX.current += e.deltaX;
-        wheelAccumY.current += e.deltaY;
-        if (Math.abs(wheelAccumX.current) < 6 && Math.abs(wheelAccumY.current) < 6) {
-          // Todavía no hay suficiente movimiento acumulado para saber si
-          // es horizontal o vertical -- no se toca nada por si termina
-          // siendo un scroll normal de la página.
-          return;
-        }
-        wheelLockedAxis.current = Math.abs(wheelAccumX.current) > Math.abs(wheelAccumY.current) ? "x" : "y";
-      }
-      if (wheelLockedAxis.current === "y") return; // ya se decidió que es scroll vertical normal: dejarlo pasar
-      e.preventDefault();
-      isDragging.current = true;
-      sampleWheelVelocity(e.deltaX);
-      setDrag(dragXRef.current - e.deltaX);
-      if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
-      wheelEndTimer.current = setTimeout(onWheelEnd, 120);
-    }
-
     el.addEventListener("touchstart", onTouchStart, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: false });
     el.addEventListener("touchend", onTouchEnd, { passive: true });
     el.addEventListener("touchcancel", onTouchEnd, { passive: true });
-    el.addEventListener("wheel", onNativeWheel, { passive: false });
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
       el.removeEventListener("touchcancel", onTouchEnd);
-      el.removeEventListener("wheel", onNativeWheel);
-      if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
     };
   }, [count]);
   if (!item) return null;
   const view = toCardView(item);
+  const secondView = secondItem ? toCardView(secondItem) : null;
   return (
     <div>
-      <div className="flex items-center gap-3">
-        {count > 1 && (
-          <button
-            onClick={prev}
-            aria-label="Anterior"
-            className="hidden shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 sm:flex"
-          >
-            <ChevronLeft size={18} />
-          </button>
-        )}
-        {/* En pantallas angostas (celular) se deja que la tarjeta use todo el
-            ancho disponible -- así es como ya se veía bien. Desde el
-            breakpoint "sm" (tablet/escritorio) se limita el ancho máximo y
-            se centra, porque si no, en una pantalla ancha la tarjeta se
-            estira muchísimo (mantiene su proporción real 16:10, así que
-            termina siendo enorme y desproporcionada) -- reportado por el
-            usuario viendo capturas de escritorio vs. iPhone (2026-08-08). */}
+      {/* Celular: una tarjeta a la vez, se puede deslizar con el dedo. */}
+      <div className="sm:hidden">
         <div
           ref={cardWrapRef}
-          // El deslizar (táctil y trackpad) ahora se maneja con listeners
-          // nativos en un useEffect (ver más arriba) en vez de props
-          // onTouch.../onWheel de React, para poder bloquear de verdad los
-          // gestos nativos del navegador que compiten con este movimiento.
-          // "overscroll-behavior-x: contain" es un refuerzo extra por CSS
-          // (sobre todo para Chrome/Android) para que el "rebote" horizontal
-          // no se le escape ni siquiera a mitad de gesto.
-          className="min-w-0 flex-1 touch-pan-y select-none sm:mx-auto sm:max-w-sm [overscroll-behavior-x:contain]"
+          className="touch-pan-y select-none [overscroll-behavior-x:contain]"
         >
           <div
             style={{
               transform: `translateX(${dragX}px)`,
-              // Curva "ease-out" más pronunciada (arranca rápido, se asienta
-              // suave) en vez de un "ease" parejo -- se siente más parecida
-              // al resorte/inercia de un carrusel nativo como el del App
-              // Store (2026-08-08, a pedido del usuario a partir de una
-              // grabación de ese mismo carrusel).
               transition: isDragging.current ? "none" : "transform 260ms cubic-bezier(0.22, 1, 0.36, 1)",
             }}
           >
-            <AccountCard
-              view={view}
-              kind={item.kind}
-              fmt={fmt}
-              onEdit={() => onEdit(item)}
-              onDelete={() => onDelete(item)}
-              onViewDetail={item.kind === "tarjeta" ? () => onViewDetail(item) : undefined}
-            />
+            <AccountCardBlock item={item} view={view} fmt={fmt} onEdit={onEdit} onDelete={onDelete} onPay={onPay} onViewDetail={onViewDetail} />
           </div>
-          {item.kind === "tarjeta" && (
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button
-                onClick={() => onPay(item)}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                <Landmark size={13} /> Registrar pago
-              </button>
-              {/* Detalle completo de la tarjeta: todos sus movimientos
-                  (compras sueltas, cuotas de planes y gastos fijos) con un
-                  gráfico, y flechitas para cambiar de tarjeta sin cerrar la
-                  ventana (2026-08-08, a pedido del usuario). Tocar la
-                  tarjeta misma hace lo mismo (ver AccountCard); este botón
-                  se deja además como acceso explícito, sobre todo en
-                  escritorio. */}
-              <button
-                onClick={() => onViewDetail(item)}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                <Receipt size={13} /> Detalle
-              </button>
-            </div>
-          )}
         </div>
         {count > 1 && (
-          <button
-            onClick={next}
-            aria-label="Siguiente"
-            className="hidden shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 sm:flex"
-          >
-            <ChevronRight size={18} />
-          </button>
+          <div className="mt-3 flex items-center justify-center gap-4">
+            <button
+              onClick={prev}
+              aria-label="Anterior"
+              className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button
+              onClick={next}
+              aria-label="Siguiente"
+              className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        )}
+        {count > 1 && (
+          <div className="mt-3 flex items-center justify-center gap-1.5">
+            {items.map((it, i) => (
+              <button
+                key={`${it.kind}-${it.id}`}
+                onClick={() => setIndex(i)}
+                aria-label={`Ir al ítem ${i + 1}`}
+                className={`h-1.5 rounded-full transition-all ${
+                  i === safeIndex ? "w-5 bg-slate-700 dark:bg-white" : "w-1.5 bg-slate-300 dark:bg-slate-600"
+                }`}
+              />
+            ))}
+          </div>
         )}
       </div>
-      {count > 1 && (
-        <div className="mt-3 flex items-center justify-center gap-4 sm:hidden">
-          <button
-            onClick={prev}
-            aria-label="Anterior"
-            className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <button
-            onClick={next}
-            aria-label="Siguiente"
-            className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
-      )}
-      {count > 1 && (
-        <div className="mt-3 flex items-center justify-center gap-1.5">
-          {items.map((it, i) => (
+      {/* Escritorio: dos tarjetas a la vez, solo con flechitas -- sin
+          deslizar/arrastrar (2026-08-08, a pedido del usuario). */}
+      <div className="hidden sm:block">
+        <div className="flex items-center gap-3">
+          {count > 2 && (
             <button
-              key={`${it.kind}-${it.id}`}
-              onClick={() => setIndex(i)}
-              aria-label={`Ir al ítem ${i + 1}`}
-              className={`h-1.5 rounded-full transition-all ${
-                i === safeIndex ? "w-5 bg-slate-700 dark:bg-white" : "w-1.5 bg-slate-300 dark:bg-slate-600"
-              }`}
-            />
-          ))}
+              onClick={prev}
+              aria-label="Anterior"
+              className="flex shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
+            >
+              <ChevronLeft size={18} />
+            </button>
+          )}
+          <div className={`mx-auto grid min-w-0 flex-1 gap-4 ${count > 1 ? "max-w-3xl grid-cols-2" : "max-w-sm grid-cols-1"}`}>
+            <AccountCardBlock item={item} view={view} fmt={fmt} onEdit={onEdit} onDelete={onDelete} onPay={onPay} onViewDetail={onViewDetail} />
+            {count > 1 && (
+              <AccountCardBlock item={secondItem} view={secondView} fmt={fmt} onEdit={onEdit} onDelete={onDelete} onPay={onPay} onViewDetail={onViewDetail} />
+            )}
+          </div>
+          {count > 2 && (
+            <button
+              onClick={next}
+              aria-label="Siguiente"
+              className="flex shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
+            >
+              <ChevronRight size={18} />
+            </button>
+          )}
+        </div>
+        {count > 2 && (
+          <div className="mt-3 flex items-center justify-center gap-1.5">
+            {items.map((it, i) => (
+              <button
+                key={`${it.kind}-${it.id}`}
+                onClick={() => setIndex(i)}
+                aria-label={`Ir al ítem ${i + 1}`}
+                className={`h-1.5 rounded-full transition-all ${
+                  i === safeIndex || i === secondIndex ? "w-5 bg-slate-700 dark:bg-white" : "w-1.5 bg-slate-300 dark:bg-slate-600"
+                }`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+// Una tarjeta/cuenta + sus botones de abajo (Registrar pago / Detalle, solo
+// para tarjetas de crédito) -- extraído para poder mostrar dos de estos uno
+// al lado del otro en escritorio, sin duplicar el JSX (2026-08-08).
+function AccountCardBlock({ item, view, fmt, onEdit, onDelete, onPay, onViewDetail }) {
+  if (!item) return null;
+  return (
+    <div>
+      <AccountCard
+        view={view}
+        kind={item.kind}
+        fmt={fmt}
+        onEdit={() => onEdit(item)}
+        onDelete={() => onDelete(item)}
+        onViewDetail={item.kind === "tarjeta" ? () => onViewDetail(item) : undefined}
+      />
+      {item.kind === "tarjeta" && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button
+            onClick={() => onPay(item)}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Landmark size={13} /> Registrar pago
+          </button>
+          <button
+            onClick={() => onViewDetail(item)}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Receipt size={13} /> Detalle
+          </button>
         </div>
       )}
     </div>
