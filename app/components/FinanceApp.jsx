@@ -3478,7 +3478,7 @@ function estimateGoalForecast(goal, contributions) {
   const targetDate = addMonthsToDateString(today, monthsNeeded);
   return { status: "ok", avgMonthly, targetDate };
 }
-function GoalsView({ fmt, yearData, month }) {
+function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
   const [goals, setGoals] = useState([]);
   const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3648,8 +3648,9 @@ function GoalsView({ fmt, yearData, month }) {
           goal={adjustingGoal.goal}
           mode={adjustingGoal.mode}
           fmt={fmt}
+          accounts={accounts}
           onClose={() => setAdjustingGoal(null)}
-          onSaved={refetchGoals}
+          onSaved={() => { refetchGoals(); if (refetchAccounts) refetchAccounts(); }}
         />
       )}
       </div>
@@ -3691,9 +3692,16 @@ function GoalRing({ pct, color, size = 92, strokeWidth = 9 }) {
 // tener que abrir "Editar". Si la persona quiere que un aporte quede
 // registrado en su historial de Ahorros (y opcionalmente ligado a una
 // cuenta), sigue pudiendo hacerlo como siempre desde "Agregar ahorro".
-function GoalQuickAdjustModal({ goal, mode, fmt, onClose, onSaved }) {
+function GoalQuickAdjustModal({ goal, mode, fmt, accounts, onClose, onSaved }) {
   const isDeposit = mode === "depositar";
   const [amount, setAmount] = useState("");
+  // ¿De qué cuenta sale (Depositar) / a qué cuenta vuelve (Retirar) el
+  // dinero? (2026-08-08, a pedido del usuario) -- opcional: si se deja en
+  // "Ninguna", se comporta exactamente como antes (solo ajusta el progreso
+  // de la meta, sin tocar ninguna cuenta). Si se elige una, esa cuenta se
+  // actualiza de una vez, en el mismo momento -- igual que el selector de
+  // cuenta opcional que ya existe en "Agregar ahorro".
+  const [accountId, setAccountId] = useState("");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const current = Number(goal.current_amount) || 0;
@@ -3706,8 +3714,14 @@ function GoalQuickAdjustModal({ goal, mode, fmt, onClose, onSaved }) {
     }
     setSaving(true);
     setErrorMsg("");
-    const delta = isDeposit ? value : -Math.min(value, current);
+    // Al retirar, lo que en realidad sale del progreso de la meta queda
+    // topado en `current` (no puede quedar negativa) -- se usa ese mismo
+    // monto real (no el que se haya escrito de más) para devolverlo a la
+    // cuenta, para que meta y cuenta nunca queden desincronizadas.
+    const actualAmount = isDeposit ? value : Math.min(value, current);
+    const delta = isDeposit ? value : -actualAmount;
     await adjustGoalAmount(goal.id, delta);
+    if (accountId) await adjustAccountBalance(accountId, isDeposit ? -actualAmount : actualAmount);
     setSaving(false);
     onSaved();
     onClose();
@@ -3716,7 +3730,7 @@ function GoalQuickAdjustModal({ goal, mode, fmt, onClose, onSaved }) {
     <ModalShell onClose={onClose} title={`${isDeposit ? "Depositar en" : "Retirar de"} "${goal.name}"`}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <p className="-mt-2 text-xs text-slate-400">
-          Se {isDeposit ? "suma" : "resta"} de una vez al progreso de esta meta (llevas {fmt(current)}) -- no queda un registro en tu historial de Ahorros ni afecta ninguna cuenta. Si prefieres que quede registrado, hazlo desde "Agregar ahorro" en Ahorros.
+          Se {isDeposit ? "suma" : "resta"} de una vez al progreso de esta meta (llevas {fmt(current)}) -- no queda un registro en tu historial de Ahorros. Si prefieres que quede registrado, hazlo desde "Agregar ahorro" en Ahorros.
         </p>
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto a {isDeposit ? "depositar" : "retirar"}</label>
@@ -3729,6 +3743,25 @@ function GoalQuickAdjustModal({ goal, mode, fmt, onClose, onSaved }) {
             <p className="mt-1.5 text-xs text-slate-400">Si retiras más de {fmt(current)}, el progreso de la meta queda en cero (no puede quedar negativo).</p>
           )}
         </div>
+        {(accounts || []).length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              {isDeposit ? "¿De qué cuenta sale el dinero? (opcional)" : "¿A qué cuenta regresa el dinero? (opcional)"}
+            </label>
+            <select
+              value={accountId} onChange={(e) => setAccountId(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            >
+              <option value="">Ninguna</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            {accountId && (
+              <p className="mt-1.5 text-xs text-slate-400">
+                {isDeposit ? "El monto se restará automáticamente del saldo de esa cuenta." : "El monto se sumará automáticamente al saldo de esa cuenta."}
+              </p>
+            )}
+          </div>
+        )}
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
@@ -6868,7 +6901,7 @@ function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, accounts,
         <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-800 dark:text-white">
           <Target size={17} className="text-slate-400" /> Metas
         </h2>
-        <GoalsView fmt={fmt} yearData={yearData} month={month} />
+        <GoalsView fmt={fmt} yearData={yearData} month={month} accounts={accounts} refetchAccounts={refetchAccounts} />
       </div>
       <div>
         <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-800 dark:text-white">
