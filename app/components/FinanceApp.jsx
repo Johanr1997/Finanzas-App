@@ -12,7 +12,7 @@ import {
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
   Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
-  Minus, Clock, Wifi,
+  Minus, Clock, Wifi, Receipt,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -1279,7 +1279,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   // historia completa desde que cada uno empezó, para saber cuánto se le ha
   // "acumulado" ya a la cuenta o tarjeta ligada -- mismo criterio que
   // patrimonioRaw. `marks` son los ciclos de un gasto fijo con tarjeta que
-  // ya se marcaron como pagados (ver CardBreakdownModal).
+  // ya se marcaron como pagados (ver CardDetailModal).
   const [recurringRaw, setRecurringRaw] = useState({ incomes: [], expenses: [], marks: [] });
   async function refetchRecurringRaw() {
     const [{ data: recInc }, { data: recExp }, { data: marks }] = await Promise.all([
@@ -1313,7 +1313,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   }, [recurringRaw]);
   // Deuda que le suma a una tarjeta cada gasto fijo ligado a ella: todas las
   // ocurrencias ya vencidas, MENOS las que ya se marcaron como pagadas (con
-  // el botón "Marcar como pagado" de CardBreakdownModal, sea que se hayan
+  // el botón "Marcar como pagado" de CardDetailModal, sea que se hayan
   // pagado antes de tiempo o ya vencidas) -- así nunca se cuenta un ciclo
   // dos veces.
   const recurringChargesByCard = useMemo(() => {
@@ -2052,12 +2052,15 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
         />
       )}
       {viewingCardDetail && (
-        <CardBreakdownModal
+        <CardDetailModal
           card={viewingCardDetail}
+          cards={cards}
+          plans={patrimonioRaw?.plans || []}
           recurringExpenses={recurringRaw.expenses}
           marks={recurringRaw.marks}
           fmt={fmt}
           onClose={() => setViewingCardDetail(null)}
+          onSwitchCard={setViewingCardDetail}
           onMark={markRecurringExpensePaid}
           onUnmark={unmarkRecurringExpensePaid}
         />
@@ -2114,7 +2117,7 @@ function toCardView(item) {
 // (chip, contactless) que no son marca de nadie en particular. Para una
 // tarjeta de crédito, el número no es "saldo" sino "deuda" (lo que has
 // cargado menos lo que has pagado), así que la etiqueta cambia según "kind".
-function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
+function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
   const isCard = kind === "tarjeta";
   // Si la cuenta/tarjeta tiene un color elegido a mano (2026-08-08, selector
   // de color al crearla), ese manda -- si no, se sigue usando el color del
@@ -2126,8 +2129,11 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
     || BANKS[BANKS.length - 1];
   return (
     <div
-      className="group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6"
+      className={`group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6 ${isCard && onViewDetail ? "cursor-pointer" : ""}`}
       style={{ backgroundImage: `linear-gradient(135deg, ${bank.from}, ${bank.to})` }}
+      onClick={isCard && onViewDetail ? onViewDetail : undefined}
+      role={isCard && onViewDetail ? "button" : undefined}
+      aria-label={isCard && onViewDetail ? `Ver detalle de ${view.name}` : undefined}
     >
       {/* Banda diagonal decorativa, genérica (no es el isotipo de ningún
           banco en particular) -- solo para que la tarjeta se sienta menos
@@ -2140,16 +2146,22 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
         className="pointer-events-none absolute -right-2 -top-16 h-40 w-24 rotate-12 rounded-3xl bg-white/10"
         aria-hidden="true"
       />
+      {/* Al hacer clic/tocar en cualquier parte de la tarjeta (excepto estos
+          dos botones, que detienen la propagación) se abre el detalle
+          completo con todos sus movimientos -- pedido del usuario
+          (2026-08-08): "al presionar una tarjeta, se abra una parte con
+          todos los movimientos de esa tarjeta". Solo aplica a tarjetas de
+          crédito, que son las que tienen ese detalle. */}
       <div className="absolute right-3 top-3 flex gap-0.5 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100">
         <button
-          onClick={onEdit}
+          onClick={(e) => { e.stopPropagation(); onEdit(); }}
           aria-label={isCard ? "Editar tarjeta" : "Editar cuenta"}
           className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
         >
           <Pencil size={12} />
         </button>
         <button
-          onClick={onDelete}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
           aria-label={isCard ? "Eliminar tarjeta" : "Eliminar cuenta"}
           className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
         >
@@ -2230,63 +2242,113 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
     dragXRef.current = 0;
     setDragX(0);
   }
+  // Deslizar con el dedo (celular) o arrastrar con 2 dedos en el trackpad
+  // (Mac), ambos como listeners NATIVOS (no como props onTouchMove/onWheel
+  // de React, que React registra "passive" por defecto y ahí
+  // preventDefault() no sirve de nada) -- así se puede bloquear de verdad
+  // los gestos del navegador/sistema que compiten con este mismo
+  // movimiento: en Mac, deslizar 2 dedos en el trackpad "vuelve a la
+  // página anterior"; en el celular (iOS Safari sobre todo), deslizar el
+  // dedo hacia la derecha desde cerca del borde hace lo mismo, mostrando
+  // una vista previa/"imagen" de la página anterior en pleno gesto
+  // (2026-08-08, reportado por el usuario en ambos casos: "en Mac no
+  // cambia la tarjeta" y "en el celular, al deslizar a la derecha la
+  // página hace una imagen rara").
+  //
+  // Táctil: se decide con el PRIMER movimiento claro si el gesto es
+  // horizontal (cambiar de tarjeta) o vertical (scroll normal de la
+  // página) -- una vez que se decide horizontal, se llama preventDefault()
+  // en cada evento siguiente del mismo gesto para que el navegador no
+  // dispare su propio "volver atrás".
+  //
+  // Trackpad ("wheel"): a diferencia del táctil, cada evento individual
+  // puede traer un poco de ruido en el eje que no es (aunque el gesto sea
+  // claramente horizontal), así que decidir evento por evento cuál eje
+  // domina (como se hacía antes) dejaba pasar de largo la mayoría de los
+  // eventos -- la tarjeta casi no se movía. Ahora se acumula el
+  // movimiento desde que empieza el gesto y se decide UNA sola vez cuál
+  // eje ganó apenas se junta un mínimo (6px); a partir de ahí, todos los
+  // eventos de ese mismo gesto se tratan igual (ya no evento por evento),
+  // hasta que el gesto "termina" (no llega otro evento en 120ms, el
+  // "wheel" no tiene un evento de "solté los dedos" como el táctil).
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
-  function handleTouchStart(e) {
-    if (count <= 1) return;
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
-    isDragging.current = false;
-  }
-  function handleTouchMove(e) {
-    if (touchStartX.current == null) return;
-    const dx = e.touches[0].clientX - touchStartX.current;
-    const dy = e.touches[0].clientY - touchStartY.current;
-    if (!isDragging.current) {
-      // Todavía no se decide si es un deslizón horizontal (cambiar de
-      // tarjeta) o vertical (scroll normal de la página) -- se decide con
-      // el primer movimiento claro en una dirección.
-      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
-        isDragging.current = true;
-      } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
-        touchStartX.current = null;
-        return;
-      } else {
-        return;
-      }
-    }
-    setDrag(dx);
-  }
-  function handleTouchEnd() {
-    if (touchStartX.current == null) return;
-    touchStartX.current = null;
-    touchStartY.current = null;
-    if (isDragging.current) commitOrResetDrag();
-  }
-  // Arrastrar con 2 dedos en el trackpad (Mac) dispara eventos "wheel" con
-  // deltaX. Se registra como listener NATIVO (no el onWheel de React, que
-  // React marca "passive" por defecto y no deja bloquear el gesto) para
-  // poder llamar preventDefault() en el gesto horizontal -- si no, además
-  // de mover la tarjeta, el navegador también interpreta el mismo gesto
-  // como "volver a la página anterior" (2026-08-08, reportado por el
-  // usuario). El "wheel" no tiene un evento de "solté los dedos" como el
-  // táctil, así que se usa un pequeño temporizador: si no llega otro evento
-  // en 120ms, se considera que el gesto terminó.
   const wheelEndTimer = useRef(null);
+  const wheelLockedAxis = useRef(null); // null = todavía no se decide, "x" u "y" ya decidido
+  const wheelAccumX = useRef(0);
+  const wheelAccumY = useRef(0);
   const cardWrapRef = useRef(null);
   useEffect(() => {
     const el = cardWrapRef.current;
     if (!el || count <= 1) return;
+
+    function onTouchStart(e) {
+      touchStartX.current = e.touches[0].clientX;
+      touchStartY.current = e.touches[0].clientY;
+      isDragging.current = false;
+    }
+    function onTouchMove(e) {
+      if (touchStartX.current == null) return;
+      const dx = e.touches[0].clientX - touchStartX.current;
+      const dy = e.touches[0].clientY - touchStartY.current;
+      if (!isDragging.current) {
+        if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+          isDragging.current = true;
+        } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+          touchStartX.current = null;
+          return;
+        } else {
+          return;
+        }
+      }
+      // Ya se decidió que es un deslizón horizontal: se bloquea el gesto
+      // nativo del navegador (como el "volver atrás" de iOS) además de
+      // mover la tarjeta.
+      e.preventDefault();
+      setDrag(dx);
+    }
+    function onTouchEnd() {
+      if (touchStartX.current == null) return;
+      touchStartX.current = null;
+      touchStartY.current = null;
+      if (isDragging.current) commitOrResetDrag();
+    }
+    function onWheelEnd() {
+      commitOrResetDrag();
+      wheelLockedAxis.current = null;
+      wheelAccumX.current = 0;
+      wheelAccumY.current = 0;
+    }
     function onNativeWheel(e) {
-      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return; // gesto vertical: dejar el scroll normal de la página
+      if (wheelLockedAxis.current === null) {
+        wheelAccumX.current += e.deltaX;
+        wheelAccumY.current += e.deltaY;
+        if (Math.abs(wheelAccumX.current) < 6 && Math.abs(wheelAccumY.current) < 6) {
+          // Todavía no hay suficiente movimiento acumulado para saber si
+          // es horizontal o vertical -- no se toca nada por si termina
+          // siendo un scroll normal de la página.
+          return;
+        }
+        wheelLockedAxis.current = Math.abs(wheelAccumX.current) > Math.abs(wheelAccumY.current) ? "x" : "y";
+      }
+      if (wheelLockedAxis.current === "y") return; // ya se decidió que es scroll vertical normal: dejarlo pasar
       e.preventDefault();
       isDragging.current = true;
       setDrag(dragXRef.current - e.deltaX);
       if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
-      wheelEndTimer.current = setTimeout(commitOrResetDrag, 120);
+      wheelEndTimer.current = setTimeout(onWheelEnd, 120);
     }
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
     el.addEventListener("wheel", onNativeWheel, { passive: false });
     return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
       el.removeEventListener("wheel", onNativeWheel);
       if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
     };
@@ -2314,11 +2376,14 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
             usuario viendo capturas de escritorio vs. iPhone (2026-08-08). */}
         <div
           ref={cardWrapRef}
-          className="min-w-0 flex-1 touch-pan-y select-none sm:mx-auto sm:max-w-sm"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onTouchCancel={handleTouchEnd}
+          // El deslizar (táctil y trackpad) ahora se maneja con listeners
+          // nativos en un useEffect (ver más arriba) en vez de props
+          // onTouch.../onWheel de React, para poder bloquear de verdad los
+          // gestos nativos del navegador que compiten con este movimiento.
+          // "overscroll-behavior-x: contain" es un refuerzo extra por CSS
+          // (sobre todo para Chrome/Android) para que el "rebote" horizontal
+          // no se le escape ni siquiera a mitad de gesto.
+          className="min-w-0 flex-1 touch-pan-y select-none sm:mx-auto sm:max-w-sm [overscroll-behavior-x:contain]"
         >
           <div
             style={{
@@ -2332,6 +2397,7 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
               fmt={fmt}
               onEdit={() => onEdit(item)}
               onDelete={() => onDelete(item)}
+              onViewDetail={item.kind === "tarjeta" ? () => onViewDetail(item) : undefined}
             />
           </div>
           {item.kind === "tarjeta" && (
@@ -2342,14 +2408,18 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
               >
                 <Landmark size={13} /> Registrar pago
               </button>
-              {/* Desglose de gastos fijos ligados a esta tarjeta, con casilla
-                  para marcarlos como pagados (2026-08-08, a pedido del
-                  usuario). */}
+              {/* Detalle completo de la tarjeta: todos sus movimientos
+                  (compras sueltas, cuotas de planes y gastos fijos) con un
+                  gráfico, y flechitas para cambiar de tarjeta sin cerrar la
+                  ventana (2026-08-08, a pedido del usuario). Tocar la
+                  tarjeta misma hace lo mismo (ver AccountCard); este botón
+                  se deja además como acceso explícito, sobre todo en
+                  escritorio. */}
               <button
                 onClick={() => onViewDetail(item)}
                 className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               >
-                <Repeat size={13} /> Gastos fijos
+                <Receipt size={13} /> Detalle
               </button>
             </div>
           )}
@@ -5846,20 +5916,18 @@ function CardPaymentModal({ card, accounts, onClose, onSaved }) {
     </ModalShell>
   );
 }
-// Desglose de gastos fijos ligados a una tarjeta, con casilla para marcar
-// cada ciclo como pagado (2026-08-08, a pedido del usuario: "al hacer clic
-// en una tarjeta se desglose... y al lado derecho haya una casilla que diga
-// pagado"). Se abre con el botón "Gastos fijos" bajo la tarjeta en el
-// carrusel de Cuentas. Muestra las últimas 6 fechas ya vencidas + las
-// próximas 3 (recurringOccurrencesWindow) de cada gasto fijo con card_id
-// igual a esta tarjeta -- marcar una la saca de la deuda (aunque no haya
-// llegado su fecha, para poder pagar antes de tiempo); desmarcarla la
-// vuelve a sumar.
-function CardBreakdownModal({ card, recurringExpenses, marks, fmt, onClose, onMark, onUnmark }) {
+// Checklist de "marcar como pagado" para los gastos fijos ligados a una
+// tarjeta -- extraído del antiguo CardBreakdownModal (2026-08-08) para
+// poder reusarlo dentro de CardDetailModal, que ahora es una vista más
+// completa (ver más abajo). Se comporta exactamente igual que antes: muestra
+// las últimas 6 fechas ya vencidas + las próximas 3 (recurringOccurrencesWindow)
+// de cada gasto fijo, con su casilla para marcar cada ciclo como pagado --
+// marcar una la saca de la deuda (aunque no haya llegado su fecha, para
+// poder pagar antes de tiempo); desmarcarla la vuelve a sumar.
+function RecurringPaidChecklist({ items, marks, fmt, onMark, onUnmark }) {
   const [openRow, setOpenRow] = useState(null); // "{itemId}|{date}" con el date-picker abierto
   const [paidDateDraft, setPaidDateDraft] = useState(localDateString());
   const [saving, setSaving] = useState(false);
-  const items = (recurringExpenses || []).filter((it) => it.card_id === card.id);
   const todayStr = localDateString();
 
   async function handleConfirmPaid(item, date) {
@@ -5875,82 +5943,260 @@ function CardBreakdownModal({ card, recurringExpenses, marks, fmt, onClose, onMa
   }
 
   return (
-    <ModalShell onClose={onClose} title={`Gastos fijos · ${card.name}`}>
+    <div className="space-y-4">
+      {items.map((item) => {
+        const occurrences = recurringOccurrencesWindow(item).slice().reverse();
+        const markedDates = new Set((marks || []).filter((m) => m.recurring_expense_id === item.id).map((m) => m.period_date));
+        return (
+          <div key={item.id} className="rounded-xl border border-slate-100 dark:border-slate-800">
+            <div className="border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{item.description || item.categories?.name || "Gasto fijo"}</p>
+              <p className="text-xs text-slate-400">{fmt(item.amount)} · {item.frequency === "quincenal" ? "Quincenal" : "Mensual"}</p>
+            </div>
+            <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+              {occurrences.map((o) => {
+                const isPaid = markedDates.has(o.date);
+                const mark = (marks || []).find((m) => m.recurring_expense_id === item.id && m.period_date === o.date);
+                const rowKey = `${item.id}|${o.date}`;
+                const isFuture = o.date > todayStr;
+                return (
+                  <div key={rowKey} className="px-4 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <label className="flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isPaid}
+                            disabled={saving}
+                            onChange={() => {
+                              if (isPaid) { handleUnmark(item, o.date); return; }
+                              setPaidDateDraft(todayStr);
+                              setOpenRow(openRow === rowKey ? null : rowKey);
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <span className="text-slate-600 dark:text-slate-300">
+                            {o.date}{isFuture ? " (próximo)" : ""}
+                          </span>
+                        </label>
+                      </div>
+                      {isPaid ? (
+                        <span className="text-xs font-medium text-emerald-600">Pagado el {mark?.paid_date}</span>
+                      ) : (
+                        <span className="text-xs text-slate-400">Pendiente</span>
+                      )}
+                    </div>
+                    {openRow === rowKey && !isPaid && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="date" value={paidDateDraft} onChange={(e) => setPaidDateDraft(e.target.value)}
+                          className={`${INPUT_CLASS} text-xs`}
+                        />
+                        <button
+                          type="button" disabled={saving}
+                          onClick={() => handleConfirmPaid(item, o.date)}
+                          className="shrink-0 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+                        >
+                          Confirmar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {occurrences.length === 0 && (
+                <p className="px-4 py-4 text-center text-xs text-slate-400">Todavía no hay ciclos para este gasto fijo.</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+// Estilos por tipo de movimiento, compartidos entre el gráfico y la lista de
+// CardDetailModal (2026-08-08).
+const CARD_MOVEMENT_TYPES = {
+  Compra: { badge: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300", color: "#0EA5E9", chartKey: "Compras" },
+  "Cuota de plan": { badge: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300", color: "#8B5CF6", chartKey: "Cuotas de plan" },
+  "Gasto fijo": { badge: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300", color: "#F59E0B", chartKey: "Gastos fijos" },
+};
+// Detalle completo de una tarjeta de crédito (2026-08-08, a pedido del
+// usuario: "al presionar una tarjeta, se abra una parte con todos los
+// movimientos de esa tarjeta, con un gráfico, y en esa misma parte que se
+// pueda cambiar entre tarjetas"). Reemplaza al antiguo CardBreakdownModal,
+// que solo mostraba los gastos fijos -- esa parte se mantiene igual (con su
+// casilla de "pagado", ver RecurringPaidChecklist), ahora como una sección
+// más dentro de esta vista más completa: arriba un gráfico de barras
+// apiladas de los últimos 6 meses (por tipo de movimiento), debajo la lista
+// de TODOS los movimientos (compras sueltas + cuotas de planes + gastos
+// fijos), y al final el mismo checklist de siempre. Las flechitas de arriba
+// cambian de tarjeta sin cerrar la ventana.
+function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, onClose, onSwitchCard, onMark, onUnmark }) {
+  const cardIndex = (cards || []).findIndex((c) => c.id === card.id);
+  function switchTo(offset) {
+    if (!cards || cards.length <= 1) return;
+    const nextCard = cards[(cardIndex + offset + cards.length) % cards.length];
+    if (nextCard) onSwitchCard(nextCard);
+  }
+  // Movimientos individuales (compras sueltas) cargados a esta tarjeta -- se
+  // piden aparte porque el resto del dashboard solo necesitaba el total, no
+  // cada movimiento uno por uno.
+  const [rawExpenses, setRawExpenses] = useState([]);
+  const [loadingExpenses, setLoadingExpenses] = useState(true);
+  useEffect(() => {
+    let active = true;
+    setLoadingExpenses(true);
+    supabase
+      .from("expenses")
+      .select("*, categories(name, color, icon)")
+      .eq("card_id", card.id)
+      .order("date", { ascending: false })
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) console.error("Error cargando movimientos de la tarjeta:", error.message);
+        setRawExpenses(data || []);
+        setLoadingExpenses(false);
+      });
+    return () => { active = false; };
+  }, [card.id]);
+  const cardPlans = useMemo(() => (plans || []).filter((p) => p.card_id === card.id), [plans, card.id]);
+  const cardRecurring = useMemo(() => (recurringExpenses || []).filter((it) => it.card_id === card.id), [recurringExpenses, card.id]);
+  // Cuotas de plan ya "tocadas": desde que empezó el plan hasta hoy, una por
+  // mes -- mismo criterio que ya se usa para la deuda de la tarjeta
+  // (planElapsedMonths / planChargesByCard).
+  const planMovements = useMemo(() => {
+    const out = [];
+    cardPlans.forEach((p) => {
+      const totalMonths = Number(p.total_months) || 0;
+      const anchorDate = planAnchorDate(p);
+      const elapsed = Math.min(planElapsedMonths(p), totalMonths);
+      for (let i = 0; i < elapsed; i++) {
+        out.push({
+          id: `plan-${p.id}-${i}`,
+          date: addMonthsToDateString(anchorDate, i),
+          amount: Number(p.monthly_amount),
+          description: `${p.description || "Plan de pago"} (cuota ${i + 1}/${totalMonths})`,
+          type: "Cuota de plan",
+        });
+      }
+    });
+    return out;
+  }, [cardPlans]);
+  // Gastos fijos ya "tocados", sin contar los que ya se marcaron como
+  // pagados -- esos ya no cuentan como deuda pendiente de la tarjeta, así
+  // que tampoco tiene sentido mostrarlos como movimiento pendiente acá.
+  const recurringMovements = useMemo(() => {
+    const out = [];
+    cardRecurring.forEach((it) => {
+      const occ = recurringElapsedOccurrences(it);
+      const markedDates = new Set((marks || []).filter((m) => m.recurring_expense_id === it.id).map((m) => m.period_date));
+      occ.filter((o) => !markedDates.has(o.date)).forEach((o) => {
+        out.push({
+          id: `recexp-${it.id}-${o.date}`,
+          date: o.date,
+          amount: Number(it.amount),
+          description: it.description || it.categories?.name || "Gasto fijo",
+          type: "Gasto fijo",
+        });
+      });
+    });
+    return out;
+  }, [cardRecurring, marks]);
+  const individualMovements = useMemo(() => rawExpenses.map((e) => ({
+    id: e.id,
+    date: e.date,
+    amount: Number(e.amount),
+    description: e.description || e.categories?.name || "Compra",
+    type: "Compra",
+  })), [rawExpenses]);
+  const allMovements = useMemo(
+    () => [...individualMovements, ...planMovements, ...recurringMovements].sort((a, b) => (a.date < b.date ? 1 : -1)),
+    [individualMovements, planMovements, recurringMovements]
+  );
+  // Últimos 6 meses (incluido el actual), para el gráfico de barras
+  // apiladas por tipo de movimiento.
+  const monthlyChartData = useMemo(() => {
+    const now = new Date();
+    const buckets = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      buckets.push({ year: d.getFullYear(), month: d.getMonth(), label: MONTHS[d.getMonth()], Compras: 0, "Cuotas de plan": 0, "Gastos fijos": 0 });
+    }
+    allMovements.forEach((m) => {
+      const bucket = buckets.find((b) => b.year === dateStringYear(m.date) && b.month === dateStringMonth(m.date) - 1);
+      if (!bucket) return;
+      bucket[CARD_MOVEMENT_TYPES[m.type].chartKey] += m.amount;
+    });
+    return buckets;
+  }, [allMovements]);
+  const hasChartData = monthlyChartData.some((b) => b.Compras || b["Cuotas de plan"] || b["Gastos fijos"]);
+
+  return (
+    <ModalShell onClose={onClose} title={`Detalle · ${card.name}`} maxWidth="max-w-lg">
+      {cards && cards.length > 1 && (
+        <div className="mb-4 -mt-2 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => switchTo(-1)}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            <ChevronLeft size={14} /> Anterior
+          </button>
+          <span className="text-xs text-slate-400">{cardIndex + 1} de {cards.length}</span>
+          <button
+            type="button"
+            onClick={() => switchTo(1)}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            Siguiente <ChevronRight size={14} />
+          </button>
+        </div>
+      )}
+      {hasChartData && (
+        <div className="mb-6 h-52">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={monthlyChartData}>
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="Compras" stackId="a" fill={CARD_MOVEMENT_TYPES["Compra"].color} />
+              <Bar dataKey="Cuotas de plan" stackId="a" fill={CARD_MOVEMENT_TYPES["Cuota de plan"].color} />
+              <Bar dataKey="Gastos fijos" stackId="a" fill={CARD_MOVEMENT_TYPES["Gasto fijo"].color} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Movimientos</p>
+      {loadingExpenses ? (
+        <p className="py-6 text-center text-sm text-slate-400">Cargando...</p>
+      ) : allMovements.length === 0 ? (
+        <p className="py-6 text-center text-sm text-slate-400">Todavía no hay movimientos en esta tarjeta.</p>
+      ) : (
+        <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+          {allMovements.map((m) => (
+            <div key={m.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{m.description}</p>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${CARD_MOVEMENT_TYPES[m.type].badge}`}>{m.type}</span>
+                  <span className="text-xs text-slate-400">{m.date}</span>
+                </div>
+              </div>
+              <p className="shrink-0 font-semibold text-slate-700 dark:text-slate-200">{fmt(m.amount)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">Gastos fijos · marcar como pagados</p>
       <p className="mb-4 -mt-2 text-xs text-slate-400">
         Cada ciclo se suma solo a la deuda de la tarjeta cuando pasa su fecha. Márcalo como pagado (antes o después de esa fecha) para que deje de contarse.
       </p>
-      {items.length === 0 ? (
+      {cardRecurring.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-400">Todavía no tienes gastos fijos ligados a esta tarjeta. Puedes ligar uno desde "Gasto fijo" en Gastos.</p>
       ) : (
-        <div className="space-y-4">
-          {items.map((item) => {
-            const occurrences = recurringOccurrencesWindow(item).slice().reverse();
-            const markedDates = new Set((marks || []).filter((m) => m.recurring_expense_id === item.id).map((m) => m.period_date));
-            return (
-              <div key={item.id} className="rounded-xl border border-slate-100 dark:border-slate-800">
-                <div className="border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
-                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{item.description || item.categories?.name || "Gasto fijo"}</p>
-                  <p className="text-xs text-slate-400">{fmt(item.amount)} · {item.frequency === "quincenal" ? "Quincenal" : "Mensual"}</p>
-                </div>
-                <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
-                  {occurrences.map((o) => {
-                    const isPaid = markedDates.has(o.date);
-                    const mark = (marks || []).find((m) => m.recurring_expense_id === item.id && m.period_date === o.date);
-                    const rowKey = `${item.id}|${o.date}`;
-                    const isFuture = o.date > todayStr;
-                    return (
-                      <div key={rowKey} className="px-4 py-2 text-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <label className="flex cursor-pointer items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={isPaid}
-                                disabled={saving}
-                                onChange={() => {
-                                  if (isPaid) { handleUnmark(item, o.date); return; }
-                                  setPaidDateDraft(todayStr);
-                                  setOpenRow(openRow === rowKey ? null : rowKey);
-                                }}
-                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                              />
-                              <span className="text-slate-600 dark:text-slate-300">
-                                {o.date}{isFuture ? " (próximo)" : ""}
-                              </span>
-                            </label>
-                          </div>
-                          {isPaid ? (
-                            <span className="text-xs font-medium text-emerald-600">Pagado el {mark?.paid_date}</span>
-                          ) : (
-                            <span className="text-xs text-slate-400">Pendiente</span>
-                          )}
-                        </div>
-                        {openRow === rowKey && !isPaid && (
-                          <div className="mt-2 flex items-center gap-2">
-                            <input
-                              type="date" value={paidDateDraft} onChange={(e) => setPaidDateDraft(e.target.value)}
-                              className={`${INPUT_CLASS} text-xs`}
-                            />
-                            <button
-                              type="button" disabled={saving}
-                              onClick={() => handleConfirmPaid(item, o.date)}
-                              className="shrink-0 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
-                            >
-                              Confirmar
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {occurrences.length === 0 && (
-                    <p className="px-4 py-4 text-center text-xs text-slate-400">Todavía no hay ciclos para este gasto fijo.</p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <RecurringPaidChecklist items={cardRecurring} marks={marks} fmt={fmt} onMark={onMark} onUnmark={onUnmark} />
       )}
     </ModalShell>
   );
@@ -6217,7 +6463,7 @@ function RecurringExpenseModal({ categories, cards, accounts, item, onClose, onS
   // Cuenta O tarjeta a la que se liga este gasto fijo (2026-08-08, a pedido
   // del usuario) -- nunca las dos a la vez: si se paga con tarjeta, se le
   // suma a su deuda en su fecha de pago (con la posibilidad de marcar cada
-  // ciclo como pagado antes de tiempo, ver CardBreakdownModal); si se paga
+  // ciclo como pagado antes de tiempo, ver CardDetailModal); si se paga
   // de una cuenta, se le resta directo, igual que un ingreso fijo ligado.
   const [cardId, setCardId] = useState(item?.card_id || "");
   const [accountId, setAccountId] = useState(item?.account_id || "");
