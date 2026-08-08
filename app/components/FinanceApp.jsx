@@ -12,7 +12,7 @@ import {
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
   Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
-  Minus, Clock,
+  Minus, Clock, Wifi,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -1925,13 +1925,16 @@ function toCardView(item) {
   return { name: a.name, type: a.type, bank: a.bank, network: a.network, last4: a.last4, balance: item.balance };
 }
 // Tarjeta visual de una cuenta o tarjeta de crédito (2026-08-08, a pedido
-// del usuario; saldo llevado adentro de la tarjeta, a partir de una captura
-// de una app de banco real que mandó de referencia): forma y textura de una
-// tarjeta real (chip, número enmascarado, red), en el color del banco
-// elegido -- NO es el logo real del banco, es un color inspirado en su
-// identidad. Para una tarjeta de crédito, el número no es "saldo" sino
-// "deuda" (lo que has cargado menos lo que has pagado), así que la etiqueta
-// cambia según "kind".
+// del usuario; saldo llevado adentro de la tarjeta, y look más realista
+// -- chip metálico, ícono de contactless, banda diagonal decorativa -- a
+// partir de varias capturas de tarjetas reales de bancos de Costa Rica que
+// mandó de referencia): forma y textura de una tarjeta real, en el color
+// del banco elegido -- NO es el logo real del banco (ni el ícono/isotipo de
+// cada banco, ni el logo oficial de Visa/Mastercard), solo un color
+// inspirado en su identidad más elementos genéricos de cualquier tarjeta
+// (chip, contactless) que no son marca de nadie en particular. Para una
+// tarjeta de crédito, el número no es "saldo" sino "deuda" (lo que has
+// cargado menos lo que has pagado), así que la etiqueta cambia según "kind".
 function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
   const isCard = kind === "tarjeta";
   const bank = (isCard && CREDIT_CARD_BANK_OVERRIDES[view.bank])
@@ -1942,6 +1945,17 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
       className="group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6"
       style={{ backgroundImage: `linear-gradient(135deg, ${bank.from}, ${bank.to})` }}
     >
+      {/* Banda diagonal decorativa, genérica (no es el isotipo de ningún
+          banco en particular) -- solo para que la tarjeta se sienta menos
+          plana, como las de las capturas de referencia. */}
+      <div
+        className="pointer-events-none absolute -right-6 -top-10 h-40 w-40 rotate-12 rounded-3xl bg-white/10"
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute -right-2 -top-16 h-40 w-24 rotate-12 rounded-3xl bg-white/10"
+        aria-hidden="true"
+      />
       <div className="absolute right-3 top-3 flex gap-0.5 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100">
         <button
           onClick={onEdit}
@@ -1958,7 +1972,7 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
           <Trash2 size={12} />
         </button>
       </div>
-      <div className="flex items-start justify-between gap-3 pr-14">
+      <div className="relative flex items-start justify-between gap-3 pr-14">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">{isCard ? "Debes actualmente" : "Saldo actual"}</p>
           <p className="mt-1 truncate text-[28px] font-extrabold leading-tight tracking-tight text-white sm:text-[32px]">
@@ -1970,8 +1984,16 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
           <p className="mt-0.5 text-[10px] text-white/50">{view.type}</p>
         </div>
       </div>
-      <div>
-        <div className="h-5 w-8 rounded-[4px] bg-gradient-to-br from-yellow-200 to-yellow-500" />
+      <div className="relative">
+        {/* Chip metálico + contactless (2026-08-08): elementos genéricos de
+            cualquier tarjeta física, no son marca de un banco -- se agregan
+            para que se vea más real, como en las capturas de referencia. */}
+        <div className="flex items-center gap-2">
+          <div className="h-7 w-9 rounded-[5px] bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 shadow-inner">
+            <div className="h-full w-full rounded-[5px] border border-slate-400/40" style={{ backgroundImage: "linear-gradient(to bottom, transparent 33%, rgba(100,116,139,0.5) 33%, rgba(100,116,139,0.5) 36%, transparent 36%, transparent 63%, rgba(100,116,139,0.5) 63%, rgba(100,116,139,0.5) 66%, transparent 66%)" }} />
+          </div>
+          <Wifi size={16} className="rotate-90 text-white/70" />
+        </div>
         <p className="mt-2 font-mono text-sm tracking-[0.2em] text-white/90">
           •••• •••• •••• {view.last4 || "····"}
         </p>
