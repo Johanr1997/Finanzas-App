@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, AreaChart,
@@ -2206,6 +2206,68 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
   function next() {
     setIndex((i) => (i + 1) % count);
   }
+  // Deslizar con el dedo (celular) o arrastrar con 2 dedos en el trackpad
+  // (Mac) para cambiar de tarjeta, sin tener que usar las flechitas
+  // (2026-08-08, a pedido del usuario). `dragX` es el corrimiento en vivo
+  // mientras se arrastra con el dedo, para que la tarjeta se sienta "seguir
+  // el dedo"; al soltar, si pasó el umbral cambia de tarjeta, si no vuelve a
+  // su lugar con una animación corta.
+  const [dragX, setDragX] = useState(0);
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
+  const isTouchDragging = useRef(false);
+  const wheelCooldown = useRef(false);
+  function handleTouchStart(e) {
+    if (count <= 1) return;
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    isTouchDragging.current = false;
+  }
+  function handleTouchMove(e) {
+    if (touchStartX.current == null) return;
+    const dx = e.touches[0].clientX - touchStartX.current;
+    const dy = e.touches[0].clientY - touchStartY.current;
+    if (!isTouchDragging.current) {
+      // Todavía no se decide si es un deslizón horizontal (cambiar de
+      // tarjeta) o vertical (scroll normal de la página) -- se decide con
+      // el primer movimiento claro en una dirección.
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        isTouchDragging.current = true;
+      } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+        touchStartX.current = null;
+        return;
+      } else {
+        return;
+      }
+    }
+    // Un poco de resistencia cerca de los bordes del arrastre para que no
+    // se sienta que la tarjeta se va a salir de la pantalla.
+    setDragX(Math.max(-160, Math.min(160, dx)));
+  }
+  function handleTouchEnd() {
+    if (touchStartX.current == null) return;
+    if (isTouchDragging.current) {
+      if (dragX < -60) next();
+      else if (dragX > 60) prev();
+    }
+    touchStartX.current = null;
+    touchStartY.current = null;
+    isTouchDragging.current = false;
+    setDragX(0);
+  }
+  // Arrastrar con 2 dedos en el trackpad dispara eventos "wheel" con
+  // deltaX -- se usa igual que el swipe, con un pequeño "cooldown" después
+  // de cada cambio de tarjeta para que un solo gesto no pase varias
+  // tarjetas de una vez (el trackpad manda muchos eventos por segundo).
+  function handleWheel(e) {
+    if (count <= 1) return;
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) || Math.abs(e.deltaX) < 10) return;
+    if (wheelCooldown.current) return;
+    wheelCooldown.current = true;
+    if (e.deltaX > 0) next();
+    else prev();
+    setTimeout(() => { wheelCooldown.current = false; }, 350);
+  }
   if (!item) return null;
   const view = toCardView(item);
   return (
@@ -2227,14 +2289,28 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
             estira muchísimo (mantiene su proporción real 16:10, así que
             termina siendo enorme y desproporcionada) -- reportado por el
             usuario viendo capturas de escritorio vs. iPhone (2026-08-08). */}
-        <div className="min-w-0 flex-1 sm:mx-auto sm:max-w-sm">
-          <AccountCard
-            view={view}
-            kind={item.kind}
-            fmt={fmt}
-            onEdit={() => onEdit(item)}
-            onDelete={() => onDelete(item)}
-          />
+        <div
+          className="min-w-0 flex-1 touch-pan-y select-none sm:mx-auto sm:max-w-sm"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
+          onWheel={handleWheel}
+        >
+          <div
+            style={{
+              transform: `translateX(${dragX}px)`,
+              transition: isTouchDragging.current ? "none" : "transform 200ms ease",
+            }}
+          >
+            <AccountCard
+              view={view}
+              kind={item.kind}
+              fmt={fmt}
+              onEdit={() => onEdit(item)}
+              onDelete={() => onDelete(item)}
+            />
+          </div>
           {item.kind === "tarjeta" && (
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button
