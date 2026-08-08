@@ -6905,36 +6905,28 @@ function PlanPaymentsModal({ plan, overrides, fmt, onClose, onChanged }) {
 // balance mensual de toda la app igual que antes, y un ahorro sigue sin
 // necesitar una meta vinculada -- solo se decidió cuál de las dos se ve a la
 // vez, dentro de una sola pestaña del menú.
-function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, vista, onChangeVista, accounts, refetchAccounts }) {
+// Ya NO es un interruptor "Ahorros" / "Metas" con botones para cambiar de
+// vista (2026-08-08, a pedido del usuario: "no quiero que haya un botón de
+// metas y uno de ahorros, sino que el contenido de ambos estén en una misma
+// pestaña, sin botones para intercambiar") -- ahora se muestra TODO el
+// contenido de Metas primero y, debajo, todo el contenido de Ahorros, en
+// una sola página continua. Se dejó un título simple (no clicable) encima
+// de cada bloque para que se entienda dónde termina uno y empieza el otro.
+function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, accounts, refetchAccounts }) {
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => onChangeVista("ahorros")}
-          className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-            vista === "ahorros"
-              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
-          }`}
-        >
-          <PiggyBank size={15} /> Ahorros
-        </button>
-        <button
-          onClick={() => onChangeVista("metas")}
-          className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-            vista === "metas"
-              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
-          }`}
-        >
-          <Target size={15} /> Metas
-        </button>
-      </div>
-      {vista === "ahorros" ? (
-        <SavingsView fmt={fmt} onDataChanged={onDataChanged} year={year} month={month} accounts={accounts} refetchAccounts={refetchAccounts} />
-      ) : (
+    <div className="space-y-8">
+      <div>
+        <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-800 dark:text-white">
+          <Target size={17} className="text-slate-400" /> Metas
+        </h2>
         <GoalsView fmt={fmt} yearData={yearData} month={month} />
-      )}
+      </div>
+      <div>
+        <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-800 dark:text-white">
+          <PiggyBank size={17} className="text-slate-400" /> Ahorros
+        </h2>
+        <SavingsView fmt={fmt} onDataChanged={onDataChanged} year={year} month={month} accounts={accounts} refetchAccounts={refetchAccounts} />
+      </div>
     </div>
   );
 }
@@ -8490,10 +8482,12 @@ export default function FinanceApp() {
   // nombre de pestaña cambiado -- decisión explícita del usuario, para no
   // duplicar contenido que ya existe en otro lado de la app.
   // "Ahorros y Metas" fusiona lo que antes eran dos pestañas separadas, a
-  // pedido del usuario (2026-07-31), con el mismo patrón de interruptor que
-  // "Reporte" -- acá solo hace falta para el título de arriba (las flechitas
-  // de mes son iguales en las dos vistas, así que no afectan esa parte).
-  const [savingsVista, setSavingsVista] = useState("ahorros");
+  // pedido del usuario (2026-07-31). Al principio (2026-08-08, más temprano)
+  // se hizo con un interruptor "Ahorros" / "Metas" (un solo bloque visible a
+  // la vez), pero el usuario después pidió sacar los botones por completo y
+  // mostrar el contenido de ambas siempre, una debajo de la otra (Metas
+  // primero) -- ver `SavingsGoalsView`. Ya no hace falta el estado de "cuál
+  // vista está activa".
   const [monthOpen, setMonthOpen] = useState(null);
   const { code, setCode, format } = useCurrency();
   const [yearData, setYearData] = useState(null);
@@ -8644,7 +8638,7 @@ export default function FinanceApp() {
                 {tab === "expenses" && "Tus gastos"}
                 {tab === "calendar" && "Calendario de pagos"}
                 {tab === "budgets" && "Presupuestos"}
-                {tab === "savings" && (savingsVista === "ahorros" ? "Tus ahorros" : "Tus metas")}
+                {tab === "savings" && "Tus ahorros y metas"}
                 {tab === "simulador" && "¿Puedo comprar esto?"}
               </h1>
               {tab === "inicio" ? (
@@ -8733,8 +8727,6 @@ export default function FinanceApp() {
               yearData={yearData}
               year={year}
               month={month}
-              vista={savingsVista}
-              onChangeVista={setSavingsVista}
               accounts={accounts}
               refetchAccounts={refetchAccounts}
             />
