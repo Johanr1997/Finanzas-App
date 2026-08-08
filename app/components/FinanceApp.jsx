@@ -56,6 +56,21 @@ const BANKS = [
   { name: "Efectivo", from: "#475569", to: "#1E293B" },
   { name: "Otro", from: "#334155", to: "#0F172A" },
 ];
+// Oscurece un color hex un porcentaje dado, para armar el degradado de la
+// tarjeta (de - a -) a partir de UN solo color elegido en el selector
+// (2026-08-08, a pedido del usuario: quería poder elegir el color de la
+// tarjeta al crearla, en vez de depender solo del color fijo del banco).
+function darkenHex(hex, amount = 0.45) {
+  const h = (hex || "#334155").replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const r = parseInt(full.slice(0, 2), 16) || 0;
+  const g = parseInt(full.slice(2, 4), 16) || 0;
+  const b = parseInt(full.slice(4, 6), 16) || 0;
+  const dr = Math.max(0, Math.round(r * (1 - amount)));
+  const dg = Math.max(0, Math.round(g * (1 - amount)));
+  const db = Math.max(0, Math.round(b * (1 - amount)));
+  return `#${dr.toString(16).padStart(2, "0")}${dg.toString(16).padStart(2, "0")}${db.toString(16).padStart(2, "0")}`;
+}
 const CARD_NETWORKS = ["Ninguna", "Visa", "Mastercard"];
 // Colores especiales cuando un banco se usa en una TARJETA DE CRÉDITO (kind
 // === "tarjeta", creada con el botón "+ Tarjeta"), distintos de los que usa
@@ -66,6 +81,15 @@ const CARD_NETWORKS = ["Ninguna", "Visa", "Mastercard"];
 const CREDIT_CARD_BANK_OVERRIDES = {
   "Banco Nacional (BN)": { from: "#E6C455", to: "#8A6D1D" },
 };
+// Color "de fábrica" que trae un banco (para prellenar el selector de color
+// al elegir un banco, o al resetear con "Usar el color del banco") -- para
+// una tarjeta de crédito, respeta el dorado especial de BN si aplica.
+function defaultBankColor(bankName, isCard) {
+  const override = isCard && CREDIT_CARD_BANK_OVERRIDES[bankName];
+  if (override) return override.from;
+  const b = BANKS.find((x) => x.name === bankName);
+  return b ? b.from : BANKS[BANKS.length - 1].from;
+}
 const CATEGORY_META = {
   Vivienda: { icon: Home, color: "#EF4444" },
   Alimentación: { icon: Utensils, color: "#F97316" },
@@ -2068,10 +2092,16 @@ function NetworkMark({ network }) {
 function toCardView(item) {
   if (item.kind === "tarjeta") {
     const c = item.data;
-    return { name: c.name, type: "Tarjeta de crédito", bank: c.bank, network: c.network, last4: c.last4, balance: item.balance };
+    return {
+      name: c.name, type: "Tarjeta de crédito", bank: c.bank, network: c.network, last4: c.last4, balance: item.balance,
+      colorFrom: c.color_from, colorTo: c.color_to,
+    };
   }
   const a = item.data;
-  return { name: a.name, type: a.type, bank: a.bank, network: a.network, last4: a.last4, balance: item.balance };
+  return {
+    name: a.name, type: a.type, bank: a.bank, network: a.network, last4: a.last4, balance: item.balance,
+    colorFrom: a.color_from, colorTo: a.color_to,
+  };
 }
 // Tarjeta visual de una cuenta o tarjeta de crédito (2026-08-08, a pedido
 // del usuario; saldo llevado adentro de la tarjeta, y look más realista
@@ -2086,7 +2116,12 @@ function toCardView(item) {
 // cargado menos lo que has pagado), así que la etiqueta cambia según "kind".
 function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
   const isCard = kind === "tarjeta";
-  const bank = (isCard && CREDIT_CARD_BANK_OVERRIDES[view.bank])
+  // Si la cuenta/tarjeta tiene un color elegido a mano (2026-08-08, selector
+  // de color al crearla), ese manda -- si no, se sigue usando el color del
+  // banco como antes (compatible con cuentas/tarjetas creadas antes de este
+  // cambio, que no tienen color_from/color_to guardado).
+  const bank = (view.colorFrom && view.colorTo && { from: view.colorFrom, to: view.colorTo })
+    || (isCard && CREDIT_CARD_BANK_OVERRIDES[view.bank])
     || BANKS.find((b) => b.name === view.bank)
     || BANKS[BANKS.length - 1];
   return (
@@ -2266,8 +2301,17 @@ function AccountModal({ account, onClose, onSaved }) {
   const [network, setNetwork] = useState(account?.network || CARD_NETWORKS[0]);
   const [last4, setLast4] = useState(account?.last4 || "");
   const [balance, setBalance] = useState(account ? String(account.current_balance) : "0");
+  // Color de la tarjeta, elegido a mano (2026-08-08, a pedido del usuario)
+  // -- por defecto sigue el color del banco elegido, pero se puede cambiar
+  // libremente; una vez que se toca, deja de seguir al banco (colorTouched).
+  const [color, setColor] = useState(account?.color_from || defaultBankColor(account?.bank || BANKS[0].name, false));
+  const [colorTouched, setColorTouched] = useState(Boolean(account?.color_from));
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  function handleBankChange(newBank) {
+    setBank(newBank);
+    if (!colorTouched) setColor(defaultBankColor(newBank, false));
+  }
   async function handleSubmit(e) {
     e.preventDefault();
     if (!name) {
@@ -2281,6 +2325,8 @@ function AccountModal({ account, onClose, onSaved }) {
       network: network === "Ninguna" ? null : network,
       last4: last4 ? last4.slice(-4) : null,
       current_balance: Number(balance) || 0,
+      color_from: color,
+      color_to: darkenHex(color),
     };
     if (isEditing) {
       const { error } = await supabase.from("accounts").update(payload).eq("id", account.id);
@@ -2313,7 +2359,7 @@ function AccountModal({ account, onClose, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Banco</label>
-              <select value={bank} onChange={(e) => setBank(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <select value={bank} onChange={(e) => handleBankChange(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
                 {BANKS.map((b) => <option key={b.name}>{b.name}</option>)}
               </select>
             </div>
@@ -2337,6 +2383,26 @@ function AccountModal({ account, onClose, onSaved }) {
                 value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))}
                 placeholder="1234" inputMode="numeric" className={`mt-1 ${INPUT_CLASS}`}
               />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Color de la tarjeta</label>
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="color" value={color}
+                onChange={(e) => { setColor(e.target.value); setColorTouched(true); }}
+                className="h-9 w-14 shrink-0 cursor-pointer rounded-lg border border-slate-200 bg-transparent p-0.5 dark:border-slate-700"
+              />
+              <span className="text-xs text-slate-400">{color}</span>
+              {colorTouched && (
+                <button
+                  type="button"
+                  onClick={() => { setColor(defaultBankColor(bank, false)); setColorTouched(false); }}
+                  className="ml-auto text-xs font-medium text-slate-400 underline hover:text-slate-600 dark:hover:text-slate-300"
+                >
+                  Usar el color del banco
+                </button>
+              )}
             </div>
           </div>
           <div>
@@ -5456,8 +5522,17 @@ function CreditCardModal({ card, onClose, onSaved }) {
   const [cutoffDay, setCutoffDay] = useState(card ? String(card.cutoff_day) : "");
   const [paymentDay, setPaymentDay] = useState(card ? String(card.payment_day) : "");
   const [initialBalance, setInitialBalance] = useState(card ? String(card.initial_balance || 0) : "0");
+  // Color de la tarjeta, elegido a mano (2026-08-08, a pedido del usuario)
+  // -- ver el mismo comentario en AccountModal. Para tarjeta de crédito,
+  // el color "de fábrica" respeta el dorado especial de BN.
+  const [color, setColor] = useState(card?.color_from || defaultBankColor(card?.bank || BANKS[0].name, true));
+  const [colorTouched, setColorTouched] = useState(Boolean(card?.color_from));
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  function handleBankChange(newBank) {
+    setBank(newBank);
+    if (!colorTouched) setColor(defaultBankColor(newBank, true));
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -5476,6 +5551,8 @@ function CreditCardModal({ card, onClose, onSaved }) {
       cutoff_day: cutoff,
       payment_day: payment,
       initial_balance: Number(initialBalance) || 0,
+      color_from: color,
+      color_to: darkenHex(color),
     };
     if (isEditing) {
       const { error } = await supabase.from("credit_cards").update(payload).eq("id", card.id);
@@ -5515,7 +5592,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Banco</label>
-            <select value={bank} onChange={(e) => setBank(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+            <select value={bank} onChange={(e) => handleBankChange(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
               {BANKS.map((b) => <option key={b.name}>{b.name}</option>)}
             </select>
           </div>
@@ -5532,6 +5609,26 @@ function CreditCardModal({ card, onClose, onSaved }) {
             value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))}
             placeholder="1234" inputMode="numeric" className={`mt-1 ${INPUT_CLASS}`}
           />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Color de la tarjeta</label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              type="color" value={color}
+              onChange={(e) => { setColor(e.target.value); setColorTouched(true); }}
+              className="h-9 w-14 shrink-0 cursor-pointer rounded-lg border border-slate-200 bg-transparent p-0.5 dark:border-slate-700"
+            />
+            <span className="text-xs text-slate-400">{color}</span>
+            {colorTouched && (
+              <button
+                type="button"
+                onClick={() => { setColor(defaultBankColor(bank, true)); setColorTouched(false); }}
+                className="ml-auto text-xs font-medium text-slate-400 underline hover:text-slate-600 dark:hover:text-slate-300"
+              >
+                Usar el color del banco
+              </button>
+            )}
+          </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
