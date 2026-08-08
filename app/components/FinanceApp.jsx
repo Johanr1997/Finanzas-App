@@ -30,6 +30,30 @@ const MAX_FUTURE_YEARS = 10;
 // dinero. Campo opcional -- los ingresos de antes de este cambio no tienen
 // ninguno guardado y siguen mostrándose bien (ver payment_method en incomes).
 const PAYMENT_METHODS = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Tarjeta", "Otro"];
+// Tipos de cuenta (Fase 2, 2026-08-08) -- lista fija, igual de simple que
+// PAYMENT_METHODS, para la nueva tabla "accounts".
+const ACCOUNT_TYPES = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Inversión", "Otro"];
+// Cada cuenta se muestra como una tarjeta (2026-08-08, a pedido del
+// usuario) con el color del banco elegido -- son colores aproximados,
+// inspirados en la identidad de cada banco, NO el logo real (no podemos
+// usar el logo oficial de ningún banco). "Efectivo" y "Otro" no son bancos
+// de verdad, usan un color neutro. La persona también puede elegir "Otro" y
+// definir su propio color si su banco no está en la lista o el color no le
+// convence.
+const BANKS = [
+  { name: "BAC Credomatic", from: "#C8102E", to: "#6E0A1B" },
+  { name: "Banco Nacional (BN)", from: "#00205B", to: "#E30613" },
+  { name: "Banco de Costa Rica (BCR)", from: "#004C97", to: "#00274D" },
+  { name: "Banco Popular", from: "#F26A21", to: "#A8390A" },
+  { name: "Scotiabank", from: "#EC111A", to: "#8C0B12" },
+  { name: "Davivienda", from: "#EF3F24", to: "#C1121F" },
+  { name: "Promerica", from: "#F7941D", to: "#A85F0A" },
+  { name: "Lafise", from: "#046A38", to: "#023D20" },
+  { name: "Coopenae", from: "#2E8B3D", to: "#1B5423" },
+  { name: "Efectivo", from: "#475569", to: "#1E293B" },
+  { name: "Otro", from: "#334155", to: "#0F172A" },
+];
+const CARD_NETWORKS = ["Ninguna", "Visa", "Mastercard"];
 const CATEGORY_META = {
   Vivienda: { icon: Home, color: "#EF4444" },
   Alimentación: { icon: Utensils, color: "#F97316" },
@@ -1089,7 +1113,7 @@ function renderDonutSliceLabel({ cx, cy, midAngle, innerRadius, outerRadius, per
     </text>
   );
 }
-function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
+function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [], onNavigateTab }) {
   const [goals, setGoals] = useState([]);
   const [goalsError, setGoalsError] = useState(false);
   useEffect(() => {
@@ -1099,6 +1123,46 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
       setGoals(data || []);
     });
   }, []);
+  // Datos para "Patrimonio neto" y "Atención" (rediseño "centro de control
+  // financiero", 2026-08-07): a diferencia del resto de esta pantalla, estos
+  // tres no dependen del año que se está viendo (yearData) -- se piden UNA
+  // sola vez, con TODA la historia, porque patrimonio neto no tendría
+  // sentido si se reiniciara cada enero como sí hace el "saldo acumulado" de
+  // más abajo.
+  const [patrimonioRaw, setPatrimonioRaw] = useState(null);
+  const [patrimonioError, setPatrimonioError] = useState(false);
+  // "accounts" (Fase 2, 2026-08-08): tus cuentas reales (efectivo, cuenta
+  // corriente, cuenta de ahorros, inversión...), cada una con un saldo. A
+  // propósito, el saldo NO se reconstruye desde tu historial -- lo pones tú
+  // al crear cada cuenta (el saldo de hoy) y lo actualizas cuando quieras.
+  // Conectarlo automáticamente con Ingresos/Gastos/Ahorros queda para una
+  // ronda aparte (ver notas de progreso). refetchPatrimonioRaw se reusa
+  // tanto para la carga inicial como después de crear/editar/borrar una
+  // cuenta.
+  async function refetchPatrimonioRaw() {
+    const [
+      { data: sav, error: savErr },
+      { data: pl, error: plErr },
+      { data: accs, error: accErr },
+    ] = await Promise.all([
+      supabase.from("savings").select("amount, date"),
+      supabase.from("installment_plans").select("*, credit_cards(name, cutoff_day, payment_day)"),
+      supabase.from("accounts").select("*").order("created_at", { ascending: true }),
+    ]);
+    setPatrimonioError(Boolean(savErr || plErr || accErr));
+    setPatrimonioRaw({ savings: sav || [], plans: pl || [], accounts: accs || [] });
+  }
+  useEffect(() => {
+    refetchPatrimonioRaw();
+  }, []);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [deletingAccount, setDeletingAccount] = useState(null);
+  async function handleDeleteAccount(id) {
+    const { error } = await supabase.from("accounts").delete().eq("id", id);
+    if (error) throw error;
+    setDeletingAccount(null);
+    refetchPatrimonioRaw();
+  }
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -1193,6 +1257,84 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   const currentMonth = yearData[currentIdx];
   const prevMonth = yearData[prevIdx];
   const isRealCurrentMonth = isCurrentYear && month === now.getMonth();
+  // A diferencia de "prevMonth" de arriba (que se queda en el mismo mes si
+  // estás en enero, solo para no romper los "insights" de más abajo), este
+  // "previous" es null en enero a propósito -- TrendBadge ya sabe no
+  // mostrar nada cuando previous es null, en vez de mostrar "0% vs mes
+  // anterior" de forma engañosa.
+  const prevMonthForTrend = month > 0 ? yearData[month - 1] : null;
+  // Patrimonio neto (aproximado): ahorros acumulados de TODA la historia
+  // hasta el fin del mes que se está viendo, menos el saldo pendiente de
+  // todos los planes de pago a esa misma fecha. Es una aproximación
+  // intencional -- la app todavía no tiene el concepto de "cuenta bancaria"
+  // ni rastrea el saldo real de una tarjeta de crédito, así que ninguno de
+  // los dos entra en esta cuenta todavía. Como usa datos de toda la
+  // historia (no solo el año seleccionado), la comparación "vs. mes
+  // anterior" funciona bien incluso cruzando de diciembre a enero.
+  const patrimonio = useMemo(() => {
+    if (!patrimonioRaw) return null;
+    const { savings, plans, accounts } = patrimonioRaw;
+    // Las cuentas (Fase 2) solo tienen un saldo de "ahora", no un histórico
+    // por fecha como los ahorros -- así que se suman igual sin importar qué
+    // mes se esté viendo. Esto no distorsiona la comparación "vs. mes
+    // anterior": como el total de cuentas es el mismo en los dos lados de la
+    // resta, se cancela solo y el delta sigue reflejando de verdad el
+    // cambio en ahorros y deuda de ese mes.
+    const totalCuentas = accounts.reduce((a, c) => a + Number(c.current_balance), 0);
+    const endOfMonthStr = (y, m) => {
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      return `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    };
+    const ahorrosHasta = (y, m) => {
+      const cutoff = endOfMonthStr(y, m);
+      return savings.filter((s) => s.date <= cutoff).reduce((a, s) => a + Number(s.amount), 0);
+    };
+    const pasivosHasta = (y, m) => plans.reduce((a, p) => a + planSaldoPendiente(p, [], y, m), 0);
+    const prevY = month === 0 ? year - 1 : year;
+    const prevM = month === 0 ? 11 : month - 1;
+    const activos = totalCuentas + ahorrosHasta(year, month);
+    const pasivos = pasivosHasta(year, month);
+    const neto = activos - pasivos;
+    const activosPrev = totalCuentas + ahorrosHasta(prevY, prevM);
+    const netoPrev = activosPrev - pasivosHasta(prevY, prevM);
+    // "Dinero Actual" (2026-08-08, a pedido del usuario) muestra "activos"
+    // solo -- sin restar deuda -- así que su propia comparación "vs. mes
+    // anterior" (deltaActivos) también es sin restar deuda, para que el
+    // número de arriba y la flechita de abajo cuenten la misma historia.
+    // "neto"/"delta" (con deuda restada) se dejan calculados por si se
+    // vuelven a necesitar en otra pantalla más adelante.
+    return { activos, pasivos, neto, delta: neto - netoPrev, deltaActivos: activos - activosPrev, totalCuentas };
+  }, [patrimonioRaw, year, month]);
+  // Próximos compromisos (próximos 30 días reales): a diferencia de todo lo
+  // demás en esta pantalla, esto SIEMPRE mira la fecha real de hoy, no el
+  // mes que se está navegando con las flechitas -- no tendría sentido
+  // "anticipar pagos" de un año que ya pasó. Solo funciona mientras se esté
+  // viendo el año real actual (yearData del año navegado es el único que
+  // hay cargado); si se está viendo otro año, se muestra un aviso en vez de
+  // datos vacíos que parezcan un error.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const proximosPagos = useMemo(() => {
+    if (!isCurrentYear) return { items: [], totalComprometido: 0, hasMore: false, disabled: true };
+    const todayStr = localDateString(now);
+    const limitDate = new Date(now);
+    limitDate.setDate(limitDate.getDate() + 30);
+    const limitStr = localDateString(limitDate);
+    const realMonthIdx = now.getMonth();
+    const sourceMonths = [yearData[realMonthIdx]];
+    if (realMonthIdx < 11) sourceMonths.push(yearData[realMonthIdx + 1]);
+    const pool = [];
+    sourceMonths.forEach((md) => {
+      md.gastos
+        .filter((g) => String(g.id).startsWith("plan-") || String(g.id).startsWith("recexp-"))
+        .forEach((g) => pool.push({ id: g.id, kind: "gasto", label: g.descripcion, date: g.fecha, amount: g.monto }));
+      md.incomes
+        .filter((i) => String(i.id).startsWith("recinc-"))
+        .forEach((i) => pool.push({ id: i.id, kind: "ingreso", label: i.description || i.type || "Ingreso fijo", date: i.date, amount: Number(i.amount) }));
+    });
+    const upcoming = pool.filter((it) => it.date >= todayStr && it.date <= limitStr).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const totalComprometido = upcoming.filter((it) => it.kind === "gasto").reduce((a, it) => a + it.amount, 0);
+    return { items: upcoming.slice(0, 6), totalComprometido, hasMore: upcoming.length > 6, disabled: false };
+  }, [isCurrentYear, yearData]);
   // "Actividad reciente": mezcla ingresos, gastos y ahorros del mes elegido
   // (currentMonth ya viene de yearData, que esta pantalla ya tenía cargado --
   // ninguna consulta nueva a Supabase), ordenados por fecha descendente y con
@@ -1258,6 +1400,119 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
   return (
     <div className="space-y-6">
       <LoadErrorBanner message={goalsError ? "No se pudieron cargar tus metas — el progreso de metas de abajo puede no ser exacto. Revisa tu conexión e intenta recargar la página." : ""} />
+      <LoadErrorBanner message={patrimonioError ? "No se pudo cargar todo lo necesario para Dinero Actual y tus cuentas. Revisa tu conexión e intenta recargar la página." : ""} />
+      {/* "Centro de control financiero" (Fase 1, 2026-08-07; rediseño de
+          Inicio, 2026-08-08): arriba de todo va Dinero Actual (ahorros +
+          saldo de tus cuentas, sin desglose de activos/pasivos), el resumen
+          del mes (Disponible/Ingresos/Gastos/Ahorro), tus cuentas como
+          tarjetas visuales y Próximos compromisos -- pensado para responder
+          en segundos "¿cómo estoy?" sin tener que leer varios gráficos. El
+          cuadro de "Atención" se quitó por pedido del usuario. Debajo de eso
+          van los títulos "Resumen anual" (los 4 números "hero" del año) y
+          "Resumen Mensual" (Panorama del año), y todo lo que ya existía más
+          abajo (donut, Ingresos vs gastos, etc.) se dejó tal cual. */}
+      <Card className="p-6">
+        <Eyebrow>Dinero Actual</Eyebrow>
+        {patrimonio ? (
+          <>
+            <p className="mt-1 text-[32px] font-extrabold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{fmt(patrimonio.activos)}</p>
+            {patrimonio.deltaActivos !== 0 && (
+              <p className={`mt-1 text-sm font-semibold ${patrimonio.deltaActivos >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"}`}>
+                {patrimonio.deltaActivos >= 0 ? "↑" : "↓"} {fmt(Math.abs(patrimonio.deltaActivos))} este mes
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="mt-1 text-sm text-slate-400">Calculando…</p>
+        )}
+        <p className="mt-3 text-[11px] text-slate-400">Ahorros acumulados + saldo de tus cuentas.</p>
+      </Card>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-4">
+          <Eyebrow>Disponible</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(patrimonio ? patrimonio.totalCuentas : 0)}</p>
+          <p className="mt-1.5 text-[11px] text-slate-400">Suma de tus cuentas, ver abajo</p>
+        </Card>
+        <Card className="p-4">
+          <Eyebrow>Ingresos</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(currentMonth.ingresoTotal)}</p>
+          <div className="mt-1.5"><TrendBadge current={currentMonth.ingresoTotal} previous={prevMonthForTrend?.ingresoTotal} /></div>
+        </Card>
+        <Card className="p-4">
+          <Eyebrow>Gastos</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(currentMonth.gastoTotal)}</p>
+          <div className="mt-1.5"><TrendBadge current={currentMonth.gastoTotal} previous={prevMonthForTrend?.gastoTotal} invert /></div>
+        </Card>
+        <Card className="p-4">
+          <Eyebrow>Ahorro</Eyebrow>
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">
+            {fmt(currentMonth.ahorroTotal)}
+            {currentMonth.ingresoTotal > 0 && (
+              <span className="ml-1.5 text-xs font-semibold text-slate-400">· {Math.round((currentMonth.ahorroTotal / currentMonth.ingresoTotal) * 100)}%</span>
+            )}
+          </p>
+          <div className="mt-1.5"><TrendBadge current={currentMonth.ahorroTotal} previous={prevMonthForTrend?.ahorroTotal} /></div>
+        </Card>
+      </div>
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <Eyebrow>Tus cuentas</Eyebrow>
+          <button
+            onClick={() => setEditingAccount({ account: null })}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            <Plus size={13} /> Agregar cuenta
+          </button>
+        </div>
+        {(patrimonioRaw?.accounts?.length || 0) === 0 ? (
+          <Card className="p-5">
+            <p className="text-sm text-slate-400">Todavía no tienes cuentas. Agrega la primera con el botón de arriba.</p>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {patrimonioRaw.accounts.map((acc) => (
+              <AccountCard
+                key={acc.id}
+                account={acc}
+                fmt={fmt}
+                onEdit={() => setEditingAccount({ account: acc })}
+                onDelete={() => setDeletingAccount(acc)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <Card className="p-5">
+        <Eyebrow>Próximos compromisos</Eyebrow>
+        {proximosPagos.disabled ? (
+          <p className="mt-3 text-sm text-slate-400">Cambia al año actual para ver tus próximos pagos.</p>
+        ) : proximosPagos.items.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-400">No tienes pagos ni ingresos programados en los próximos 30 días.</p>
+        ) : (
+          <>
+            <div className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+              {proximosPagos.items.map((it) => (
+                <div key={it.id} className="flex items-center justify-between gap-2 py-2 text-sm first:pt-0">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="w-14 shrink-0 text-xs font-medium text-slate-400">
+                      {dateStringDay(it.date)} {MONTHS[dateStringMonth(it.date) - 1]}
+                    </span>
+                    <span className="truncate text-slate-700 dark:text-slate-200">{it.label}</span>
+                  </div>
+                  <span className={`shrink-0 tabular-nums font-medium ${it.kind === "ingreso" ? "text-emerald-600" : "text-red-500"}`}>
+                    {it.kind === "ingreso" ? "+" : "-"}{fmt(it.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center justify-between border-t border-dashed border-slate-200 pt-2 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              <button onClick={() => onNavigateTab?.("calendar")} className="hover:text-slate-700 dark:hover:text-slate-200">Ver calendario completo</button>
+              <span>Comprometido: {fmt(proximosPagos.totalComprometido)}</span>
+            </div>
+          </>
+        )}
+      </Card>
+      <h2 className="pt-2 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Resumen anual</h2>
       {/* Rediseño de Reporte/Anual (2026-08-01) a partir de dos imágenes de
           referencia que trajo el usuario -- mismos datos y gráficos de
           siempre, reacomodados con más jerarquía visual: 4 números "hero"
@@ -1306,6 +1561,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
           )}
         </Card>
       </div>
+      <h2 className="pt-2 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Resumen Mensual</h2>
       <Card className="p-5">
         <div className="mb-4 flex items-center justify-between">
           <Eyebrow>Panorama del año</Eyebrow>
@@ -1506,6 +1762,188 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month }) {
           </div>
         )}
       </Card>
+      {editingAccount && (
+        <AccountModal
+          account={editingAccount.account}
+          onClose={() => setEditingAccount(null)}
+          onSaved={refetchPatrimonioRaw}
+        />
+      )}
+      {deletingAccount && (
+        <ConfirmDeleteModal
+          title="Eliminar cuenta"
+          message={`¿Seguro que quieres eliminar "${deletingAccount.name}"? Esto no afecta tus ingresos, gastos ni ahorros -- solo borra el registro de esta cuenta y su saldo.`}
+          onCancel={() => setDeletingAccount(null)}
+          onConfirm={() => handleDeleteAccount(deletingAccount.id)}
+        />
+      )}
+    </div>
+  );
+}
+// Modal simple de crear/editar una cuenta -- mismo patrón que GoalModal
+// (nombre + un par de campos + guardar), sin nada de "agregar/rebajar": el
+// saldo es un número que se edita directo, como el "monto actual" de una
+// meta.
+// Marca de red genérica (2026-08-08) -- una aproximación estilizada, no el
+// logo oficial de Visa/Mastercard (no podemos usar los logos reales), solo
+// para distinguir de un vistazo qué red tiene cada tarjeta.
+function NetworkMark({ network }) {
+  if (network === "Visa") {
+    return <span className="text-lg font-black italic tracking-tight text-white/90">VISA</span>;
+  }
+  if (network === "Mastercard") {
+    return (
+      <span className="flex items-center">
+        <span className="h-6 w-6 rounded-full bg-red-500/90" />
+        <span className="-ml-2.5 h-6 w-6 rounded-full bg-amber-400/90 mix-blend-screen" />
+      </span>
+    );
+  }
+  return null;
+}
+// Tarjeta visual de una cuenta (2026-08-08, a pedido del usuario): forma y
+// textura de una tarjeta real (chip, número enmascarado, red), en el color
+// del banco elegido -- NO es el logo real del banco, es un color inspirado
+// en su identidad. El saldo se muestra debajo, no sobre la tarjeta, como en
+// una tarjeta física de verdad.
+function AccountCard({ account, fmt, onEdit, onDelete }) {
+  const bank = BANKS.find((b) => b.name === account.bank) || BANKS[BANKS.length - 1];
+  return (
+    <div>
+      <div
+        className="group relative aspect-[1.6/1] w-full overflow-hidden rounded-2xl p-4 text-white shadow-lg shadow-slate-900/10"
+        style={{ backgroundImage: `linear-gradient(135deg, ${bank.from}, ${bank.to})` }}
+      >
+        <div className="absolute right-2 top-2 flex gap-0.5 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100">
+          <button
+            onClick={onEdit}
+            aria-label="Editar cuenta"
+            className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
+          >
+            <Pencil size={12} />
+          </button>
+          <button
+            onClick={onDelete}
+            aria-label="Eliminar cuenta"
+            className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-white/80">{account.bank || "Otro"}</p>
+        <div className="mt-3 h-5 w-8 rounded-[4px] bg-gradient-to-br from-yellow-200 to-yellow-500" />
+        <p className="mt-3 font-mono text-sm tracking-[0.2em] text-white/90">
+          •••• •••• •••• {account.last4 || "····"}
+        </p>
+        <div className="mt-3 flex items-end justify-between">
+          <div className="min-w-0">
+            <p className="truncate text-xs font-medium text-white/70">{account.name}</p>
+            <p className="text-[10px] text-white/50">{account.type}</p>
+          </div>
+          <NetworkMark network={account.network} />
+        </div>
+      </div>
+      <p className="mt-2 text-right text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{fmt(account.current_balance)}</p>
+    </div>
+  );
+}
+function AccountModal({ account, onClose, onSaved }) {
+  const isEditing = Boolean(account);
+  const [name, setName] = useState(account?.name || "");
+  const [type, setType] = useState(account?.type || ACCOUNT_TYPES[0]);
+  const [bank, setBank] = useState(account?.bank || BANKS[0].name);
+  const [network, setNetwork] = useState(account?.network || CARD_NETWORKS[0]);
+  const [last4, setLast4] = useState(account?.last4 || "");
+  const [balance, setBalance] = useState(account ? String(account.current_balance) : "0");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name) {
+      setErrorMsg("Ponle un nombre a la cuenta.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    const payload = {
+      name, type, bank,
+      network: network === "Ninguna" ? null : network,
+      last4: last4 ? last4.slice(-4) : null,
+      current_balance: Number(balance) || 0,
+    };
+    if (isEditing) {
+      const { error } = await supabase.from("accounts").update(payload).eq("id", account.id);
+      setSaving(false);
+      if (error) { setErrorMsg("Error al guardar: " + error.message); return; }
+      onSaved();
+      onClose();
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("accounts").insert({ ...payload, user_id: userId || null });
+    setSaving(false);
+    if (error) { setErrorMsg("Error al guardar: " + error.message); return; }
+    onSaved();
+    onClose();
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar cuenta" : "Nueva cuenta"}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Cuenta Colones" className={`mt-1 ${INPUT_CLASS}`} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Banco</label>
+              <select value={bank} onChange={(e) => setBank(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+                {BANKS.map((b) => <option key={b.name}>{b.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo</label>
+              <select value={type} onChange={(e) => setType(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+                {ACCOUNT_TYPES.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Red</label>
+              <select value={network} onChange={(e) => setNetwork(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+                {CARD_NETWORKS.map((n) => <option key={n}>{n}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Últimos 4 dígitos</label>
+              <input
+                value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder="1234" inputMode="numeric" className={`mt-1 ${INPUT_CLASS}`}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              {isEditing ? "Saldo actual" : "Saldo de hoy"}
+            </label>
+            <input type="number" value={balance} onChange={(e) => setBalance(e.target.value)} placeholder="0" className={`mt-1 ${INPUT_CLASS}`} />
+            {!isEditing && <p className="mt-1 text-xs text-slate-400">Este es el punto de partida -- no hace falta cargar movimientos viejos.</p>}
+          </div>
+          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+          <button
+            type="submit" disabled={saving}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear cuenta"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -5918,7 +6356,7 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
    APP SHELL
 ------------------------------------------------------------------ */
 const TABS = [
-  { id: "anual", label: "Anual", icon: Wallet },
+  { id: "inicio", label: "Inicio", icon: Home },
   { id: "mensual", label: "Mensual", icon: CalendarRange },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
@@ -5927,7 +6365,7 @@ const TABS = [
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
 export default function FinanceApp() {
-  const [tab, setTab] = useState("anual");
+  const [tab, setTab] = useState("inicio");
   // "Reporte" (una sola pestaña con un interruptor interno "Anual" /
   // "Mensual y quincenal", agregado el 2026-07-30) se volvió a separar en dos
   // pestañas propias -- "Anual" y "Mensual" -- a pedido del usuario
@@ -6077,7 +6515,7 @@ export default function FinanceApp() {
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h1 className="text-xl font-semibold">
-                {tab === "anual" && "Resumen del año"}
+                {tab === "inicio" && "Centro de control financiero"}
                 {tab === "mensual" && "Control por período"}
                 {tab === "incomes" && "Tus ingresos"}
                 {tab === "expenses" && "Tus gastos"}
@@ -6085,7 +6523,7 @@ export default function FinanceApp() {
                 {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && (savingsVista === "ahorros" ? "Tus ahorros" : "Tus metas")}
               </h1>
-              {tab === "anual" ? (
+              {tab === "inicio" ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
                   <button
                     onClick={() => goToYear(year - 1)}
@@ -6137,11 +6575,11 @@ export default function FinanceApp() {
             // viendo -- Anual/Mensual/Calendario tienen forma de tarjetas +
             // gráficos grandes; el resto (Ingresos/Gastos/Ahorros/
             // Presupuestos) se ve más como una cuadrícula de tarjetas.
-            tab === "anual" || tab === "mensual" || tab === "calendar" ? <DashboardSkeleton /> : <CardGridSkeleton count={6} />
+            tab === "inicio" || tab === "mensual" || tab === "calendar" ? <DashboardSkeleton /> : <CardGridSkeleton count={6} />
           ) : (
             <>
-              {tab === "anual" && (
-                <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} />
+              {tab === "inicio" && (
+                <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} categories={categories} onNavigateTab={setTab} />
               )}
               {tab === "mensual" && (
                 <QuincenasView fmt={format} yearData={yearData} year={year} month={month} onJumpToMonth={setMonth} />
