@@ -557,11 +557,20 @@ async function adjustGoalAmount(goalId, delta) {
 // con el signo correcto puesto por quien llama (positivo para sumar,
 // negativo para restar) -- esta función solo lee el saldo actual y le suma
 // el delta, no decide el signo.
+// Devuelve el error de Supabase si algo falla (ej. un permiso/RLS que
+// bloquea la actualización), o null si salió bien (2026-08-08, reportado
+// por el usuario: en Gastos, aun eligiendo una cuenta, el saldo no bajaba,
+// sin ningún aviso -- antes esta función no revisaba si el UPDATE fallaba,
+// así que un error de Supabase pasaba completamente desapercibido). Quien
+// llama decide qué hacer con el error -- normalmente, mostrarlo, sin
+// deshacer el gasto/ingreso que sí se guardó bien.
 async function adjustAccountBalance(accountId, delta) {
-  if (!accountId || !delta) return;
-  const { data } = await supabase.from("accounts").select("current_balance").eq("id", accountId).single();
-  if (!data) return;
-  await supabase.from("accounts").update({ current_balance: Number(data.current_balance) + delta }).eq("id", accountId);
+  if (!accountId || !delta) return null;
+  const { data, error: selectError } = await supabase.from("accounts").select("current_balance").eq("id", accountId).single();
+  if (selectError) return selectError;
+  if (!data) return null;
+  const { error: updateError } = await supabase.from("accounts").update({ current_balance: Number(data.current_balance) + delta }).eq("id", accountId);
+  return updateError || null;
 }
 // Antes, un mes se marcaba en rojo simplemente si ESE mes (aislado) gastó
 // más de lo que ingresó. Pero eso no toma en cuenta el saldo que se trae de
@@ -4284,19 +4293,26 @@ function IncomeModal({ income, types, accounts, onClose, onSaved, onTypesChanged
         payment_method: paymentMethod || null,
         account_id: newAccountId,
       }).eq("id", income.id);
+      // Ver el mismo comentario en ExpenseModal: se guarda el error de la
+      // cuenta aparte, para avisar si Supabase rechaza la actualización del
+      // saldo aunque el ingreso en sí se haya guardado bien (2026-08-08).
+      let accountError = null;
       if (!error) {
         const oldAccountId = income.account_id || null;
         const oldAmount = Number(income.amount);
         if (oldAccountId === newAccountId) {
-          if (oldAccountId) await adjustAccountBalance(oldAccountId, newAmount - oldAmount);
+          if (oldAccountId) accountError = await adjustAccountBalance(oldAccountId, newAmount - oldAmount);
         } else {
-          if (oldAccountId) await adjustAccountBalance(oldAccountId, -oldAmount);
-          if (newAccountId) await adjustAccountBalance(newAccountId, newAmount);
+          if (oldAccountId) accountError = (await adjustAccountBalance(oldAccountId, -oldAmount)) || accountError;
+          if (newAccountId) accountError = (await adjustAccountBalance(newAccountId, newAmount)) || accountError;
         }
       }
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
+      } else if (accountError) {
+        setErrorMsg(`El ingreso se guardó, pero no se pudo actualizar el saldo de la cuenta: ${accountError.message}`);
+        onSaved();
       } else {
         onSaved();
         onClose();
@@ -4317,10 +4333,13 @@ function IncomeModal({ income, types, accounts, onClose, onSaved, onTypesChanged
       payment_method: paymentMethod || null,
       account_id: newAccountId,
     });
-    if (!error && newAccountId) await adjustAccountBalance(newAccountId, newAmount);
+    const accountError = !error && newAccountId ? await adjustAccountBalance(newAccountId, newAmount) : null;
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
+    } else if (accountError) {
+      setErrorMsg(`El ingreso se guardó, pero no se pudo actualizar el saldo de la cuenta: ${accountError.message}`);
+      onSaved();
     } else {
       onSaved();
       onClose();
@@ -5470,19 +5489,28 @@ function ExpenseModal({ categories, cards, items, expense, accounts, onClose, on
         };
     if (isEditing) {
       const { error } = await supabase.from("expenses").update(payload).eq("id", expense.id);
+      // Se guarda el error de la cuenta aparte del error del gasto en sí
+      // (2026-08-08, reportado por el usuario: el saldo de la cuenta no
+      // bajaba, sin ningún aviso) -- así, si el gasto se guarda bien pero
+      // Supabase rechaza la actualización del saldo (ej. un permiso), ahora
+      // SÍ se avisa con un mensaje concreto, en vez de fallar en silencio.
+      let accountError = null;
       if (!error) {
         const oldAccountId = expense.account_id || null;
         const oldAmount = Number(expense.amount);
         if (oldAccountId === newAccountId) {
-          if (oldAccountId) await adjustAccountBalance(oldAccountId, -(newAmount - oldAmount));
+          if (oldAccountId) accountError = await adjustAccountBalance(oldAccountId, -(newAmount - oldAmount));
         } else {
-          if (oldAccountId) await adjustAccountBalance(oldAccountId, oldAmount);
-          if (newAccountId) await adjustAccountBalance(newAccountId, -newAmount);
+          if (oldAccountId) accountError = (await adjustAccountBalance(oldAccountId, oldAmount)) || accountError;
+          if (newAccountId) accountError = (await adjustAccountBalance(newAccountId, -newAmount)) || accountError;
         }
       }
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
+      } else if (accountError) {
+        setErrorMsg(`El gasto se guardó, pero no se pudo actualizar el saldo de la cuenta: ${accountError.message}`);
+        onSaved();
       } else {
         onSaved();
         onClose();
@@ -5495,10 +5523,13 @@ function ExpenseModal({ categories, cards, items, expense, accounts, onClose, on
       user_id: userId || null,
       ...payload,
     });
-    if (!error && newAccountId) await adjustAccountBalance(newAccountId, -newAmount);
+    const accountError = !error && newAccountId ? await adjustAccountBalance(newAccountId, -newAmount) : null;
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
+    } else if (accountError) {
+      setErrorMsg(`El gasto se guardó, pero no se pudo actualizar el saldo de la cuenta: ${accountError.message}`);
+      onSaved();
     } else {
       onSaved();
       onClose();
