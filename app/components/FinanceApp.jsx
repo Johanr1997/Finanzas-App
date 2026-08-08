@@ -7272,7 +7272,7 @@ const TABS = [
   { id: "mensual", label: "Mensual", icon: CalendarRange },
   { id: "incomes", label: "Ingresos", icon: TrendingUp },
   { id: "expenses", label: "Gastos", icon: TrendingDown },
-  { id: "savings", label: "Ahorros y Metas", icon: PiggyBank },
+  { id: "savings", label: "Ahorros", icon: PiggyBank },
   { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "calendar", label: "Calendario", icon: Calendar },
 ];
