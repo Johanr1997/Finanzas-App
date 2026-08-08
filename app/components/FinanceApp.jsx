@@ -29,7 +29,10 @@ const MAX_FUTURE_YEARS = 10;
 // gestionar cuentas propias, solo dejar constancia de por dónde entró el
 // dinero. Campo opcional -- los ingresos de antes de este cambio no tienen
 // ninguno guardado y siguen mostrándose bien (ver payment_method en incomes).
-const PAYMENT_METHODS = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Tarjeta", "Otro"];
+// "SINPE Móvil" agregado el 2026-08-08 a pedido del usuario -- para poder
+// dejar constancia de los ingresos que le hacen así, con su propio gráfico
+// (ver IncomePaymentMethodReport más abajo).
+const PAYMENT_METHODS = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Tarjeta", "SINPE Móvil", "Otro"];
 // Tipos de cuenta (Fase 2, 2026-08-08) -- lista fija, igual de simple que
 // PAYMENT_METHODS, para la nueva tabla "accounts".
 const ACCOUNT_TYPES = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Inversión", "Otro"];
@@ -3738,6 +3741,9 @@ function IncomesView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           <IncomeTypesReport types={types} incomes={incomes} recurring={recurring} year={year} month={month} fmt={fmt} />
         </Card>
       )}
+      <Card className="p-5">
+        <IncomePaymentMethodReport incomes={incomes} year={year} month={month} fmt={fmt} />
+      </Card>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Eyebrow>Ingresos de {MONTHS_FULL[month]} {year}</Eyebrow>
         <div className="relative max-w-xs">
@@ -4314,6 +4320,93 @@ function IncomeTypesReport({ types, incomes, recurring, year, month, fmt }) {
           </div>
           <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {totalsByType.map((d) => (
+              <div key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{d.name}</p>
+                  <p className="text-xs text-slate-400">{d.count} ingreso{d.count === 1 ? "" : "s"}</p>
+                </div>
+                <span className="shrink-0 tabular-nums font-medium text-slate-700 dark:text-slate-200">{fmt(d.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+// Desglose de ingresos por "Método de pago" (2026-08-08, a pedido del
+// usuario: quería poder ver cuánto le entra por SINPE). Mismo patrón visual
+// que IncomeTypesReport (arriba), pero agrupando por payment_method en vez
+// de type_id -- ese campo es una lista fija simple (PAYMENT_METHODS, ya
+// incluye "SINPE Móvil"), no un manager con crear/editar/borrar como los
+// tipos de ingreso. Solo cuenta ingresos sueltos (los ingresos fijos no
+// tienen método de pago propio -- normalmente un SINPE es algo puntual, no
+// algo que se repita todos los meses).
+function IncomePaymentMethodReport({ incomes, year, month, fmt }) {
+  const [period, setPeriod] = useState("mes"); // "mes" | "q1" | "q2"
+
+  function inSelectedPeriod(i) {
+    if (dateStringYear(i.date) !== year || dateStringMonth(i.date) - 1 !== month) return false;
+    if (period === "mes") return true;
+    const day = dateStringDay(i.date);
+    return period === "q1" ? day <= 15 : day > 15;
+  }
+  const relevantIncomes = incomes.filter((i) => i.payment_method && inSelectedPeriod(i));
+  const totalsByMethod = PAYMENT_METHODS
+    .map((name) => {
+      const matching = relevantIncomes.filter((i) => i.payment_method === name);
+      return {
+        id: name,
+        name,
+        amount: matching.reduce((a, i) => a + Number(i.amount), 0),
+        count: matching.length,
+      };
+    })
+    .filter((d) => d.count > 0)
+    .sort((a, b) => b.amount - a.amount);
+  const grandTotal = totalsByMethod.reduce((a, d) => a + d.amount, 0);
+  const periodLabel = period === "mes"
+    ? `${MONTHS_FULL[month]} ${year}`
+    : period === "q1"
+    ? `1 al 15 de ${MONTHS_FULL[month]} ${year}`
+    : `16 a fin de mes de ${MONTHS_FULL[month]} ${year}`;
+  const chartHeight = Math.max(120, totalsByMethod.length * 40);
+
+  return (
+    <div>
+      <Eyebrow>Ingreso por método de pago</Eyebrow>
+      <div className="mt-3 max-w-xs">
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Período</label>
+        <select
+          value={period} onChange={(e) => setPeriod(e.target.value)}
+          className={`mt-1 ${INPUT_CLASS}`}
+        >
+          <option value="mes">Mes completo</option>
+          <option value="q1">Quincena 1 (días 1 al 15)</option>
+          <option value="q2">Quincena 2 (día 16 a fin de mes)</option>
+        </select>
+      </div>
+      <p className="mt-3 text-xs text-slate-400">{periodLabel}</p>
+      {totalsByMethod.length === 0 ? (
+        <p className="mt-4 text-sm text-slate-400">
+          Aún no has marcado un método de pago en tus ingresos de este período (se elige al agregar o editar uno, es opcional).
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{fmt(grandTotal)}</p>
+          <div className="mt-4" style={{ height: chartHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={totalsByMethod} layout="vertical" margin={{ left: 8, right: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 12, fill: "#64748B" }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                <Bar dataKey="amount" fill="#0EA5E9" radius={[0, 4, 4, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+            {totalsByMethod.map((d) => (
               <div key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium text-slate-700 dark:text-slate-200">{d.name}</p>
