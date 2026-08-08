@@ -42,7 +42,7 @@ const ACCOUNT_TYPES = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Inv
 // convence.
 const BANKS = [
   { name: "BAC Credomatic", from: "#C8102E", to: "#6E0A1B" },
-  { name: "Banco Nacional (BN)", from: "#E6C455", to: "#8A6D1D" },
+  { name: "Banco Nacional (BN)", from: "#00205B", to: "#E30613" },
   { name: "Banco de Costa Rica (BCR)", from: "#004C97", to: "#00274D" },
   { name: "Banco Popular", from: "#F26A21", to: "#A8390A" },
   { name: "Scotiabank", from: "#EC111A", to: "#8C0B12" },
@@ -54,6 +54,15 @@ const BANKS = [
   { name: "Otro", from: "#334155", to: "#0F172A" },
 ];
 const CARD_NETWORKS = ["Ninguna", "Visa", "Mastercard"];
+// Colores especiales cuando un banco se usa en una TARJETA DE CRÉDITO (kind
+// === "tarjeta", creada con el botón "+ Tarjeta"), distintos de los que usa
+// esa misma cuenta cuando es una cuenta normal (kind === "cuenta", botón
+// "+ Cuenta") -- a pedido del usuario (2026-08-08): el BN se ve dorado solo
+// en sus tarjetas de crédito, sus cuentas normales se quedan con el azul/
+// rojo de siempre.
+const CREDIT_CARD_BANK_OVERRIDES = {
+  "Banco Nacional (BN)": { from: "#E6C455", to: "#8A6D1D" },
+};
 const CATEGORY_META = {
   Vivienda: { icon: Home, color: "#EF4444" },
   Alimentación: { icon: Utensils, color: "#F97316" },
@@ -1924,8 +1933,10 @@ function toCardView(item) {
 // "deuda" (lo que has cargado menos lo que has pagado), así que la etiqueta
 // cambia según "kind".
 function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
-  const bank = BANKS.find((b) => b.name === view.bank) || BANKS[BANKS.length - 1];
   const isCard = kind === "tarjeta";
+  const bank = (isCard && CREDIT_CARD_BANK_OVERRIDES[view.bank])
+    || BANKS.find((b) => b.name === view.bank)
+    || BANKS[BANKS.length - 1];
   return (
     <div
       className="group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6"
