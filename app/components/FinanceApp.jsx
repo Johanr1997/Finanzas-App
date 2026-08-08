@@ -175,6 +175,40 @@ function synthesizeRecurringEntries(item, year, { totalMonths } = {}) {
   }
   return out;
 }
+// Todas las fechas en que ya "tocó" un ingreso/gasto fijo, desde que empezó
+// hasta hoy (fecha real) -- reusa synthesizeRecurringEntries (mismo
+// generador del calendario de ocurrencias mensuales/quincenales), año por
+// año, para saber cuánto se le ha "acumulado" a una cuenta o tarjeta ligada
+// a este ítem, sin tener que guardar una fila por cada mes (2026-08-08,
+// mismo patrón que ya se usaba para la deuda de tarjeta con planes de pago).
+function recurringElapsedOccurrences(item) {
+  if (!item?.start_date) return [];
+  const todayStr = localDateString();
+  const startYear = Number(item.start_date.slice(0, 4));
+  const currentYear = Number(todayStr.slice(0, 4));
+  const out = [];
+  for (let y = startYear; y <= currentYear; y++) {
+    out.push(...synthesizeRecurringEntries(item, y));
+  }
+  return out.filter((o) => o.date <= todayStr);
+}
+// Ventana de ocurrencias para MOSTRAR en el checklist de un gasto fijo
+// ligado a tarjeta (no para calcular el total, para eso está la función de
+// arriba): las últimas 6 que ya "tocaban" + las próximas 3, para poder
+// marcar como pagada una cuota atrasada o pagar una futura antes de tiempo.
+function recurringOccurrencesWindow(item) {
+  if (!item?.start_date) return [];
+  const todayStr = localDateString();
+  const startYear = Number(item.start_date.slice(0, 4));
+  const currentYear = Number(todayStr.slice(0, 4));
+  const all = [];
+  for (let y = startYear; y <= currentYear + 1; y++) {
+    all.push(...synthesizeRecurringEntries(item, y));
+  }
+  const past = all.filter((o) => o.date <= todayStr).slice(-6);
+  const upcoming = all.filter((o) => o.date > todayStr).slice(0, 3);
+  return [...past, ...upcoming];
+}
 async function fetchYearData(year) {
   const start = `${year}-01-01`;
   const end = `${year}-12-31`;
@@ -1212,6 +1246,64 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
     });
     return map;
   }, [patrimonioRaw]);
+  // Ingresos/gastos fijos ligados a una cuenta o tarjeta (2026-08-08, a
+  // pedido del usuario). Se piden aparte de Ingresos/Gastos (que solo
+  // cargan los del año que se está viendo) porque acá hace falta la
+  // historia completa desde que cada uno empezó, para saber cuánto se le ha
+  // "acumulado" ya a la cuenta o tarjeta ligada -- mismo criterio que
+  // patrimonioRaw. `marks` son los ciclos de un gasto fijo con tarjeta que
+  // ya se marcaron como pagados (ver CardBreakdownModal).
+  const [recurringRaw, setRecurringRaw] = useState({ incomes: [], expenses: [], marks: [] });
+  async function refetchRecurringRaw() {
+    const [{ data: recInc }, { data: recExp }, { data: marks }] = await Promise.all([
+      supabase.from("recurring_incomes").select("*"),
+      supabase.from("recurring_expenses").select("*, categories(name, color, icon)"),
+      supabase.from("recurring_payment_marks").select("*"),
+    ]);
+    setRecurringRaw({ incomes: recInc || [], expenses: recExp || [], marks: marks || [] });
+  }
+  useEffect(() => {
+    refetchRecurringRaw();
+  }, []);
+  // Cuánto se le ha sumado (ingresos fijos) o restado (gastos fijos) ya a
+  // cada cuenta ligada, contando todas las ocurrencias que ya "tocaban"
+  // desde que cada ítem empezó hasta hoy (recurringElapsedOccurrences) --
+  // se suma sobre el current_balance guardado, sin escribir nada en la
+  // base cada mes.
+  const recurringAccrualByAccount = useMemo(() => {
+    const map = {};
+    (recurringRaw.incomes || []).forEach((it) => {
+      if (!it.account_id) return;
+      const occ = recurringElapsedOccurrences(it);
+      map[it.account_id] = (map[it.account_id] || 0) + occ.length * Number(it.amount);
+    });
+    (recurringRaw.expenses || []).forEach((it) => {
+      if (!it.account_id) return;
+      const occ = recurringElapsedOccurrences(it);
+      map[it.account_id] = (map[it.account_id] || 0) - occ.length * Number(it.amount);
+    });
+    return map;
+  }, [recurringRaw]);
+  // Deuda que le suma a una tarjeta cada gasto fijo ligado a ella: todas las
+  // ocurrencias ya vencidas, MENOS las que ya se marcaron como pagadas (con
+  // el botón "Marcar como pagado" de CardBreakdownModal, sea que se hayan
+  // pagado antes de tiempo o ya vencidas) -- así nunca se cuenta un ciclo
+  // dos veces.
+  const recurringChargesByCard = useMemo(() => {
+    const map = {};
+    const marks = recurringRaw.marks || [];
+    (recurringRaw.expenses || []).forEach((it) => {
+      if (!it.card_id) return;
+      const occ = recurringElapsedOccurrences(it);
+      const markedDates = new Set(marks.filter((m) => m.recurring_expense_id === it.id).map((m) => m.period_date));
+      const unpaidCount = occ.filter((o) => !markedDates.has(o.date)).length;
+      map[it.card_id] = (map[it.card_id] || 0) + unpaidCount * Number(it.amount);
+    });
+    return map;
+  }, [recurringRaw]);
+  // Ver desglose de gastos fijos de una tarjeta (2026-08-08, a pedido del
+  // usuario: poder marcar un gasto fijo como pagado desde la tarjeta misma).
+  const [viewingCardDetail, setViewingCardDetail] = useState(null);
   const [editingAccount, setEditingAccount] = useState(null);
   const [deletingAccount, setDeletingAccount] = useState(null);
   const [editingCard, setEditingCard] = useState(null);
@@ -1232,20 +1324,41 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
     if (refetchCards) refetchCards();
     refetchCardCharges();
   }
+  // Marcar/desmarcar un ciclo de un gasto fijo (ligado a tarjeta) como
+  // pagado (2026-08-08, a pedido del usuario -- "un botón para marcar
+  // cuando se paga antes de la fecha"). Mientras exista la fila, ese ciclo
+  // deja de sumarse a la deuda de la tarjeta (ver recurringChargesByCard).
+  async function markRecurringExpensePaid(recurringExpenseId, periodDate, paidDate) {
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    await supabase.from("recurring_payment_marks").upsert(
+      { user_id: userId || null, recurring_expense_id: recurringExpenseId, period_date: periodDate, paid_date: paidDate },
+      { onConflict: "recurring_expense_id,period_date" }
+    );
+    refetchRecurringRaw();
+  }
+  async function unmarkRecurringExpensePaid(recurringExpenseId, periodDate) {
+    await supabase.from("recurring_payment_marks")
+      .delete().eq("recurring_expense_id", recurringExpenseId).eq("period_date", periodDate);
+    refetchRecurringRaw();
+  }
   // Tarjetas de crédito y cuentas normales, mezcladas en un solo arreglo
   // para el carrusel de "Tus cuentas" (2026-08-08) -- cada ítem trae "kind"
   // para saber cuál modal abrir al editar/borrar, y su saldo ya calculado
   // (directo para cuentas, o deuda calculada para tarjetas).
   const accountCarouselItems = useMemo(() => {
-    const accountItems = accounts.map((a) => ({ kind: "cuenta", id: a.id, data: a, balance: Number(a.current_balance) }));
+    const accountItems = accounts.map((a) => ({
+      kind: "cuenta", id: a.id, data: a,
+      balance: Number(a.current_balance) + (recurringAccrualByAccount[a.id] || 0),
+    }));
     const cardItems = cards.map((c) => ({
       kind: "tarjeta",
       id: c.id,
       data: c,
-      balance: Number(c.initial_balance || 0) + (cardCharges[c.id] || 0) + (planChargesByCard[c.id] || 0),
+      balance: Number(c.initial_balance || 0) + (cardCharges[c.id] || 0) + (planChargesByCard[c.id] || 0) + (recurringChargesByCard[c.id] || 0),
     }));
     return [...accountItems, ...cardItems];
-  }, [accounts, cards, cardCharges, planChargesByCard]);
+  }, [accounts, cards, cardCharges, planChargesByCard, recurringAccrualByAccount, recurringChargesByCard]);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -1582,6 +1695,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
             onEdit={(item) => (item.kind === "cuenta" ? setEditingAccount({ account: item.data }) : setEditingCard({ card: item.data }))}
             onDelete={(item) => (item.kind === "cuenta" ? setDeletingAccount(item.data) : setDeletingCard(item.data))}
             onPay={(item) => setPayingCard(item.data)}
+            onViewDetail={(item) => setViewingCardDetail(item.data)}
           />
         )}
       </div>
@@ -1910,6 +2024,17 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           onSaved={() => { refetchCardCharges(); if (refetchAccounts) refetchAccounts(); }}
         />
       )}
+      {viewingCardDetail && (
+        <CardBreakdownModal
+          card={viewingCardDetail}
+          recurringExpenses={recurringRaw.expenses}
+          marks={recurringRaw.marks}
+          fmt={fmt}
+          onClose={() => setViewingCardDetail(null)}
+          onMark={markRecurringExpensePaid}
+          onUnmark={unmarkRecurringExpensePaid}
+        />
+      )}
     </div>
   );
 }
@@ -2032,7 +2157,7 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
 // cuántas hay. Si solo hay una, no se muestran ni flechitas ni puntos. Las
 // tarjetas de crédito (kind === "tarjeta") además muestran un botón
 // "Registrar pago" debajo, para bajar su deuda.
-function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay }) {
+function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail }) {
   const [index, setIndex] = useState(0);
   const count = items.length;
   const safeIndex = count ? ((index % count) + count) % count : 0;
@@ -2066,12 +2191,23 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay }) {
             onDelete={() => onDelete(item)}
           />
           {item.kind === "tarjeta" && (
-            <button
-              onClick={() => onPay(item)}
-              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <Landmark size={13} /> Registrar pago
-            </button>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => onPay(item)}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <Landmark size={13} /> Registrar pago
+              </button>
+              {/* Desglose de gastos fijos ligados a esta tarjeta, con casilla
+                  para marcarlos como pagados (2026-08-08, a pedido del
+                  usuario). */}
+              <button
+                onClick={() => onViewDetail(item)}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <Repeat size={13} /> Gastos fijos
+              </button>
+            </div>
           )}
         </div>
         {count > 1 && (
@@ -3665,10 +3801,10 @@ function IncomesView({ fmt, onDataChanged, year, month, accounts, refetchAccount
         />
       )}
       {showRecurringModal && (
-        <RecurringIncomeModal types={types} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} onTypesChanged={refetchTypes} />
+        <RecurringIncomeModal types={types} accounts={accounts} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} onTypesChanged={refetchTypes} />
       )}
       {editingRecurring && (
-        <RecurringIncomeModal types={types} item={editingRecurring} onClose={() => setEditingRecurring(null)} onSaved={refetchRecurring} onTypesChanged={refetchTypes} />
+        <RecurringIncomeModal types={types} accounts={accounts} item={editingRecurring} onClose={() => setEditingRecurring(null)} onSaved={refetchRecurring} onTypesChanged={refetchTypes} />
       )}
       {deletingRecurring && (
         <ConfirmDeleteModal
@@ -3834,7 +3970,7 @@ function IncomeModal({ income, types, accounts, onClose, onSaved, onTypesChanged
     </ModalShell>
   );
 }
-function RecurringIncomeModal({ item, types, onClose, onSaved, onTypesChanged }) {
+function RecurringIncomeModal({ item, types, accounts, onClose, onSaved, onTypesChanged }) {
   const isEditing = Boolean(item);
   const today = localDateString();
   const [typeId, setTypeId] = useState(item?.type_id || "");
@@ -3842,6 +3978,13 @@ function RecurringIncomeModal({ item, types, onClose, onSaved, onTypesChanged })
   const [amount, setAmount] = useState(item ? String(item.amount) : "");
   const [startDate, setStartDate] = useState(item?.start_date || today);
   const [frequency, setFrequency] = useState(item?.frequency || "mensual");
+  // Cuenta a la que entra este ingreso fijo cada vez que toca (2026-08-08,
+  // a pedido del usuario). A diferencia de un ingreso suelto (que ajusta el
+  // saldo una sola vez, al guardar), acá no hay una fila real por cada mes
+  // -- el saldo se calcula sumando todas las ocurrencias ya "pasadas" desde
+  // que empezó este ingreso fijo (ver recurringElapsedOccurrences), cada
+  // vez que se muestra la cuenta, en vez de escribirlo en la base cada mes.
+  const [accountId, setAccountId] = useState(item?.account_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const isQuincenal = frequency === "quincenal";
@@ -3858,7 +4001,10 @@ function RecurringIncomeModal({ item, types, onClose, onSaved, onTypesChanged })
     const selectedType = allTypes.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
-    const payload = { type: selectedType?.name || "", type_id: typeId, description, amount: Number(amount), start_date: startDate, frequency };
+    const payload = {
+      type: selectedType?.name || "", type_id: typeId, description, amount: Number(amount),
+      start_date: startDate, frequency, account_id: accountId || null,
+    };
     if (isEditing) {
       const { error } = await supabase.from("recurring_incomes").update(payload).eq("id", item.id);
       setSaving(false);
@@ -3937,6 +4083,20 @@ function RecurringIncomeModal({ item, types, onClose, onSaved, onTypesChanged })
           <p className="text-xs text-slate-400">
             Se cuenta siempre en los días 15 y 30 (o fin de mes), empezando en la primera de esas fechas a partir de la que elijas.
           </p>
+        )}
+        {(accounts || []).length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una cuenta (opcional)</label>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="">Ninguna</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            {accountId && (
+              <p className="mt-1.5 text-xs text-slate-400">
+                Cada vez que pase la fecha de este ingreso, el monto se suma solo al saldo de esa cuenta -- no hace falta anotarlo a mano cada mes.
+              </p>
+            )}
+          </div>
         )}
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
@@ -4697,11 +4857,13 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         />
       )}
       {showRecurringModal && (
-        <RecurringExpenseModal categories={categories} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} />
+        <RecurringExpenseModal categories={categories} cards={cards} accounts={accounts} onClose={() => setShowRecurringModal(false)} onSaved={refetchRecurring} />
       )}
       {editingRecurring && (
         <RecurringExpenseModal
           categories={categories}
+          cards={cards}
+          accounts={accounts}
           item={editingRecurring}
           onClose={() => setEditingRecurring(null)}
           onSaved={refetchRecurring}
@@ -5388,6 +5550,115 @@ function CardPaymentModal({ card, accounts, onClose, onSaved }) {
     </ModalShell>
   );
 }
+// Desglose de gastos fijos ligados a una tarjeta, con casilla para marcar
+// cada ciclo como pagado (2026-08-08, a pedido del usuario: "al hacer clic
+// en una tarjeta se desglose... y al lado derecho haya una casilla que diga
+// pagado"). Se abre con el botón "Gastos fijos" bajo la tarjeta en el
+// carrusel de Cuentas. Muestra las últimas 6 fechas ya vencidas + las
+// próximas 3 (recurringOccurrencesWindow) de cada gasto fijo con card_id
+// igual a esta tarjeta -- marcar una la saca de la deuda (aunque no haya
+// llegado su fecha, para poder pagar antes de tiempo); desmarcarla la
+// vuelve a sumar.
+function CardBreakdownModal({ card, recurringExpenses, marks, fmt, onClose, onMark, onUnmark }) {
+  const [openRow, setOpenRow] = useState(null); // "{itemId}|{date}" con el date-picker abierto
+  const [paidDateDraft, setPaidDateDraft] = useState(localDateString());
+  const [saving, setSaving] = useState(false);
+  const items = (recurringExpenses || []).filter((it) => it.card_id === card.id);
+  const todayStr = localDateString();
+
+  async function handleConfirmPaid(item, date) {
+    setSaving(true);
+    await onMark(item.id, date, paidDateDraft);
+    setSaving(false);
+    setOpenRow(null);
+  }
+  async function handleUnmark(item, date) {
+    setSaving(true);
+    await onUnmark(item.id, date);
+    setSaving(false);
+  }
+
+  return (
+    <ModalShell onClose={onClose} title={`Gastos fijos · ${card.name}`}>
+      <p className="mb-4 -mt-2 text-xs text-slate-400">
+        Cada ciclo se suma solo a la deuda de la tarjeta cuando pasa su fecha. Márcalo como pagado (antes o después de esa fecha) para que deje de contarse.
+      </p>
+      {items.length === 0 ? (
+        <p className="py-6 text-center text-sm text-slate-400">Todavía no tienes gastos fijos ligados a esta tarjeta. Puedes ligar uno desde "Gasto fijo" en Gastos.</p>
+      ) : (
+        <div className="space-y-4">
+          {items.map((item) => {
+            const occurrences = recurringOccurrencesWindow(item).slice().reverse();
+            const markedDates = new Set((marks || []).filter((m) => m.recurring_expense_id === item.id).map((m) => m.period_date));
+            return (
+              <div key={item.id} className="rounded-xl border border-slate-100 dark:border-slate-800">
+                <div className="border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{item.description || item.categories?.name || "Gasto fijo"}</p>
+                  <p className="text-xs text-slate-400">{fmt(item.amount)} · {item.frequency === "quincenal" ? "Quincenal" : "Mensual"}</p>
+                </div>
+                <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+                  {occurrences.map((o) => {
+                    const isPaid = markedDates.has(o.date);
+                    const mark = (marks || []).find((m) => m.recurring_expense_id === item.id && m.period_date === o.date);
+                    const rowKey = `${item.id}|${o.date}`;
+                    const isFuture = o.date > todayStr;
+                    return (
+                      <div key={rowKey} className="px-4 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <label className="flex cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isPaid}
+                                disabled={saving}
+                                onChange={() => {
+                                  if (isPaid) { handleUnmark(item, o.date); return; }
+                                  setPaidDateDraft(todayStr);
+                                  setOpenRow(openRow === rowKey ? null : rowKey);
+                                }}
+                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              />
+                              <span className="text-slate-600 dark:text-slate-300">
+                                {o.date}{isFuture ? " (próximo)" : ""}
+                              </span>
+                            </label>
+                          </div>
+                          {isPaid ? (
+                            <span className="text-xs font-medium text-emerald-600">Pagado el {mark?.paid_date}</span>
+                          ) : (
+                            <span className="text-xs text-slate-400">Pendiente</span>
+                          )}
+                        </div>
+                        {openRow === rowKey && !isPaid && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <input
+                              type="date" value={paidDateDraft} onChange={(e) => setPaidDateDraft(e.target.value)}
+                              className={`${INPUT_CLASS} text-xs`}
+                            />
+                            <button
+                              type="button" disabled={saving}
+                              onClick={() => handleConfirmPaid(item, o.date)}
+                              className="shrink-0 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+                            >
+                              Confirmar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {occurrences.length === 0 && (
+                    <p className="px-4 py-4 text-center text-xs text-slate-400">Todavía no hay ciclos para este gasto fijo.</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </ModalShell>
+  );
+}
 // Transferir dinero entre dos cuentas propias (2026-08-08, a pedido del
 // usuario: "en ocasiones paso dinero de una cuenta a otra"). Solo entre
 // cuentas normales (no tarjetas de crédito) -- pasarle dinero a una tarjeta
@@ -5638,17 +5909,26 @@ function PlanModal({ categories, cards, plan, onClose, onSaved }) {
     </ModalShell>
   );
 }
-function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
+function RecurringExpenseModal({ categories, cards, accounts, item, onClose, onSaved }) {
   const isEditing = Boolean(item);
   const today = localDateString();
+  const cardsList = cards || [];
   const [categoryId, setCategoryId] = useState(item?.category_id || categories[0]?.id || "");
   const [description, setDescription] = useState(item?.description || "");
   const [amount, setAmount] = useState(item ? String(item.amount) : "");
   const [startDate, setStartDate] = useState(item?.start_date || today);
   const [frequency, setFrequency] = useState(item?.frequency || "mensual");
+  // Cuenta O tarjeta a la que se liga este gasto fijo (2026-08-08, a pedido
+  // del usuario) -- nunca las dos a la vez: si se paga con tarjeta, se le
+  // suma a su deuda en su fecha de pago (con la posibilidad de marcar cada
+  // ciclo como pagado antes de tiempo, ver CardBreakdownModal); si se paga
+  // de una cuenta, se le resta directo, igual que un ingreso fijo ligado.
+  const [cardId, setCardId] = useState(item?.card_id || "");
+  const [accountId, setAccountId] = useState(item?.account_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const isQuincenal = frequency === "quincenal";
+  const selectedCard = cardsList.find((c) => c.id === cardId) || null;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -5664,6 +5944,8 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
       amount: Number(amount),
       start_date: startDate,
       frequency,
+      card_id: selectedCard ? selectedCard.id : null,
+      account_id: selectedCard ? null : (accountId || null),
     };
     if (isEditing) {
       const { error } = await supabase.from("recurring_expenses").update(payload).eq("id", item.id);
@@ -5743,6 +6025,36 @@ function RecurringExpenseModal({ categories, item, onClose, onSaved }) {
           <p className="text-xs text-slate-400">
             Se cuenta siempre en los días 15 y 30 (o fin de mes), empezando en la primera de esas fechas a partir de la que elijas.
           </p>
+        )}
+        {cardsList.length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Pagar con tarjeta de crédito (opcional)</label>
+            <select value={cardId} onChange={(e) => setCardId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="">Ninguna</option>
+              {cardsList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {selectedCard && (
+              <p className="mt-1.5 text-xs text-slate-400">
+                Cada vez que pase la fecha de pago de esa tarjeta, el monto se suma solo a su deuda -- desde "Ver gastos fijos" en esa tarjeta puedes marcar un ciclo como pagado antes de tiempo.
+              </p>
+            )}
+          </div>
+        )}
+        {/* Igual que en Gastos: solo tiene sentido ligar a una cuenta cuando
+            NO se paga con tarjeta (2026-08-08). */}
+        {!selectedCard && (accounts || []).length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una cuenta (opcional)</label>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="">Ninguna</option>
+              {(accounts || []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            {accountId && (
+              <p className="mt-1.5 text-xs text-slate-400">
+                Cada vez que pase la fecha de este gasto, el monto se resta solo del saldo de esa cuenta -- no hace falta anotarlo a mano cada mes.
+              </p>
+            )}
+          </div>
         )}
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
