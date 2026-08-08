@@ -2248,11 +2248,37 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
     dragXRef.current = clamped;
     setDragX(clamped);
   }
+  // Velocidad del gesto (px por milisegundo, con signo), para poder
+  // reconocer un "flick" -- un deslizón rápido y corto, como los que se ven
+  // en el carrusel del App Store -- y cambiar de tarjeta aunque no haya
+  // llegado a moverse los 60px del umbral de distancia (2026-08-08, a
+  // pedido del usuario, a partir de una grabación mostrando ese mismo
+  // carrusel nativo de macOS). Se actualiza en cada muestra del gesto
+  // (touchmove o wheel) comparando contra la muestra anterior -- así, si al
+  // soltar la última muestra fue rápida, cuenta como flick aunque el resto
+  // del gesto haya sido lento.
+  const velocityRef = useRef(0);
+  const lastSampleTime = useRef(0);
+  const lastSampleX = useRef(0);
+  function sampleVelocity(clientX) {
+    const now = performance.now();
+    if (lastSampleTime.current) {
+      const dt = now - lastSampleTime.current;
+      if (dt > 0) velocityRef.current = (clientX - lastSampleX.current) / dt;
+    }
+    lastSampleTime.current = now;
+    lastSampleX.current = clientX;
+  }
+  const FLICK_VELOCITY = 0.5; // px/ms -- umbral típico de un deslizón rápido, no un arrastre lento
   function commitOrResetDrag() {
-    if (dragXRef.current < -60) next();
-    else if (dragXRef.current > 60) prev();
+    const goNext = dragXRef.current < -60 || (dragXRef.current < -10 && velocityRef.current < -FLICK_VELOCITY);
+    const goPrev = dragXRef.current > 60 || (dragXRef.current > 10 && velocityRef.current > FLICK_VELOCITY);
+    if (goNext) next();
+    else if (goPrev) prev();
     isDragging.current = false;
     dragXRef.current = 0;
+    velocityRef.current = 0;
+    lastSampleTime.current = 0;
     setDragX(0);
   }
   // Deslizar con el dedo (celular) o arrastrar con 2 dedos en el trackpad
@@ -2299,6 +2325,7 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
       touchStartX.current = e.touches[0].clientX;
       touchStartY.current = e.touches[0].clientY;
       isDragging.current = false;
+      lastSampleTime.current = 0;
     }
     function onTouchMove(e) {
       if (touchStartX.current == null) return;
@@ -2318,6 +2345,7 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
       // nativo del navegador (como el "volver atrás" de iOS) además de
       // mover la tarjeta.
       e.preventDefault();
+      sampleVelocity(e.touches[0].clientX);
       setDrag(dx);
     }
     function onTouchEnd() {
@@ -2331,6 +2359,20 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
       wheelLockedAxis.current = null;
       wheelAccumX.current = 0;
       wheelAccumY.current = 0;
+    }
+    // Igual que sampleVelocity, pero a partir de un delta (lo que da
+    // "wheel") en vez de una posición absoluta (lo que da "touch") --
+    // mismo signo que dx en el táctil: el "wheel" mueve dragX restando
+    // deltaX (ver más abajo), así que la velocidad también se calcula
+    // sobre -deltaX para que el umbral de FLICK_VELOCITY signifique lo
+    // mismo en los dos casos.
+    function sampleWheelVelocity(deltaX) {
+      const now = performance.now();
+      if (lastSampleTime.current) {
+        const dt = now - lastSampleTime.current;
+        if (dt > 0) velocityRef.current = -deltaX / dt;
+      }
+      lastSampleTime.current = now;
     }
     function onNativeWheel(e) {
       if (wheelLockedAxis.current === null) {
@@ -2347,6 +2389,7 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
       if (wheelLockedAxis.current === "y") return; // ya se decidió que es scroll vertical normal: dejarlo pasar
       e.preventDefault();
       isDragging.current = true;
+      sampleWheelVelocity(e.deltaX);
       setDrag(dragXRef.current - e.deltaX);
       if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
       wheelEndTimer.current = setTimeout(onWheelEnd, 120);
@@ -2401,7 +2444,12 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
           <div
             style={{
               transform: `translateX(${dragX}px)`,
-              transition: isDragging.current ? "none" : "transform 200ms ease",
+              // Curva "ease-out" más pronunciada (arranca rápido, se asienta
+              // suave) en vez de un "ease" parejo -- se siente más parecida
+              // al resorte/inercia de un carrusel nativo como el del App
+              // Store (2026-08-08, a pedido del usuario a partir de una
+              // grabación de ese mismo carrusel).
+              transition: isDragging.current ? "none" : "transform 260ms cubic-bezier(0.22, 1, 0.36, 1)",
             }}
           >
             <AccountCard
