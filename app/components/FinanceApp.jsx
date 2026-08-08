@@ -1645,33 +1645,21 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   return (
     <div className="space-y-6">
       <LoadErrorBanner message={goalsError ? "No se pudieron cargar tus metas — el progreso de metas de abajo puede no ser exacto. Revisa tu conexión e intenta recargar la página." : ""} />
-      <LoadErrorBanner message={patrimonioError ? "No se pudo cargar todo lo necesario para Dinero Actual y tus cuentas. Revisa tu conexión e intenta recargar la página." : ""} />
+      <LoadErrorBanner message={patrimonioError ? "No se pudo cargar todo lo necesario para tus cuentas. Revisa tu conexión e intenta recargar la página." : ""} />
       {/* "Centro de control financiero" (Fase 1, 2026-08-07; rediseño de
-          Inicio, 2026-08-08): arriba de todo va Dinero Actual (ahorros +
-          saldo de tus cuentas, sin desglose de activos/pasivos), el resumen
-          del mes (Disponible/Ingresos/Gastos/Ahorro), tus cuentas como
-          tarjetas visuales y Próximos compromisos -- pensado para responder
-          en segundos "¿cómo estoy?" sin tener que leer varios gráficos. El
-          cuadro de "Atención" se quitó por pedido del usuario. Debajo de eso
-          van los títulos "Resumen anual" (los 4 números "hero" del año) y
-          "Resumen Mensual" (Panorama del año), y todo lo que ya existía más
-          abajo (donut, Ingresos vs gastos, etc.) se dejó tal cual. */}
-      <Card className="p-6">
-        <Eyebrow>Dinero Actual</Eyebrow>
-        {patrimonio ? (
-          <>
-            <p className="mt-1 text-[32px] font-bold leading-tight tracking-tight tabular-nums text-slate-900 dark:text-white">{fmt(patrimonio.activos)}</p>
-            {patrimonio.deltaActivos !== 0 && (
-              <p className={`mt-1 text-sm font-semibold ${patrimonio.deltaActivos >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"}`}>
-                {patrimonio.deltaActivos >= 0 ? "↑" : "↓"} {fmt(Math.abs(patrimonio.deltaActivos))} este mes
-              </p>
-            )}
-          </>
-        ) : (
-          <p className="mt-1 text-sm text-slate-400">Calculando…</p>
-        )}
-        <p className="mt-3 text-[11px] text-slate-400">Ahorros acumulados + saldo de tus cuentas.</p>
-      </Card>
+          Inicio, 2026-08-08): arriba de todo va el resumen del mes
+          (Disponible/Ingresos/Gastos/Ahorro), tus cuentas como tarjetas
+          visuales y Próximos compromisos -- pensado para responder en
+          segundos "¿cómo estoy?" sin tener que leer varios gráficos. El
+          cuadro de "Atención" se quitó por pedido del usuario. La tarjeta
+          "Dinero Actual" (ahorros + saldo de cuentas) también se quitó
+          (2026-08-08, a pedido del usuario): confundía, porque el ahorro no
+          es dinero disponible. "Disponible" (solo saldo de cuentas) se dejó
+          como la única cifra de "cuánto tengo a mano" en esta pantalla.
+          Debajo de eso van los títulos "Resumen anual" (los 4 números
+          "hero" del año) y "Resumen Mensual" (Panorama del año), y todo lo
+          que ya existía más abajo (donut, Ingresos vs gastos, etc.) se dejó
+          tal cual. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="p-4">
           <Eyebrow>Disponible</Eyebrow>
@@ -3511,6 +3499,15 @@ function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
     const { data } = await supabase.from("goals").select("*");
     setGoals(data || []);
   }
+  // (2026-08-08, a pedido del usuario) Depositar/Retirar en una meta ahora
+  // crea un registro real en "savings" (ver GoalQuickAdjustModal más abajo),
+  // así que hace falta refrescar `contributions` también -- si no, "Ver
+  // aportes" no mostraría el depósito recién hecho hasta recargar la
+  // página.
+  async function refetchContributions() {
+    const { data } = await supabase.from("savings").select("*").not("goal_id", "is", null).order("date", { ascending: false });
+    setContributions(data || []);
+  }
   useEffect(() => {
     async function fetchAll() {
       const [{ data: gls, error }, { data: contribs, error: contribError }] = await Promise.all([
@@ -3659,7 +3656,7 @@ function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
           fmt={fmt}
           accounts={accounts}
           onClose={() => setAdjustingGoal(null)}
-          onSaved={() => { refetchGoals(); if (refetchAccounts) refetchAccounts(); }}
+          onSaved={() => { refetchGoals(); refetchContributions(); if (refetchAccounts) refetchAccounts(); }}
         />
       )}
       </div>
@@ -3701,15 +3698,22 @@ function GoalRing({ pct, color, size = 92, strokeWidth = 9 }) {
 // tener que abrir "Editar". Si la persona quiere que un aporte quede
 // registrado en su historial de Ahorros (y opcionalmente ligado a una
 // cuenta), sigue pudiendo hacerlo como siempre desde "Agregar ahorro".
+// Depositar/Retirar de una meta ahora SÍ crea un registro real en tu
+// historial de Ahorros (2026-08-08, a pedido del usuario -- antes era un
+// "ajuste rápido" que solo tocaba el progreso de la meta, y por eso el
+// total de "Ahorros" en Resumen/Mensual daba ₡0 aunque sí tuvieras plata
+// guardada en metas). Reutiliza el mismo mecanismo que ya existía para
+// "Vincular a una meta" desde "Agregar ahorro": una fila en `savings` con
+// `goal_id` -- Retirar guarda un monto NEGATIVO (mismo patrón que
+// SavingsTypeWithdrawModal), para que el total del mes baje de verdad.
 function GoalQuickAdjustModal({ goal, mode, fmt, accounts, onClose, onSaved }) {
   const isDeposit = mode === "depositar";
   const [amount, setAmount] = useState("");
   // ¿De qué cuenta sale (Depositar) / a qué cuenta vuelve (Retirar) el
   // dinero? (2026-08-08, a pedido del usuario) -- opcional: si se deja en
-  // "Ninguna", se comporta exactamente como antes (solo ajusta el progreso
-  // de la meta, sin tocar ninguna cuenta). Si se elige una, esa cuenta se
-  // actualiza de una vez, en el mismo momento -- igual que el selector de
-  // cuenta opcional que ya existe en "Agregar ahorro".
+  // "Ninguna", no se toca ninguna cuenta (por si es dinero que no está
+  // registrado en ninguna cuenta de la app). Si se elige una, esa cuenta se
+  // actualiza de una vez, en el mismo momento.
   const [accountId, setAccountId] = useState("");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -3725,21 +3729,46 @@ function GoalQuickAdjustModal({ goal, mode, fmt, accounts, onClose, onSaved }) {
     setErrorMsg("");
     // Al retirar, lo que en realidad sale del progreso de la meta queda
     // topado en `current` (no puede quedar negativa) -- se usa ese mismo
-    // monto real (no el que se haya escrito de más) para devolverlo a la
-    // cuenta, para que meta y cuenta nunca queden desincronizadas.
+    // monto real (no el que se haya escrito de más) tanto para el registro
+    // en Ahorros como para devolverlo a la cuenta, para que meta, cuenta e
+    // historial nunca queden desincronizados.
     const actualAmount = isDeposit ? value : Math.min(value, current);
     const delta = isDeposit ? value : -actualAmount;
-    await adjustGoalAmount(goal.id, delta);
-    if (accountId) await adjustAccountBalance(accountId, isDeposit ? -actualAmount : actualAmount);
+    const today = localDateString();
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("savings").insert({
+      user_id: userId || null,
+      type: goal.name,
+      type_id: null,
+      goal_id: goal.id,
+      account_id: accountId || null,
+      amount: isDeposit ? actualAmount : -actualAmount,
+      date: today,
+      year: dateStringYear(today),
+      month: dateStringMonth(today),
+    });
+    let accountError = null;
+    if (!error) {
+      await adjustGoalAmount(goal.id, delta);
+      if (accountId) accountError = await adjustAccountBalance(accountId, isDeposit ? -actualAmount : actualAmount);
+    }
     setSaving(false);
-    onSaved();
-    onClose();
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else if (accountError) {
+      setErrorMsg(`El aporte se guardó, pero no se pudo actualizar el saldo de la cuenta: ${accountError.message}`);
+      onSaved();
+    } else {
+      onSaved();
+      onClose();
+    }
   }
   return (
     <ModalShell onClose={onClose} title={`${isDeposit ? "Depositar en" : "Retirar de"} "${goal.name}"`}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <p className="-mt-2 text-xs text-slate-400">
-          Se {isDeposit ? "suma" : "resta"} de una vez al progreso de esta meta (llevas {fmt(current)}) -- no queda un registro en tu historial de Ahorros. Si prefieres que quede registrado, hazlo desde "Agregar ahorro" en Ahorros.
+          Se {isDeposit ? "suma" : "resta"} al progreso de esta meta (llevas {fmt(current)}) y queda registrado en tu historial de Ahorros, con fecha de hoy.
         </p>
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto a {isDeposit ? "depositar" : "retirar"}</label>
@@ -7531,11 +7560,12 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
   const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
   const [date, setDate] = useState(savingRecord?.date || defaultDate || today);
-  // ¿En dónde guardas este ahorro? (2026-08-08, a pedido del usuario) --
-  // igual que un ingreso ligado a una cuenta: si eliges una, el monto se
-  // suma automáticamente a su saldo, porque ahí es donde queda guardado el
-  // dinero. Independiente de "Vincular a una meta" (esa es sobre el
-  // PROPÓSITO del ahorro, esta es sobre DÓNDE físicamente está guardado).
+  // ¿De qué cuenta sale el dinero? (2026-08-08, a pedido del usuario) --
+  // igual que un depósito a una meta: el dinero ya estaba en la cuenta, y al
+  // guardarlo en un "sobre" de ahorro sale del dinero disponible, así que si
+  // eliges una cuenta el monto se RESTA de su saldo. Independiente de
+  // "Vincular a una meta" (esa es sobre el PROPÓSITO del ahorro, esta es
+  // sobre DE DÓNDE salió físicamente el dinero).
   const [accountId, setAccountId] = useState(savingRecord?.account_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -7580,6 +7610,7 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
         year: dateStringYear(date),
         month: dateStringMonth(date),
       }).eq("id", savingRecord.id);
+      let accountError = null;
       if (!error) {
         const oldGoalId = savingRecord.goal_id || null;
         const oldAccountId = savingRecord.account_id || null;
@@ -7590,16 +7621,21 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
           if (oldGoalId) await adjustGoalAmount(oldGoalId, -oldAmount);
           if (newGoalId) await adjustGoalAmount(newGoalId, newAmount);
         }
+        // El dinero SALE de la cuenta hacia el ahorro, así que el signo es
+        // el opuesto al del monto guardado (mismo criterio que Metas).
         if (oldAccountId === newAccountId) {
-          if (oldAccountId) await adjustAccountBalance(oldAccountId, newAmount - oldAmount);
+          if (oldAccountId) accountError = await adjustAccountBalance(oldAccountId, -(newAmount - oldAmount));
         } else {
-          if (oldAccountId) await adjustAccountBalance(oldAccountId, -oldAmount);
-          if (newAccountId) await adjustAccountBalance(newAccountId, newAmount);
+          if (oldAccountId) accountError = await adjustAccountBalance(oldAccountId, oldAmount) || accountError;
+          if (newAccountId) accountError = await adjustAccountBalance(newAccountId, -newAmount) || accountError;
         }
       }
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
+      } else if (accountError) {
+        setErrorMsg(`El ahorro se guardó, pero no se pudo actualizar el saldo de la cuenta: ${accountError.message}`);
+        onSaved();
       } else {
         onSaved();
         onClose();
@@ -7619,11 +7655,15 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
       year: dateStringYear(date),
       month: dateStringMonth(date),
     });
+    let accountError = null;
     if (!error && newGoalId) await adjustGoalAmount(newGoalId, newAmount);
-    if (!error && newAccountId) await adjustAccountBalance(newAccountId, newAmount);
+    if (!error && newAccountId) accountError = await adjustAccountBalance(newAccountId, -newAmount);
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
+    } else if (accountError) {
+      setErrorMsg(`El ahorro se guardó, pero no se pudo actualizar el saldo de la cuenta: ${accountError.message}`);
+      onSaved();
     } else {
       onSaved();
       onClose();
@@ -7665,7 +7705,7 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
         </div>
         {(accounts || []).length > 0 && (
           <div>
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿En dónde guardas este ahorro? (opcional)</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿De qué cuenta sale el dinero? (opcional)</label>
             <select
               value={accountId} onChange={(e) => setAccountId(e.target.value)}
               className={`mt-1 ${INPUT_CLASS}`}
@@ -7674,7 +7714,7 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
             {accountId && (
-              <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al saldo de esa cuenta.</p>
+              <p className="mt-1.5 text-xs text-slate-400">El monto se restará automáticamente del saldo de esa cuenta.</p>
             )}
           </div>
         )}
