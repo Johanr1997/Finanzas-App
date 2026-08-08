@@ -30,6 +30,9 @@ const MAX_FUTURE_YEARS = 10;
 // dinero. Campo opcional -- los ingresos de antes de este cambio no tienen
 // ninguno guardado y siguen mostrándose bien (ver payment_method en incomes).
 const PAYMENT_METHODS = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Tarjeta", "Otro"];
+// Tipos de cuenta (Fase 2, 2026-08-08) -- lista fija, igual de simple que
+// PAYMENT_METHODS, para la nueva tabla "accounts".
+const ACCOUNT_TYPES = ["Efectivo", "Cuenta corriente", "Cuenta de ahorros", "Inversión", "Otro"];
 const CATEGORY_META = {
   Vivienda: { icon: Home, color: "#EF4444" },
   Alimentación: { icon: Utensils, color: "#F97316" },
@@ -1107,16 +1110,40 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   // más abajo.
   const [patrimonioRaw, setPatrimonioRaw] = useState(null);
   const [patrimonioError, setPatrimonioError] = useState(false);
-  useEffect(() => {
-    Promise.all([
+  // "accounts" (Fase 2, 2026-08-08): tus cuentas reales (efectivo, cuenta
+  // corriente, cuenta de ahorros, inversión...), cada una con un saldo. A
+  // propósito, el saldo NO se reconstruye desde tu historial -- lo pones tú
+  // al crear cada cuenta (el saldo de hoy) y lo actualizas cuando quieras.
+  // Conectarlo automáticamente con Ingresos/Gastos/Ahorros queda para una
+  // ronda aparte (ver notas de progreso). refetchPatrimonioRaw se reusa
+  // tanto para la carga inicial como después de crear/editar/borrar una
+  // cuenta.
+  async function refetchPatrimonioRaw() {
+    const [
+      { data: sav, error: savErr },
+      { data: pl, error: plErr },
+      { data: buds, error: budErr },
+      { data: accs, error: accErr },
+    ] = await Promise.all([
       supabase.from("savings").select("amount, date"),
       supabase.from("installment_plans").select("*, credit_cards(name, cutoff_day, payment_day)"),
       supabase.from("budgets").select("*"),
-    ]).then(([{ data: sav, error: savErr }, { data: pl, error: plErr }, { data: buds, error: budErr }]) => {
-      setPatrimonioError(Boolean(savErr || plErr || budErr));
-      setPatrimonioRaw({ savings: sav || [], plans: pl || [], budgets: buds || [] });
-    });
+      supabase.from("accounts").select("*").order("created_at", { ascending: true }),
+    ]);
+    setPatrimonioError(Boolean(savErr || plErr || budErr || accErr));
+    setPatrimonioRaw({ savings: sav || [], plans: pl || [], budgets: buds || [], accounts: accs || [] });
+  }
+  useEffect(() => {
+    refetchPatrimonioRaw();
   }, []);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [deletingAccount, setDeletingAccount] = useState(null);
+  async function handleDeleteAccount(id) {
+    const { error } = await supabase.from("accounts").delete().eq("id", id);
+    if (error) throw error;
+    setDeletingAccount(null);
+    refetchPatrimonioRaw();
+  }
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -1227,23 +1254,30 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   // anterior" funciona bien incluso cruzando de diciembre a enero.
   const patrimonio = useMemo(() => {
     if (!patrimonioRaw) return null;
-    const { savings, plans } = patrimonioRaw;
+    const { savings, plans, accounts } = patrimonioRaw;
+    // Las cuentas (Fase 2) solo tienen un saldo de "ahora", no un histórico
+    // por fecha como los ahorros -- así que se suman igual sin importar qué
+    // mes se esté viendo. Esto no distorsiona la comparación "vs. mes
+    // anterior": como el total de cuentas es el mismo en los dos lados de la
+    // resta, se cancela solo y el delta sigue reflejando de verdad el
+    // cambio en ahorros y deuda de ese mes.
+    const totalCuentas = accounts.reduce((a, c) => a + Number(c.current_balance), 0);
     const endOfMonthStr = (y, m) => {
       const lastDay = new Date(y, m + 1, 0).getDate();
       return `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
     };
-    const activosHasta = (y, m) => {
+    const ahorrosHasta = (y, m) => {
       const cutoff = endOfMonthStr(y, m);
       return savings.filter((s) => s.date <= cutoff).reduce((a, s) => a + Number(s.amount), 0);
     };
     const pasivosHasta = (y, m) => plans.reduce((a, p) => a + planSaldoPendiente(p, [], y, m), 0);
     const prevY = month === 0 ? year - 1 : year;
     const prevM = month === 0 ? 11 : month - 1;
-    const activos = activosHasta(year, month);
+    const activos = totalCuentas + ahorrosHasta(year, month);
     const pasivos = pasivosHasta(year, month);
     const neto = activos - pasivos;
-    const netoPrev = activosHasta(prevY, prevM) - pasivosHasta(prevY, prevM);
-    return { activos, pasivos, neto, delta: neto - netoPrev };
+    const netoPrev = totalCuentas + ahorrosHasta(prevY, prevM) - pasivosHasta(prevY, prevM);
+    return { activos, pasivos, neto, delta: neto - netoPrev, totalCuentas };
   }, [patrimonioRaw, year, month]);
   // Próximos compromisos (próximos 30 días reales): a diferencia de todo lo
   // demás en esta pantalla, esto SIEMPRE mira la fecha real de hoy, no el
@@ -1473,18 +1507,14 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           )}
         </div>
         <p className="mt-3 text-[11px] text-slate-400">
-          Aproximado: ahorros acumulados menos saldo pendiente de planes de pago. Todavía no incluye cuentas bancarias, efectivo ni deuda de tarjeta de crédito.
+          Ahorros acumulados + saldo de tus cuentas, menos saldo pendiente de planes de pago. Todavía no incluye deuda de tarjeta de crédito (llega en el siguiente paso).
         </p>
       </Card>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="p-4">
           <Eyebrow>Disponible</Eyebrow>
-          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(cumulativeBalanceData[month].saldoAcumulado)}</p>
-          {month > 0 && (
-            <span className={`mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${currentMonth.balance >= 0 ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400" : "bg-red-50 text-red-500 dark:bg-red-500/10 dark:text-red-400"}`}>
-              {currentMonth.balance >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />} {fmt(Math.abs(currentMonth.balance))} este mes
-            </span>
-          )}
+          <p className="mt-1.5 text-xl font-bold tabular-nums text-slate-900 dark:text-white">{fmt(patrimonio ? patrimonio.totalCuentas : 0)}</p>
+          <p className="mt-1.5 text-[11px] text-slate-400">Suma de tus cuentas, ver abajo</p>
         </Card>
         <Card className="p-4">
           <Eyebrow>Ingresos</Eyebrow>
@@ -1507,6 +1537,38 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           <div className="mt-1.5"><TrendBadge current={currentMonth.ahorroTotal} previous={prevMonthForTrend?.ahorroTotal} /></div>
         </Card>
       </div>
+      <Card className="p-5">
+        <div className="mb-1 flex items-center justify-between">
+          <Eyebrow>Tus cuentas</Eyebrow>
+          <button
+            onClick={() => setEditingAccount({ account: null })}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            aria-label="Agregar cuenta"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+        <p className="mb-2 text-[11px] text-slate-400">
+          Actualizas el saldo tú mismo cuando quieras -- por ahora no se conecta solo con Ingresos/Gastos/Ahorros.
+        </p>
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          {(patrimonioRaw?.accounts || []).map((acc) => (
+            <div key={acc.id} className="flex items-center justify-between gap-2 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{acc.name}</p>
+                <p className="text-xs text-slate-400">{acc.type}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <span className="tabular-nums text-sm font-semibold text-slate-700 dark:text-slate-200">{fmt(acc.current_balance)}</span>
+                <RowActions onEdit={() => setEditingAccount({ account: acc })} onDelete={() => setDeletingAccount(acc)} />
+              </div>
+            </div>
+          ))}
+          {(!patrimonioRaw || patrimonioRaw.accounts.length === 0) && (
+            <p className="py-2 text-sm text-slate-400">Todavía no tienes cuentas. Agrega la primera con el botón de arriba.</p>
+          )}
+        </div>
+      </Card>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card className="p-5">
           <Eyebrow>Atención</Eyebrow>
@@ -1805,6 +1867,97 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           </div>
         )}
       </Card>
+      {editingAccount && (
+        <AccountModal
+          account={editingAccount.account}
+          onClose={() => setEditingAccount(null)}
+          onSaved={refetchPatrimonioRaw}
+        />
+      )}
+      {deletingAccount && (
+        <ConfirmDeleteModal
+          title="Eliminar cuenta"
+          message={`¿Seguro que quieres eliminar "${deletingAccount.name}"? Esto no afecta tus ingresos, gastos ni ahorros -- solo borra el registro de esta cuenta y su saldo.`}
+          onCancel={() => setDeletingAccount(null)}
+          onConfirm={() => handleDeleteAccount(deletingAccount.id)}
+        />
+      )}
+    </div>
+  );
+}
+// Modal simple de crear/editar una cuenta -- mismo patrón que GoalModal
+// (nombre + un par de campos + guardar), sin nada de "agregar/rebajar": el
+// saldo es un número que se edita directo, como el "monto actual" de una
+// meta.
+function AccountModal({ account, onClose, onSaved }) {
+  const isEditing = Boolean(account);
+  const [name, setName] = useState(account?.name || "");
+  const [type, setType] = useState(account?.type || ACCOUNT_TYPES[0]);
+  const [balance, setBalance] = useState(account ? String(account.current_balance) : "0");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name) {
+      setErrorMsg("Ponle un nombre a la cuenta.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    if (isEditing) {
+      const { error } = await supabase.from("accounts").update({
+        name, type, current_balance: Number(balance) || 0,
+      }).eq("id", account.id);
+      setSaving(false);
+      if (error) { setErrorMsg("Error al guardar: " + error.message); return; }
+      onSaved();
+      onClose();
+      return;
+    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("accounts").insert({
+      name, type, current_balance: Number(balance) || 0, user_id: userId || null,
+    });
+    setSaving(false);
+    if (error) { setErrorMsg("Error al guardar: " + error.message); return; }
+    onSaved();
+    onClose();
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-900/10 dark:border-slate-800/60 dark:bg-slate-900 dark:shadow-black/40">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{isEditing ? "Editar cuenta" : "Nueva cuenta"}</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. BAC Cuenta Colones" className={`mt-1 ${INPUT_CLASS}`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo</label>
+            <select value={type} onChange={(e) => setType(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              {ACCOUNT_TYPES.map((t) => <option key={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              {isEditing ? "Saldo actual" : "Saldo de hoy"}
+            </label>
+            <input type="number" value={balance} onChange={(e) => setBalance(e.target.value)} placeholder="0" className={`mt-1 ${INPUT_CLASS}`} />
+            {!isEditing && <p className="mt-1 text-xs text-slate-400">Este es el punto de partida -- no hace falta cargar movimientos viejos.</p>}
+          </div>
+          {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+          <button
+            type="submit" disabled={saving}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          >
+            {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear cuenta"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
