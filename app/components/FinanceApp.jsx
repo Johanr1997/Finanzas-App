@@ -3379,7 +3379,7 @@ function GoalModal({ goal, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    INGRESOS
 ------------------------------------------------------------------ */
-function IncomesView({ fmt, onDataChanged, year, month, accounts }) {
+function IncomesView({ fmt, onDataChanged, year, month, accounts, refetchAccounts }) {
   const [incomes, setIncomes] = useState([]);
   const [recurring, setRecurring] = useState([]);
   // Tipos de ingreso (ej. "Salario", "Freelance"): no dependen del año/mes
@@ -3442,7 +3442,10 @@ function IncomesView({ fmt, onDataChanged, year, month, accounts }) {
   async function handleDelete(record) {
     const { error } = await supabase.from("incomes").delete().eq("id", record.id);
     if (error) throw error;
-    if (record.account_id) await adjustAccountBalance(record.account_id, -Number(record.amount));
+    if (record.account_id) {
+      await adjustAccountBalance(record.account_id, -Number(record.amount));
+      if (refetchAccounts) refetchAccounts();
+    }
     setIncomes((prev) => prev.filter((i) => i.id !== record.id));
     if (onDataChanged) onDataChanged();
     setDeletingIncome(null);
@@ -3624,10 +3627,10 @@ function IncomesView({ fmt, onDataChanged, year, month, accounts }) {
         ))}
       </div>
       {showModal && (
-        <IncomeModal types={types} accounts={accounts} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
+        <IncomeModal types={types} accounts={accounts} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={() => { refetchIncomes(); if (refetchAccounts) refetchAccounts(); }} onTypesChanged={refetchTypes} />
       )}
       {editingIncome && (
-        <IncomeModal types={types} accounts={accounts} income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
+        <IncomeModal types={types} accounts={accounts} income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={() => { refetchIncomes(); if (refetchAccounts) refetchAccounts(); }} onTypesChanged={refetchTypes} />
       )}
       {showTypesManager && (
         <IncomeTypesManagerModal types={types} onClose={() => setShowTypesManager(false)} onChanged={refetchTypes} />
@@ -4147,7 +4150,7 @@ function IncomeTypesReport({ types, incomes, recurring, year, month, fmt }) {
 /* ---------------------------------------------------------------
    GASTOS
 ------------------------------------------------------------------ */
-function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refetchCards, accounts }) {
+function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refetchCards, accounts, refetchAccounts }) {
   const [expenses, setExpenses] = useState([]);
   const [plans, setPlans] = useState([]);
   const [paymentOverrides, setPaymentOverrides] = useState([]);
@@ -4262,7 +4265,10 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   async function handleDelete(record) {
     const { error } = await supabase.from("expenses").delete().eq("id", record.id);
     if (error) throw error;
-    if (record.account_id) await adjustAccountBalance(record.account_id, Number(record.amount));
+    if (record.account_id) {
+      await adjustAccountBalance(record.account_id, Number(record.amount));
+      if (refetchAccounts) refetchAccounts();
+    }
     setExpenses((prev) => prev.filter((e) => e.id !== record.id));
     if (onDataChanged) onDataChanged();
     setDeletingExpense(null);
@@ -4618,7 +4624,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         </CollapsibleSection>
       </Card>
       {showModal && (
-        <ExpenseModal categories={categories} cards={cards} items={items} accounts={accounts} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} onItemsChanged={refetchItems} />
+        <ExpenseModal categories={categories} cards={cards} items={items} accounts={accounts} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={() => { refetchExpenses(); if (refetchAccounts) refetchAccounts(); }} onItemsChanged={refetchItems} />
       )}
       {editingExpense && (
         <ExpenseModal
@@ -4628,7 +4634,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           accounts={accounts}
           expense={editingExpense}
           onClose={() => setEditingExpense(null)}
-          onSaved={refetchExpenses}
+          onSaved={() => { refetchExpenses(); if (refetchAccounts) refetchAccounts(); }}
           onItemsChanged={refetchItems}
         />
       )}
@@ -6980,8 +6986,8 @@ export default function FinanceApp() {
               {tab === "calendar" && <CalendarView fmt={format} year={year} month={month} yearData={yearData} />}
             </>
           )}
-          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} accounts={accounts} />}
-          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} accounts={accounts} />}
+          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} accounts={accounts} refetchAccounts={refetchAccounts} />}
+          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} accounts={accounts} refetchAccounts={refetchAccounts} />}
           {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} categories={categories} />}
           {tab === "savings" && (
             <SavingsGoalsView
