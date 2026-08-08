@@ -1469,17 +1469,12 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
             <p className="text-sm text-slate-400">Todavía no tienes cuentas. Agrega la primera con el botón de arriba.</p>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {patrimonioRaw.accounts.map((acc) => (
-              <AccountCard
-                key={acc.id}
-                account={acc}
-                fmt={fmt}
-                onEdit={() => setEditingAccount({ account: acc })}
-                onDelete={() => setDeletingAccount(acc)}
-              />
-            ))}
-          </div>
+          <AccountsCarousel
+            accounts={patrimonioRaw.accounts}
+            fmt={fmt}
+            onEdit={(acc) => setEditingAccount({ account: acc })}
+            onDelete={(acc) => setDeletingAccount(acc)}
+          />
         )}
       </div>
       <Card className="p-5">
@@ -1801,49 +1796,140 @@ function NetworkMark({ network }) {
   }
   return null;
 }
-// Tarjeta visual de una cuenta (2026-08-08, a pedido del usuario): forma y
-// textura de una tarjeta real (chip, número enmascarado, red), en el color
-// del banco elegido -- NO es el logo real del banco, es un color inspirado
-// en su identidad. El saldo se muestra debajo, no sobre la tarjeta, como en
-// una tarjeta física de verdad.
+// Tarjeta visual de una cuenta (2026-08-08, a pedido del usuario; saldo
+// llevado adentro de la tarjeta el mismo día, a partir de una captura de una
+// app de banco real que mandó de referencia): forma y textura de una
+// tarjeta real (chip, número enmascarado, red), en el color del banco
+// elegido -- NO es el logo real del banco, es un color inspirado en su
+// identidad. El saldo ahora se muestra arriba, sobre la propia tarjeta
+// (antes iba como texto debajo).
 function AccountCard({ account, fmt, onEdit, onDelete }) {
   const bank = BANKS.find((b) => b.name === account.bank) || BANKS[BANKS.length - 1];
   return (
-    <div>
-      <div
-        className="group relative aspect-[1.6/1] w-full overflow-hidden rounded-2xl p-4 text-white shadow-lg shadow-slate-900/10"
-        style={{ backgroundImage: `linear-gradient(135deg, ${bank.from}, ${bank.to})` }}
-      >
-        <div className="absolute right-2 top-2 flex gap-0.5 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100">
-          <button
-            onClick={onEdit}
-            aria-label="Editar cuenta"
-            className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
-          >
-            <Pencil size={12} />
-          </button>
-          <button
-            onClick={onDelete}
-            aria-label="Eliminar cuenta"
-            className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
-          >
-            <Trash2 size={12} />
-          </button>
+    <div
+      className="group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6"
+      style={{ backgroundImage: `linear-gradient(135deg, ${bank.from}, ${bank.to})` }}
+    >
+      <div className="absolute right-3 top-3 flex gap-0.5 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100">
+        <button
+          onClick={onEdit}
+          aria-label="Editar cuenta"
+          className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          onClick={onDelete}
+          aria-label="Eliminar cuenta"
+          className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+      <div className="flex items-start justify-between gap-3 pr-14">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">Saldo actual</p>
+          <p className="mt-1 truncate text-[28px] font-extrabold leading-tight tracking-tight text-white sm:text-[32px]">
+            {fmt(account.current_balance)}
+          </p>
         </div>
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-white/80">{account.bank || "Otro"}</p>
-        <div className="mt-3 h-5 w-8 rounded-[4px] bg-gradient-to-br from-yellow-200 to-yellow-500" />
-        <p className="mt-3 font-mono text-sm tracking-[0.2em] text-white/90">
+        <div className="shrink-0 text-right">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">{account.bank || "Otro"}</p>
+          <p className="mt-0.5 text-[10px] text-white/50">{account.type}</p>
+        </div>
+      </div>
+      <div>
+        <div className="h-5 w-8 rounded-[4px] bg-gradient-to-br from-yellow-200 to-yellow-500" />
+        <p className="mt-2 font-mono text-sm tracking-[0.2em] text-white/90">
           •••• •••• •••• {account.last4 || "····"}
         </p>
-        <div className="mt-3 flex items-end justify-between">
-          <div className="min-w-0">
-            <p className="truncate text-xs font-medium text-white/70">{account.name}</p>
-            <p className="text-[10px] text-white/50">{account.type}</p>
-          </div>
+        <div className="mt-2 flex items-end justify-between">
+          <p className="min-w-0 truncate text-sm font-medium text-white/80">{account.name}</p>
           <NetworkMark network={account.network} />
         </div>
       </div>
-      <p className="mt-2 text-right text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{fmt(account.current_balance)}</p>
+    </div>
+  );
+}
+// Carrusel de cuentas (2026-08-08, a pedido del usuario, a partir de una
+// captura de referencia): una tarjeta a la vez con flechitas a los lados en
+// pantallas grandes, flechitas debajo en móvil, y puntos indicando cuántas
+// cuentas hay. Si solo hay una cuenta, no se muestran ni flechitas ni
+// puntos.
+function AccountsCarousel({ accounts, fmt, onEdit, onDelete }) {
+  const [index, setIndex] = useState(0);
+  const count = accounts.length;
+  const safeIndex = count ? ((index % count) + count) % count : 0;
+  const account = accounts[safeIndex];
+  function prev() {
+    setIndex((i) => (i - 1 + count) % count);
+  }
+  function next() {
+    setIndex((i) => (i + 1) % count);
+  }
+  if (!account) return null;
+  return (
+    <div>
+      <div className="flex items-center gap-3">
+        {count > 1 && (
+          <button
+            onClick={prev}
+            aria-label="Cuenta anterior"
+            className="hidden shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 sm:flex"
+          >
+            <ChevronLeft size={18} />
+          </button>
+        )}
+        <div className="min-w-0 flex-1">
+          <AccountCard
+            account={account}
+            fmt={fmt}
+            onEdit={() => onEdit(account)}
+            onDelete={() => onDelete(account)}
+          />
+        </div>
+        {count > 1 && (
+          <button
+            onClick={next}
+            aria-label="Siguiente cuenta"
+            className="hidden shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 sm:flex"
+          >
+            <ChevronRight size={18} />
+          </button>
+        )}
+      </div>
+      {count > 1 && (
+        <div className="mt-3 flex items-center justify-center gap-4 sm:hidden">
+          <button
+            onClick={prev}
+            aria-label="Cuenta anterior"
+            className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button
+            onClick={next}
+            aria-label="Siguiente cuenta"
+            className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      )}
+      {count > 1 && (
+        <div className="mt-3 flex items-center justify-center gap-1.5">
+          {accounts.map((a, i) => (
+            <button
+              key={a.id}
+              onClick={() => setIndex(i)}
+              aria-label={`Ir a la cuenta ${i + 1}`}
+              className={`h-1.5 rounded-full transition-all ${
+                i === safeIndex ? "w-5 bg-slate-700 dark:bg-white" : "w-1.5 bg-slate-300 dark:bg-slate-600"
+              }`}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
