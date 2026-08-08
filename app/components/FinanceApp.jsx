@@ -2220,7 +2220,14 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
             <ChevronLeft size={18} />
           </button>
         )}
-        <div className="min-w-0 flex-1">
+        {/* En pantallas angostas (celular) se deja que la tarjeta use todo el
+            ancho disponible -- así es como ya se veía bien. Desde el
+            breakpoint "sm" (tablet/escritorio) se limita el ancho máximo y
+            se centra, porque si no, en una pantalla ancha la tarjeta se
+            estira muchísimo (mantiene su proporción real 16:10, así que
+            termina siendo enorme y desproporcionada) -- reportado por el
+            usuario viendo capturas de escritorio vs. iPhone (2026-08-08). */}
+        <div className="min-w-0 flex-1 sm:mx-auto sm:max-w-sm">
           <AccountCard
             view={view}
             kind={item.kind}
