@@ -12,7 +12,7 @@ import {
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
   Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
-  Minus, Clock, Wifi, Receipt, ArrowUp, ArrowDown,
+  Minus, Clock, Wifi, Receipt, ArrowUp, ArrowDown, Calculator,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -3817,10 +3817,13 @@ function GoalContributionsListModal({ goal, contributions, fmt, selectedMonthBal
     </div>
   );
 }
-function GoalModal({ goal, onClose, onSaved }) {
+// `initialValues` (2026-08-08, para el Simulador de compra: "Crear un
+// ahorro para esto") solo se usa para PRELLENAR el formulario al CREAR una
+// meta nueva -- a diferencia de `goal`, no activa el modo de edición.
+function GoalModal({ goal, initialValues, onClose, onSaved }) {
   const isEditing = Boolean(goal);
-  const [nombre, setNombre] = useState(goal?.name || "");
-  const [objetivo, setObjetivo] = useState(goal ? String(goal.target_amount) : "");
+  const [nombre, setNombre] = useState(goal?.name || initialValues?.name || "");
+  const [objetivo, setObjetivo] = useState(goal ? String(goal.target_amount) : (initialValues?.target_amount != null ? String(initialValues.target_amount) : ""));
   const [actual, setActual] = useState(goal ? String(goal.current_amount) : "0");
   const [color, setColor] = useState(goal?.color || "#3B82F6");
   const [saving, setSaving] = useState(false);
@@ -6452,15 +6455,18 @@ function TransferModal({ accounts, onClose, onSaved }) {
     </ModalShell>
   );
 }
-function PlanModal({ categories, cards, plan, onClose, onSaved }) {
+// `initialValues` (2026-08-08, para el Simulador de compra: "Crear plan de
+// pago a plazos") solo se usa para PRELLENAR el formulario al CREAR un plan
+// nuevo -- a diferencia de `plan`, no activa el modo de edición.
+function PlanModal({ categories, cards, plan, initialValues, onClose, onSaved }) {
   const cardsList = cards || [];
   const isEditing = Boolean(plan);
   const today = localDateString();
   const [categoryId, setCategoryId] = useState(plan?.category_id || categories[0]?.id || "");
-  const [description, setDescription] = useState(plan?.description || "");
-  const [monthlyAmount, setMonthlyAmount] = useState(plan ? String(plan.monthly_amount) : "");
+  const [description, setDescription] = useState(plan?.description || initialValues?.description || "");
+  const [monthlyAmount, setMonthlyAmount] = useState(plan ? String(plan.monthly_amount) : (initialValues?.monthly_amount != null ? String(initialValues.monthly_amount) : ""));
   const [startDate, setStartDate] = useState(plan?.start_date || today);
-  const [totalMonths, setTotalMonths] = useState(plan ? String(plan.total_months) : "12");
+  const [totalMonths, setTotalMonths] = useState(plan ? String(plan.total_months) : (initialValues?.total_months != null ? String(initialValues.total_months) : "12"));
   const [cardId, setCardId] = useState(plan?.card_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -7892,6 +7898,227 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
   );
 }
 /* ---------------------------------------------------------------
+   SIMULADOR DE COMPRA
+------------------------------------------------------------------ */
+// "¿Puedo comprar esto?" (2026-08-08, a pedido del usuario, ej. "¿quiero
+// comprar un iPhone de $1000?"): compara un monto (de contado o a plazos)
+// contra el margen mensual REAL de los últimos meses (ingresos menos
+// gastos menos ahorros, con gastos fijos y cuotas de planes de pago ya
+// incluidos -- mismo cálculo que ya usa Resumen) y da un veredicto con
+// reglas fijas, NO con un asistente de IA: para los mismos números,
+// siempre da el mismo resultado, sin riesgo de que "invente" un consejo
+// raro. El 30%/70% son el mismo criterio que ya usa buildGoalSavingsTip
+// para sugerir cuánto aportar a una meta sin afectar las finanzas -- se
+// reusa acá para que el "semáforo" se sienta consistente en toda la app.
+const PURCHASE_COMFORTABLE_RATIO = 0.3;
+const PURCHASE_TIGHT_RATIO = 0.7;
+function evaluatePurchaseImpact(monthlyImpact, avgMargin) {
+  if (avgMargin == null) return null;
+  if (avgMargin <= 0) {
+    return {
+      level: "red",
+      ratio: null,
+      text: "En tus últimos meses, tus gastos y ahorros ya igualan o superan tus ingresos, así que no queda margen real para esta compra sin afectar tus finanzas.",
+    };
+  }
+  const ratio = monthlyImpact / avgMargin;
+  const pct = Math.round(ratio * 100);
+  if (ratio <= PURCHASE_COMFORTABLE_RATIO) {
+    return { level: "green", ratio, text: `Usaría cerca del ${pct}% de tu margen mensual promedio -- no debería afectar tus finanzas.` };
+  }
+  if (ratio <= PURCHASE_TIGHT_RATIO) {
+    return { level: "amber", ratio, text: `Usaría cerca del ${pct}% de tu margen mensual promedio -- es viable, pero ese mes quedarías bastante ajustado. Vale la pena pensarlo.` };
+  }
+  return { level: "red", ratio, text: `Usaría ${pct >= 300 ? "más del 300" : pct}% de tu margen mensual promedio -- no es recomendable ahora mismo. Valora un monto más bajo, esperar, ahorrar primero, o pagarlo a más meses.` };
+}
+function PurchaseSimulatorView({ fmt, categories, cards }) {
+  // Margen mensual promedio de los últimos 3 meses YA COMPLETOS (sin contar
+  // el mes actual, todavía a mitad de camino -- lo dejaría artificialmente
+  // bajo). Reusa fetchYearData (mismo que carga Resumen), que ya incluye
+  // gastos fijos y cuotas de planes de pago sintetizadas -- así el margen
+  // de acá es el mismo "real" que se ve en el resto de la app, no uno
+  // recalculado aparte que se podría desincronizar. Puede necesitar dos
+  // años distintos si los últimos 3 meses cruzan de diciembre a enero.
+  const [marginState, setMarginState] = useState({ loading: true, error: false, avgMargin: null, monthLabels: [] });
+  useEffect(() => {
+    let active = true;
+    async function loadMargins() {
+      const today = new Date();
+      const targets = [1, 2, 3].map((i) => {
+        const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        return { year: d.getFullYear(), month: d.getMonth() };
+      });
+      const years = [...new Set(targets.map((t) => t.year))];
+      try {
+        const results = await Promise.all(years.map((y) => fetchYearData(y)));
+        if (!active) return;
+        const dataByYear = {};
+        years.forEach((y, i) => { dataByYear[y] = results[i]; });
+        const withData = targets
+          .map((t) => ({ ...t, data: dataByYear[t.year]?.months?.[t.month] }))
+          .filter((t) => t.data && (t.data.incomes.length > 0 || t.data.gastos.length > 0 || t.data.savings.length > 0));
+        if (withData.length === 0) {
+          setMarginState({ loading: false, error: false, avgMargin: null, monthLabels: [] });
+          return;
+        }
+        const avg = withData.reduce((a, t) => a + t.data.balance, 0) / withData.length;
+        setMarginState({
+          loading: false,
+          error: false,
+          avgMargin: avg,
+          monthLabels: withData.map((t) => `${MONTHS_FULL[t.month]} ${t.year}`),
+        });
+      } catch (e) {
+        console.error("Error calculando el margen para el simulador:", e);
+        if (active) setMarginState({ loading: false, error: true, avgMargin: null, monthLabels: [] });
+      }
+    }
+    loadMargins();
+    return () => { active = false; };
+  }, []);
+  const { avgMargin, monthLabels, loading: marginLoading, error: marginError } = marginState;
+
+  const [itemName, setItemName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [months, setMonths] = useState("");
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [planPrefillMonths, setPlanPrefillMonths] = useState(null);
+
+  const numericAmount = Number(amount) || 0;
+  const numericMonths = Number(months) || 0;
+  const contadoResult = numericAmount > 0 ? evaluatePurchaseImpact(numericAmount, avgMargin) : null;
+  const plazosResult = numericAmount > 0 && numericMonths > 1 ? evaluatePurchaseImpact(numericAmount / numericMonths, avgMargin) : null;
+  // Si de contado no queda cómodo, ¿a cuántos meses SÍ quedaría cómodo?
+  // (para poder sugerir un plan de pago concreto, en vez de solo decir
+  // "considera pagarlo a plazos" sin ningún número).
+  const comfortableMonths = (avgMargin != null && avgMargin > 0 && contadoResult && contadoResult.level !== "green")
+    ? Math.max(2, Math.ceil(numericAmount / (avgMargin * PURCHASE_COMFORTABLE_RATIO)))
+    : null;
+
+  const toneClasses = {
+    red: { border: "border-red-100 dark:border-red-500/20", bg: "bg-red-50 dark:bg-red-500/10", text: "text-red-700 dark:text-red-400" },
+    amber: { border: "border-amber-100 dark:border-amber-500/20", bg: "bg-amber-50 dark:bg-amber-500/10", text: "text-amber-700 dark:text-amber-400" },
+    green: { border: "border-emerald-100 dark:border-emerald-500/20", bg: "bg-emerald-50 dark:bg-emerald-500/10", text: "text-emerald-700 dark:text-emerald-400" },
+  };
+  function ResultBanner({ result, title }) {
+    if (!result) return null;
+    const tone = toneClasses[result.level];
+    const ToneIcon = result.level === "green" ? Check : AlertTriangle;
+    return (
+      <div className={`rounded-xl border p-4 ${tone.border} ${tone.bg}`}>
+        <p className={`flex items-center gap-1.5 text-sm font-semibold ${tone.text}`}>
+          <ToneIcon size={15} /> {title}
+        </p>
+        <p className={`mt-1 text-sm ${tone.text}`}>{result.text}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <Eyebrow>¿Puedo comprar esto?</Eyebrow>
+        <p className="mt-1 text-xs text-slate-400">
+          Reglas simples, no un asistente de IA: compara el monto contra tu margen mensual REAL (ingresos menos gastos menos ahorros, incluyendo gastos fijos y cuotas de planes de pago) de tus últimos meses -- así el resultado siempre es consistente.
+        </p>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿Qué querés comprar? (opcional)</label>
+            <input
+              value={itemName} onChange={(e) => setItemName(e.target.value)}
+              placeholder="Ej. iPhone 15"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="1000"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        <div className="mt-3">
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿A cuántos meses lo pagarías? (opcional, si ya lo pensás a plazos)</label>
+          <input
+            type="number" min="2" value={months} onChange={(e) => setMonths(e.target.value)}
+            placeholder="Ej. 6"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+      </Card>
+      {marginLoading ? (
+        <Card className="p-5"><p className="text-sm text-slate-400">Calculando tu margen mensual promedio...</p></Card>
+      ) : marginError ? (
+        <LoadErrorBanner message="No se pudo calcular tu margen mensual. Revisa tu conexión e intenta recargar la página." />
+      ) : avgMargin == null ? (
+        <Card className="p-5">
+          <p className="text-sm text-slate-400">Todavía no hay suficiente historial (al menos un mes con ingresos o gastos registrados en los últimos 3 meses) para calcular tu margen mensual promedio. Vuelve a intentarlo cuando lleves un par de meses usando la app.</p>
+        </Card>
+      ) : (
+        <>
+          <Card className="p-5">
+            <Eyebrow>Tu margen mensual promedio</Eyebrow>
+            <p className={`mt-1 text-2xl font-semibold tabular-nums ${avgMargin >= 0 ? "text-slate-800 dark:text-white" : "text-red-500"}`}>{fmt(avgMargin)}</p>
+            <p className="mt-1 text-xs text-slate-400">Promedio de {monthLabels.join(", ")} (ingresos menos gastos menos ahorros de esos meses).</p>
+          </Card>
+          {numericAmount > 0 && (
+            <div className="space-y-3">
+              <ResultBanner result={contadoResult} title={`De contado (${fmt(numericAmount)})`} />
+              {plazosResult && (
+                <ResultBanner result={plazosResult} title={`A ${numericMonths} meses (~${fmt(numericAmount / numericMonths)}/mes)`} />
+              )}
+              {comfortableMonths != null && (
+                <div className="rounded-xl border border-slate-100 p-4 text-sm text-slate-600 dark:border-slate-800 dark:text-slate-300">
+                  Pagarlo en aproximadamente <span className="font-semibold">{comfortableMonths} meses</span> (~{fmt(numericAmount / comfortableMonths)}/mes) te dejaría cómodo, sin afectar tus finanzas.
+                </div>
+              )}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setShowGoalModal(true)}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  <PiggyBank size={15} /> Crear un ahorro para esto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setPlanPrefillMonths(comfortableMonths || (numericMonths > 1 ? numericMonths : 12)); setShowPlanModal(true); }}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  <CreditCard size={15} /> Crear plan de pago a plazos
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {showGoalModal && (
+        <GoalModal
+          initialValues={{ name: itemName || "Compra", target_amount: numericAmount || undefined }}
+          onClose={() => setShowGoalModal(false)}
+          onSaved={() => {}}
+        />
+      )}
+      {showPlanModal && (
+        <PlanModal
+          categories={categories}
+          cards={cards}
+          initialValues={{
+            description: itemName || "Compra",
+            monthly_amount: planPrefillMonths ? Math.round(numericAmount / planPrefillMonths) : undefined,
+            total_months: planPrefillMonths || undefined,
+          }}
+          onClose={() => setShowPlanModal(false)}
+          onSaved={() => {}}
+        />
+      )}
+    </div>
+  );
+}
+/* ---------------------------------------------------------------
    APP SHELL
 ------------------------------------------------------------------ */
 const TABS = [
@@ -7902,6 +8129,11 @@ const TABS = [
   { id: "savings", label: "Ahorros", icon: PiggyBank },
   { id: "budgets", label: "Presupuestos", icon: Coins },
   { id: "calendar", label: "Calendario", icon: Calendar },
+  // "Simulador" (2026-08-08, a pedido del usuario): "¿puedo comprar esto?"
+  // -- ver PurchaseSimulatorView. No depende del año/mes que se está
+  // viendo (usa siempre sus propios "últimos 3 meses reales"), por eso no
+  // se agregó a la lista de pestañas con flechitas de mes más abajo.
+  { id: "simulador", label: "Simulador", icon: Calculator },
 ];
 export default function FinanceApp() {
   const [tab, setTab] = useState("inicio");
@@ -8071,6 +8303,7 @@ export default function FinanceApp() {
                 {tab === "calendar" && "Calendario de pagos"}
                 {tab === "budgets" && "Presupuestos"}
                 {tab === "savings" && (savingsVista === "ahorros" ? "Tus ahorros" : "Tus metas")}
+                {tab === "simulador" && "¿Puedo comprar esto?"}
               </h1>
               {tab === "inicio" ? (
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-400">
@@ -8164,6 +8397,7 @@ export default function FinanceApp() {
               refetchAccounts={refetchAccounts}
             />
           )}
+          {tab === "simulador" && <PurchaseSimulatorView fmt={format} categories={categories} cards={cards} />}
         </main>
         {monthOpen !== null && yearData && (
           <MonthDetail index={monthOpen} year={year} fmt={format} onClose={() => setMonthOpen(null)} onNav={navMonth} yearData={yearData} />
