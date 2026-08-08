@@ -6260,7 +6260,7 @@ function PlanPaymentsModal({ plan, overrides, fmt, onClose, onChanged }) {
 // balance mensual de toda la app igual que antes, y un ahorro sigue sin
 // necesitar una meta vinculada -- solo se decidió cuál de las dos se ve a la
 // vez, dentro de una sola pestaña del menú.
-function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, vista, onChangeVista }) {
+function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, vista, onChangeVista, accounts, refetchAccounts }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2">
@@ -6286,14 +6286,14 @@ function SavingsGoalsView({ fmt, onDataChanged, yearData, year, month, vista, on
         </button>
       </div>
       {vista === "ahorros" ? (
-        <SavingsView fmt={fmt} onDataChanged={onDataChanged} year={year} month={month} />
+        <SavingsView fmt={fmt} onDataChanged={onDataChanged} year={year} month={month} accounts={accounts} refetchAccounts={refetchAccounts} />
       ) : (
         <GoalsView fmt={fmt} yearData={yearData} month={month} />
       )}
     </div>
   );
 }
-function SavingsView({ fmt, onDataChanged, year, month }) {
+function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccounts }) {
   const [savings, setSavings] = useState([]);
   const [goals, setGoals] = useState([]);
   // Tipos de ahorro (ej. "Fondo de emergencia", "Viaje a Argentina"): no
@@ -6350,6 +6350,10 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
     const { error } = await supabase.from("savings").delete().eq("id", record.id);
     if (error) throw error;
     if (record.goal_id) await adjustGoalAmount(record.goal_id, -Number(record.amount));
+    if (record.account_id) {
+      await adjustAccountBalance(record.account_id, -Number(record.amount));
+      if (refetchAccounts) refetchAccounts();
+    }
     setSavings((prev) => prev.filter((s) => s.id !== record.id));
     if (onDataChanged) onDataChanged();
     setDeletingSaving(null);
@@ -6529,10 +6533,10 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
         ))}
       </div>
       {showModal && (
-        <SavingModal types={types} goals={goals} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchSavings} onTypesChanged={refetchTypes} />
+        <SavingModal types={types} goals={goals} accounts={accounts} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={() => { refetchSavings(); if (refetchAccounts) refetchAccounts(); }} onTypesChanged={refetchTypes} />
       )}
       {editingSaving && (
-        <SavingModal types={types} goals={goals} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={refetchSavings} onTypesChanged={refetchTypes} />
+        <SavingModal types={types} goals={goals} accounts={accounts} saving={editingSaving} onClose={() => setEditingSaving(null)} onSaved={() => { refetchSavings(); if (refetchAccounts) refetchAccounts(); }} onTypesChanged={refetchTypes} />
       )}
       {showTypesManager && (
         <SavingsTypesManagerModal types={types} onClose={() => setShowTypesManager(false)} onChanged={refetchTypes} />
@@ -6618,13 +6622,19 @@ function SavingsTypeReportModal({ type, year, fmt, onClose }) {
     </div>
   );
 }
-function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, onTypesChanged, defaultDate }) {
+function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, onSaved, onTypesChanged, defaultDate }) {
   const isEditing = Boolean(savingRecord);
   const today = localDateString();
   const [typeId, setTypeId] = useState(savingRecord?.type_id || "");
   const [goalId, setGoalId] = useState(savingRecord?.goal_id || "");
   const [amount, setAmount] = useState(savingRecord ? String(savingRecord.amount) : "");
   const [date, setDate] = useState(savingRecord?.date || defaultDate || today);
+  // ¿En dónde guardas este ahorro? (2026-08-08, a pedido del usuario) --
+  // igual que un ingreso ligado a una cuenta: si eliges una, el monto se
+  // suma automáticamente a su saldo, porque ahí es donde queda guardado el
+  // dinero. Independiente de "Vincular a una meta" (esa es sobre el
+  // PROPÓSITO del ahorro, esta es sobre DÓNDE físicamente está guardado).
+  const [accountId, setAccountId] = useState(savingRecord?.account_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   // Tipos creados en el momento (con "+ Crear nuevo..." del selector) que
@@ -6644,6 +6654,7 @@ function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, onT
     setSaving(true);
     setErrorMsg("");
     const newGoalId = goalId || null;
+    const newAccountId = accountId || null;
     const newAmount = Number(amount);
     const finalType = selectedType?.name || "";
     if (isEditing) {
@@ -6651,6 +6662,7 @@ function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, onT
         type: finalType,
         type_id: typeId,
         goal_id: newGoalId,
+        account_id: newAccountId,
         amount: newAmount,
         date,
         year: dateStringYear(date),
@@ -6658,12 +6670,19 @@ function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, onT
       }).eq("id", savingRecord.id);
       if (!error) {
         const oldGoalId = savingRecord.goal_id || null;
+        const oldAccountId = savingRecord.account_id || null;
         const oldAmount = Number(savingRecord.amount);
         if (oldGoalId === newGoalId) {
           if (oldGoalId) await adjustGoalAmount(oldGoalId, newAmount - oldAmount);
         } else {
           if (oldGoalId) await adjustGoalAmount(oldGoalId, -oldAmount);
           if (newGoalId) await adjustGoalAmount(newGoalId, newAmount);
+        }
+        if (oldAccountId === newAccountId) {
+          if (oldAccountId) await adjustAccountBalance(oldAccountId, newAmount - oldAmount);
+        } else {
+          if (oldAccountId) await adjustAccountBalance(oldAccountId, -oldAmount);
+          if (newAccountId) await adjustAccountBalance(newAccountId, newAmount);
         }
       }
       setSaving(false);
@@ -6682,12 +6701,14 @@ function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, onT
       type: finalType,
       type_id: typeId,
       goal_id: newGoalId,
+      account_id: newAccountId,
       amount: newAmount,
       date,
       year: dateStringYear(date),
       month: dateStringMonth(date),
     });
     if (!error && newGoalId) await adjustGoalAmount(newGoalId, newAmount);
+    if (!error && newAccountId) await adjustAccountBalance(newAccountId, newAmount);
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
@@ -6725,6 +6746,21 @@ function SavingModal({ saving: savingRecord, types, goals, onClose, onSaved, onT
             <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al progreso de esa meta.</p>
           )}
         </div>
+        {(accounts || []).length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿En dónde guardas este ahorro? (opcional)</label>
+            <select
+              value={accountId} onChange={(e) => setAccountId(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            >
+              <option value="">Ninguna</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            {accountId && (
+              <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al saldo de esa cuenta.</p>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
@@ -7533,6 +7569,8 @@ export default function FinanceApp() {
               month={month}
               vista={savingsVista}
               onChangeVista={setSavingsVista}
+              accounts={accounts}
+              refetchAccounts={refetchAccounts}
             />
           )}
         </main>
