@@ -7245,22 +7245,12 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           </button>
         </div>
       </Card>
-      {/* Misma tarjeta punteada de "agregar", ahora arriba del todo -- a
-          pedido del usuario (2026-07-31), para que quede en el mismo lugar
-          que en Ingresos y Gastos. Se quitó el grid que la envolvía
-          (2026-08-08, a pedido del usuario) -- como siempre es la única
-          tarjeta ahí, el grid la dejaba más angosta que la tarjeta de
-          arriba en pantallas grandes; ahora ocupa el ancho completo. */}
-      <button
-        onClick={() => setShowModal(true)}
-        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
-      >
-        <Plus size={20} />
-        <span className="text-sm font-medium">Agregar ahorro</span>
-      </button>
-      {/* Tipos de ahorro CON monto objetivo (2026-08-08, a pedido del
-          usuario), con el mismo anillo de progreso + Depositar/Retirar que
-          las tarjetas de Metas. Los tipos SIN monto objetivo se quedan como
+      {/* Tipos de ahorro CON monto objetivo ("ahorros con metas") ahora van
+          PRIMERO, antes del botón de "Agregar ahorro" (2026-08-08, a pedido
+          del usuario) -- misma idea que las tarjetas de Metas: primero se ve
+          el progreso hacia lo que estás juntando, y debajo la acción para
+          registrar un ahorro suelto. Anillo de progreso + Depositar/Retirar,
+          igual que en Metas. Los tipos SIN monto objetivo se quedan como
           hasta ahora, en "Ahorro por tipo en {year}" más abajo. */}
       {types.filter((t) => t.target_amount != null).length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -7278,6 +7268,21 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           ))}
         </div>
       )}
+      {/* Misma tarjeta punteada de "agregar" de siempre, ahora solo para
+          ahorros LIBRES (2026-08-08, a pedido del usuario) -- los tipos con
+          meta (arriba) ya no aparecen en su selector de tipo, así que esta
+          tarjeta queda dedicada a ahorros que no son para ninguna meta. Se
+          quitó el grid que la envolvía (2026-08-08, a pedido del usuario) --
+          como siempre es la única tarjeta ahí, el grid la dejaba más angosta
+          que la tarjeta de arriba en pantallas grandes; ahora ocupa el ancho
+          completo. */}
+      <button
+        onClick={() => setShowModal(true)}
+        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+      >
+        <Plus size={20} />
+        <span className="text-sm font-medium">Agregar ahorro libre</span>
+      </button>
       {/* Antes eran tarjetas con el total anual de cada tipo -- el usuario
           notó (2026-07-31) que, con un solo ahorro por tipo en el mes, se
           veía igual que la tarjeta individual de abajo. Se cambió a un
@@ -7536,6 +7541,16 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
   // guarde un "type" vacío por accidente.
   const [extraTypes, setExtraTypes] = useState([]);
   const allTypes = [...types, ...extraTypes.filter((t) => !types.some((x) => x.id === t.id))];
+  // Este formulario ahora es solo para ahorros LIBRES (2026-08-08, a pedido
+  // del usuario): los tipos CON monto objetivo (las "metas" dentro de
+  // Ahorros) se quedan fuera del selector, porque esos ya tienen su propio
+  // botón "Depositar" en su tarjeta -- registrar un aporte ahí sí actualiza
+  // bien el anillo de progreso. La única excepción es el tipo que ya viene
+  // seleccionado (por `initialTypeId`, cuando este modal se abrió DESDE ese
+  // botón "Depositar", o el tipo que ya tenía un ahorro que se está
+  // editando), para no romper esos dos casos.
+  const selectableTypes = allTypes.filter((t) => t.target_amount == null || t.id === typeId);
+  const hidingGoalTypes = allTypes.some((t) => t.target_amount != null && t.id !== typeId);
   async function handleSubmit(e) {
     e.preventDefault();
     if (!typeId || !amount || !date) {
@@ -7616,13 +7631,18 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
           label="Tipo de ahorro"
           value={typeId}
           onChange={setTypeId}
-          options={allTypes}
+          options={selectableTypes}
           table="savings_types"
           onCreated={(t) => { setExtraTypes((prev) => [...prev, t]); if (onTypesChanged) onTypesChanged(); }}
           placeholder="Selecciona un tipo"
           namePlaceholder="Ej. Fondo de emergencia"
-          emptyHint="Aún no tienes tipos de ahorro."
+          emptyHint="Aún no tienes tipos de ahorro libres."
         />
+        {hidingGoalTypes && (
+          <p className="-mt-2 text-xs text-slate-400">
+            Los tipos con meta (con anillo de progreso) no aparecen aquí -- deposítales desde el botón "Depositar" de su propia tarjeta, arriba en Ahorros.
+          </p>
+        )}
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una meta (opcional)</label>
           <select
