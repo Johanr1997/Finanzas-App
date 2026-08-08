@@ -3359,16 +3359,19 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
       </Card>
       {/* Misma tarjeta punteada de "agregar" que Gastos, arriba del todo -- a
           pedido del usuario (2026-07-31), para que quede en el mismo lugar
-          en ambas pestañas. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
-        >
-          <Plus size={20} />
-          <span className="text-sm font-medium">Agregar ingreso</span>
-        </button>
-      </div>
+          en ambas pestañas. Antes vivía dentro de un grid de varias
+          columnas (pensado para cuando hay más de una tarjeta), pero acá
+          siempre es la única -- eso la dejaba más angosta que la tarjeta de
+          arriba en pantallas grandes. Se quitó el grid (2026-08-08, a
+          pedido del usuario) para que ocupe el ancho completo, igual que la
+          tarjeta de "Ingresos en {mes}". */}
+      <button
+        onClick={() => setShowModal(true)}
+        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+      >
+        <Plus size={20} />
+        <span className="text-sm font-medium">Agregar ingreso</span>
+      </button>
       {recurring.length > 0 && (
         <Card className="p-5">
           <CollapsibleSection
@@ -4257,16 +4260,18 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
       </Card>
       {/* Misma tarjeta punteada de "agregar" que Ahorros/Ingresos, a pedido
           del usuario (2026-07-31) -- reemplaza el botón negro de arriba. El
-          resto de la vista (fijos, planes, reporte, detalle) queda igual. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
-        >
-          <Plus size={20} />
-          <span className="text-sm font-medium">Agregar gasto</span>
-        </button>
-      </div>
+          resto de la vista (fijos, planes, reporte, detalle) queda igual.
+          Se quitó el grid que la envolvía (2026-08-08, a pedido del
+          usuario) -- como siempre es la única tarjeta ahí, el grid la
+          dejaba más angosta que la tarjeta de arriba en pantallas grandes;
+          ahora ocupa el ancho completo. */}
+      <button
+        onClick={() => setShowModal(true)}
+        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+      >
+        <Plus size={20} />
+        <span className="text-sm font-medium">Agregar gasto</span>
+      </button>
       {(recurring.length > 0 || activePlans.length > 0 || finishedPlans.length > 0) && (
         <Card className="p-5">
           <CollapsibleSection
@@ -5592,16 +5597,17 @@ function SavingsView({ fmt, onDataChanged, year, month }) {
       </Card>
       {/* Misma tarjeta punteada de "agregar", ahora arriba del todo -- a
           pedido del usuario (2026-07-31), para que quede en el mismo lugar
-          que en Ingresos y Gastos. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
-        >
-          <Plus size={20} />
-          <span className="text-sm font-medium">Agregar ahorro</span>
-        </button>
-      </div>
+          que en Ingresos y Gastos. Se quitó el grid que la envolvía
+          (2026-08-08, a pedido del usuario) -- como siempre es la única
+          tarjeta ahí, el grid la dejaba más angosta que la tarjeta de
+          arriba en pantallas grandes; ahora ocupa el ancho completo. */}
+      <button
+        onClick={() => setShowModal(true)}
+        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+      >
+        <Plus size={20} />
+        <span className="text-sm font-medium">Agregar ahorro</span>
+      </button>
       {/* Antes eran tarjetas con el total anual de cada tipo -- el usuario
           notó (2026-07-31) que, con un solo ahorro por tipo en el mes, se
           veía igual que la tarjeta individual de abajo. Se cambió a un
