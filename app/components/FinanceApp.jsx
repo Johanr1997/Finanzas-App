@@ -1217,6 +1217,8 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   const [editingCard, setEditingCard] = useState(null);
   const [deletingCard, setDeletingCard] = useState(null);
   const [payingCard, setPayingCard] = useState(null);
+  // Transferir entre cuentas propias (2026-08-08, a pedido del usuario).
+  const [showTransfer, setShowTransfer] = useState(false);
   async function handleDeleteAccount(id) {
     const { error } = await supabase.from("accounts").delete().eq("id", id);
     if (error) throw error;
@@ -1543,6 +1545,18 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
               desde el botón "Tarjetas" que vivía en Gastos), para que solo
               haya un lugar donde manejarlas. */}
           <div className="flex items-center gap-2">
+            {/* Transferir entre cuentas (2026-08-08, a pedido del usuario:
+                "en ocasiones paso dinero de una cuenta a otra"). Solo tiene
+                sentido con 2 o más cuentas normales -- no cuenta las
+                tarjetas, esas ya tienen su propio "Registrar pago". */}
+            {accounts.length >= 2 && (
+              <button
+                onClick={() => setShowTransfer(true)}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                <Repeat size={13} /> Transferir
+              </button>
+            )}
             <button
               onClick={() => setEditingAccount({ account: null })}
               className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
@@ -1851,6 +1865,13 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           </div>
         )}
       </Card>
+      {showTransfer && (
+        <TransferModal
+          accounts={accounts}
+          onClose={() => setShowTransfer(false)}
+          onSaved={() => { if (refetchAccounts) refetchAccounts(); }}
+        />
+      )}
       {editingAccount && (
         <AccountModal
           account={editingAccount.account}
@@ -1901,13 +1922,13 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
 // para distinguir de un vistazo qué red tiene cada tarjeta.
 function NetworkMark({ network }) {
   if (network === "Visa") {
-    return <span className="text-lg font-black italic tracking-tight text-white/90">VISA</span>;
+    return <span className="text-2xl font-black italic tracking-tight text-white/90">VISA</span>;
   }
   if (network === "Mastercard") {
     return (
       <span className="flex items-center">
-        <span className="h-6 w-6 rounded-full bg-red-500/90" />
-        <span className="-ml-2.5 h-6 w-6 rounded-full bg-amber-400/90 mix-blend-screen" />
+        <span className="h-8 w-8 rounded-full bg-red-500/90" />
+        <span className="-ml-3.5 h-8 w-8 rounded-full bg-amber-400/90 mix-blend-screen" />
       </span>
     );
   }
@@ -1975,7 +1996,7 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
       <div className="relative flex items-start justify-between gap-3 pr-14">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">{isCard ? "Debes actualmente" : "Saldo actual"}</p>
-          <p className="mt-1 truncate text-[28px] font-extrabold leading-tight tracking-tight text-white sm:text-[32px]">
+          <p className="mt-1 truncate text-[32px] font-extrabold leading-tight tracking-tight text-white sm:text-[36px]">
             {fmt(view.balance)}
           </p>
         </div>
@@ -1988,11 +2009,11 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
         {/* Chip metálico + contactless (2026-08-08): elementos genéricos de
             cualquier tarjeta física, no son marca de un banco -- se agregan
             para que se vea más real, como en las capturas de referencia. */}
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-9 rounded-[5px] bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 shadow-inner">
-            <div className="h-full w-full rounded-[5px] border border-slate-400/40" style={{ backgroundImage: "linear-gradient(to bottom, transparent 33%, rgba(100,116,139,0.5) 33%, rgba(100,116,139,0.5) 36%, transparent 36%, transparent 63%, rgba(100,116,139,0.5) 63%, rgba(100,116,139,0.5) 66%, transparent 66%)" }} />
+        <div className="flex items-center gap-2.5">
+          <div className="h-9 w-12 rounded-[6px] bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 shadow-inner">
+            <div className="h-full w-full rounded-[6px] border border-slate-400/40" style={{ backgroundImage: "linear-gradient(to bottom, transparent 33%, rgba(100,116,139,0.5) 33%, rgba(100,116,139,0.5) 36%, transparent 36%, transparent 63%, rgba(100,116,139,0.5) 63%, rgba(100,116,139,0.5) 66%, transparent 66%)" }} />
           </div>
-          <Wifi size={16} className="rotate-90 text-white/70" />
+          <Wifi size={20} className="rotate-90 text-white/70" />
         </div>
         <p className="mt-2 font-mono text-sm tracking-[0.2em] text-white/90">
           •••• •••• •••• {view.last4 || "····"}
@@ -5362,6 +5383,115 @@ function CardPaymentModal({ card, accounts, onClose, onSaved }) {
           className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : "Registrar pago"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+// Transferir dinero entre dos cuentas propias (2026-08-08, a pedido del
+// usuario: "en ocasiones paso dinero de una cuenta a otra"). Solo entre
+// cuentas normales (no tarjetas de crédito) -- pasarle dinero a una tarjeta
+// ya tiene su propio flujo ("Registrar pago", que además calcula la deuda).
+// Se guarda un registro en `account_transfers` (para tener historial de qué
+// pasó, aunque hoy no haya una lista que lo muestre) y se ajustan las dos
+// cuentas de una vez: se resta de "De cuenta" y se suma a "A cuenta".
+function TransferModal({ accounts, onClose, onSaved }) {
+  const today = localDateString();
+  const [fromId, setFromId] = useState("");
+  const [toId, setToId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today);
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!fromId || !toId) {
+      setErrorMsg("Elige de cuál cuenta sale el dinero y a cuál cuenta entra.");
+      return;
+    }
+    if (fromId === toId) {
+      setErrorMsg("Elige dos cuentas distintas.");
+      return;
+    }
+    if (!amount || Number(amount) <= 0) {
+      setErrorMsg("Ingresa un monto válido.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("account_transfers").insert({
+      user_id: userId || null,
+      from_account_id: fromId,
+      to_account_id: toId,
+      amount: Number(amount),
+      date,
+      description: description || null,
+    });
+    if (!error) {
+      await adjustAccountBalance(fromId, -Number(amount));
+      await adjustAccountBalance(toId, Number(amount));
+    }
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+      return;
+    }
+    onSaved();
+    onClose();
+  }
+  return (
+    <ModalShell onClose={onClose} title="Transferir entre cuentas">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">De cuenta</label>
+            <select value={fromId} onChange={(e) => setFromId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="">Elige una cuenta</option>
+              {(accounts || []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">A cuenta</label>
+            <select value={toId} onChange={(e) => setToId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="">Elige una cuenta</option>
+              {(accounts || []).filter((a) => a.id !== fromId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="50000"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
+            <input
+              type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descripción (opcional)</label>
+          <input
+            value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ej. Para cubrir gastos del mes"
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Transfiriendo..." : "Transferir"}
         </button>
       </form>
     </ModalShell>
