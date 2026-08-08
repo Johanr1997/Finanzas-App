@@ -1167,11 +1167,9 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   // cuentas normales (que guardan su saldo directo en la columna
   // current_balance), la deuda de una tarjeta se calcula sola --
   // saldo_inicial (lo que ya debías antes de usar la app) + lo que le has
-  // cargado (expenses.card_id) - lo que le has pagado (credit_card_payments).
-  // Ojo: por ahora solo cuenta gastos sueltos con card_id -- las cuotas de
-  // planes de pago vinculados a una tarjeta (installment_plans.card_id)
-  // todavía no se suman acá (limitación conocida, documentada también en
-  // notas de progreso).
+  // cargado en gastos sueltos (expenses.card_id) + lo que le has cargado en
+  // cuotas de planes de pago vinculados a esa tarjeta (ver planChargesByCard
+  // más abajo) - lo que le has pagado (credit_card_payments).
   const [cardCharges, setCardCharges] = useState({});
   async function refetchCardCharges() {
     const [{ data: exps }, { data: pays }] = await Promise.all([
@@ -1186,6 +1184,25 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   useEffect(() => {
     refetchCardCharges();
   }, []);
+  // Cuotas de planes de pago vinculados a una tarjeta (2026-08-08, a pedido
+  // del usuario -- antes esto era una limitación conocida, ya no). Reusa
+  // patrimonioRaw.plans (que ya se carga para el cálculo de patrimonio, con
+  // TODOS los planes, no solo los de una tarjeta) en vez de pedirlo de
+  // nuevo. Para cada plan con card_id, suma lo que ya se le ha "cargado" a
+  // la tarjeta hasta hoy: cuotas ya cumplidas (planElapsedMonths, con la
+  // fecha real de hoy, igual que "Próximos compromisos") × el monto de cada
+  // cuota -- las cuotas futuras todavía no se han cobrado, así que no
+  // cuentan como deuda todavía.
+  const planChargesByCard = useMemo(() => {
+    const plans = patrimonioRaw?.plans || [];
+    const map = {};
+    plans.forEach((p) => {
+      if (!p.card_id) return;
+      const elapsed = planElapsedMonths(p);
+      map[p.card_id] = (map[p.card_id] || 0) + elapsed * Number(p.monthly_amount);
+    });
+    return map;
+  }, [patrimonioRaw]);
   const [editingAccount, setEditingAccount] = useState(null);
   const [deletingAccount, setDeletingAccount] = useState(null);
   const [editingCard, setEditingCard] = useState(null);
@@ -1214,10 +1231,10 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
       kind: "tarjeta",
       id: c.id,
       data: c,
-      balance: Number(c.initial_balance || 0) + (cardCharges[c.id] || 0),
+      balance: Number(c.initial_balance || 0) + (cardCharges[c.id] || 0) + (planChargesByCard[c.id] || 0),
     }));
     return [...accountItems, ...cardItems];
-  }, [accounts, cards, cardCharges]);
+  }, [accounts, cards, cardCharges, planChargesByCard]);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
