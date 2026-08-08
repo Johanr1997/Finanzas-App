@@ -469,6 +469,17 @@ async function adjustGoalAmount(goalId, delta) {
   if (!data) return;
   await supabase.from("goals").update({ current_amount: Number(data.current_amount) + delta }).eq("id", goalId);
 }
+// Mismo patrón que adjustGoalAmount, para ligar Ingresos/Gastos (y pagos de
+// tarjeta) con el saldo real de una cuenta (2026-08-08). `delta` ya viene
+// con el signo correcto puesto por quien llama (positivo para sumar,
+// negativo para restar) -- esta función solo lee el saldo actual y le suma
+// el delta, no decide el signo.
+async function adjustAccountBalance(accountId, delta) {
+  if (!accountId || !delta) return;
+  const { data } = await supabase.from("accounts").select("current_balance").eq("id", accountId).single();
+  if (!data) return;
+  await supabase.from("accounts").update({ current_balance: Number(data.current_balance) + delta }).eq("id", accountId);
+}
 // Antes, un mes se marcaba en rojo simplemente si ESE mes (aislado) gastó
 // más de lo que ingresó. Pero eso no toma en cuenta el saldo que se trae de
 // meses anteriores -- ej. un salario que cae el día 30 del mes anterior y
@@ -1113,7 +1124,7 @@ function renderDonutSliceLabel({ cx, cy, midAngle, innerRadius, outerRadius, per
     </text>
   );
 }
-function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [], onNavigateTab }) {
+function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [], onNavigateTab, accounts = [], refetchAccounts, cards = [], refetchCards }) {
   const [goals, setGoals] = useState([]);
   const [goalsError, setGoalsError] = useState(false);
   useEffect(() => {
@@ -1132,37 +1143,81 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   const [patrimonioRaw, setPatrimonioRaw] = useState(null);
   const [patrimonioError, setPatrimonioError] = useState(false);
   // "accounts" (Fase 2, 2026-08-08): tus cuentas reales (efectivo, cuenta
-  // corriente, cuenta de ahorros, inversión...), cada una con un saldo. A
-  // propósito, el saldo NO se reconstruye desde tu historial -- lo pones tú
-  // al crear cada cuenta (el saldo de hoy) y lo actualizas cuando quieras.
-  // Conectarlo automáticamente con Ingresos/Gastos/Ahorros queda para una
-  // ronda aparte (ver notas de progreso). refetchPatrimonioRaw se reusa
-  // tanto para la carga inicial como después de crear/editar/borrar una
-  // cuenta.
+  // corriente, cuenta de ahorros, inversión...), cada una con un saldo. Ya
+  // no se cargan acá adentro -- vienen como prop desde FinanceApp (2026-08-08,
+  // al ligarlas con Ingresos/Gastos), que las carga una sola vez y las
+  // comparte con Inicio, Ingresos y Gastos. refetchPatrimonioRaw se quedó
+  // solo con ahorros y planes de pago, que sí siguen siendo propios de esta
+  // pantalla.
   async function refetchPatrimonioRaw() {
     const [
       { data: sav, error: savErr },
       { data: pl, error: plErr },
-      { data: accs, error: accErr },
     ] = await Promise.all([
       supabase.from("savings").select("amount, date"),
       supabase.from("installment_plans").select("*, credit_cards(name, cutoff_day, payment_day)"),
-      supabase.from("accounts").select("*").order("created_at", { ascending: true }),
     ]);
-    setPatrimonioError(Boolean(savErr || plErr || accErr));
-    setPatrimonioRaw({ savings: sav || [], plans: pl || [], accounts: accs || [] });
+    setPatrimonioError(Boolean(savErr || plErr));
+    setPatrimonioRaw({ savings: sav || [], plans: pl || [] });
   }
   useEffect(() => {
     refetchPatrimonioRaw();
   }, []);
+  // Deuda de cada tarjeta de crédito (2026-08-08): a diferencia de las
+  // cuentas normales (que guardan su saldo directo en la columna
+  // current_balance), la deuda de una tarjeta se calcula sola --
+  // saldo_inicial (lo que ya debías antes de usar la app) + lo que le has
+  // cargado (expenses.card_id) - lo que le has pagado (credit_card_payments).
+  // Ojo: por ahora solo cuenta gastos sueltos con card_id -- las cuotas de
+  // planes de pago vinculados a una tarjeta (installment_plans.card_id)
+  // todavía no se suman acá (limitación conocida, documentada también en
+  // notas de progreso).
+  const [cardCharges, setCardCharges] = useState({});
+  async function refetchCardCharges() {
+    const [{ data: exps }, { data: pays }] = await Promise.all([
+      supabase.from("expenses").select("amount, card_id").not("card_id", "is", null),
+      supabase.from("credit_card_payments").select("amount, card_id"),
+    ]);
+    const map = {};
+    (exps || []).forEach((e) => { map[e.card_id] = (map[e.card_id] || 0) + Number(e.amount); });
+    (pays || []).forEach((p) => { map[p.card_id] = (map[p.card_id] || 0) - Number(p.amount); });
+    setCardCharges(map);
+  }
+  useEffect(() => {
+    refetchCardCharges();
+  }, []);
   const [editingAccount, setEditingAccount] = useState(null);
   const [deletingAccount, setDeletingAccount] = useState(null);
+  const [editingCard, setEditingCard] = useState(null);
+  const [deletingCard, setDeletingCard] = useState(null);
+  const [payingCard, setPayingCard] = useState(null);
   async function handleDeleteAccount(id) {
     const { error } = await supabase.from("accounts").delete().eq("id", id);
     if (error) throw error;
     setDeletingAccount(null);
-    refetchPatrimonioRaw();
+    if (refetchAccounts) refetchAccounts();
   }
+  async function handleDeleteCard(id) {
+    const { error } = await supabase.from("credit_cards").delete().eq("id", id);
+    if (error) throw error;
+    setDeletingCard(null);
+    if (refetchCards) refetchCards();
+    refetchCardCharges();
+  }
+  // Tarjetas de crédito y cuentas normales, mezcladas en un solo arreglo
+  // para el carrusel de "Tus cuentas" (2026-08-08) -- cada ítem trae "kind"
+  // para saber cuál modal abrir al editar/borrar, y su saldo ya calculado
+  // (directo para cuentas, o deuda calculada para tarjetas).
+  const accountCarouselItems = useMemo(() => {
+    const accountItems = accounts.map((a) => ({ kind: "cuenta", id: a.id, data: a, balance: Number(a.current_balance) }));
+    const cardItems = cards.map((c) => ({
+      kind: "tarjeta",
+      id: c.id,
+      data: c,
+      balance: Number(c.initial_balance || 0) + (cardCharges[c.id] || 0),
+    }));
+    return [...accountItems, ...cardItems];
+  }, [accounts, cards, cardCharges]);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -1273,7 +1328,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   // anterior" funciona bien incluso cruzando de diciembre a enero.
   const patrimonio = useMemo(() => {
     if (!patrimonioRaw) return null;
-    const { savings, plans, accounts } = patrimonioRaw;
+    const { savings, plans } = patrimonioRaw;
     // Las cuentas (Fase 2) solo tienen un saldo de "ahora", no un histórico
     // por fecha como los ahorros -- así que se suman igual sin importar qué
     // mes se esté viendo. Esto no distorsiona la comparación "vs. mes
@@ -1304,7 +1359,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
     // "neto"/"delta" (con deuda restada) se dejan calculados por si se
     // vuelven a necesitar en otra pantalla más adelante.
     return { activos, pasivos, neto, delta: neto - netoPrev, deltaActivos: activos - activosPrev, totalCuentas };
-  }, [patrimonioRaw, year, month]);
+  }, [patrimonioRaw, accounts, year, month]);
   // Próximos compromisos (próximos 30 días reales): a diferencia de todo lo
   // demás en esta pantalla, esto SIEMPRE mira la fecha real de hoy, no el
   // mes que se está navegando con las flechitas -- no tendría sentido
@@ -1457,23 +1512,36 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
       <div>
         <div className="mb-2 flex items-center justify-between">
           <Eyebrow>Tus cuentas</Eyebrow>
-          <button
-            onClick={() => setEditingAccount({ account: null })}
-            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-          >
-            <Plus size={13} /> Agregar cuenta
-          </button>
+          {/* Dos botones (2026-08-08, a pedido del usuario): las tarjetas de
+              crédito ahora se crean/editan/borran desde acá también (ya no
+              desde el botón "Tarjetas" que vivía en Gastos), para que solo
+              haya un lugar donde manejarlas. */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setEditingAccount({ account: null })}
+              className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+            >
+              <Plus size={13} /> Cuenta
+            </button>
+            <button
+              onClick={() => setEditingCard({ card: null })}
+              className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+            >
+              <Plus size={13} /> Tarjeta
+            </button>
+          </div>
         </div>
-        {(patrimonioRaw?.accounts?.length || 0) === 0 ? (
+        {accountCarouselItems.length === 0 ? (
           <Card className="p-5">
-            <p className="text-sm text-slate-400">Todavía no tienes cuentas. Agrega la primera con el botón de arriba.</p>
+            <p className="text-sm text-slate-400">Todavía no tienes cuentas ni tarjetas. Agrega la primera con los botones de arriba.</p>
           </Card>
         ) : (
           <AccountsCarousel
-            accounts={patrimonioRaw.accounts}
+            items={accountCarouselItems}
             fmt={fmt}
-            onEdit={(acc) => setEditingAccount({ account: acc })}
-            onDelete={(acc) => setDeletingAccount(acc)}
+            onEdit={(item) => (item.kind === "cuenta" ? setEditingAccount({ account: item.data }) : setEditingCard({ card: item.data }))}
+            onDelete={(item) => (item.kind === "cuenta" ? setDeletingAccount(item.data) : setDeletingCard(item.data))}
+            onPay={(item) => setPayingCard(item.data)}
           />
         )}
       </div>
@@ -1761,15 +1829,38 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
         <AccountModal
           account={editingAccount.account}
           onClose={() => setEditingAccount(null)}
-          onSaved={refetchPatrimonioRaw}
+          onSaved={() => { if (refetchAccounts) refetchAccounts(); }}
         />
       )}
       {deletingAccount && (
         <ConfirmDeleteModal
           title="Eliminar cuenta"
-          message={`¿Seguro que quieres eliminar "${deletingAccount.name}"? Esto no afecta tus ingresos, gastos ni ahorros -- solo borra el registro de esta cuenta y su saldo.`}
+          message={`¿Seguro que quieres eliminar "${deletingAccount.name}"? Los ingresos/gastos que tengas ligados a ella no se borran, solo dejan de estar vinculados a ninguna cuenta.`}
           onCancel={() => setDeletingAccount(null)}
           onConfirm={() => handleDeleteAccount(deletingAccount.id)}
+        />
+      )}
+      {editingCard && (
+        <CreditCardModal
+          card={editingCard.card}
+          onClose={() => setEditingCard(null)}
+          onSaved={() => { if (refetchCards) refetchCards(); refetchCardCharges(); }}
+        />
+      )}
+      {deletingCard && (
+        <ConfirmDeleteModal
+          title="Eliminar tarjeta"
+          message={`¿Seguro que quieres eliminar la tarjeta "${deletingCard.name}"? Los gastos que le hayas cargado no se borran, solo dejan de estar vinculados a esta tarjeta.`}
+          onCancel={() => setDeletingCard(null)}
+          onConfirm={() => handleDeleteCard(deletingCard.id)}
+        />
+      )}
+      {payingCard && (
+        <CardPaymentModal
+          card={payingCard}
+          accounts={accounts}
+          onClose={() => setPayingCard(null)}
+          onSaved={() => { refetchCardCharges(); if (refetchAccounts) refetchAccounts(); }}
         />
       )}
     </div>
@@ -1796,15 +1887,28 @@ function NetworkMark({ network }) {
   }
   return null;
 }
-// Tarjeta visual de una cuenta (2026-08-08, a pedido del usuario; saldo
-// llevado adentro de la tarjeta el mismo día, a partir de una captura de una
-// app de banco real que mandó de referencia): forma y textura de una
+// Convierte un ítem del carrusel (una cuenta normal o una tarjeta de
+// crédito) a la forma que espera AccountCard -- así el mismo componente
+// visual sirve para las dos cosas sin tener que duplicarlo (2026-08-08).
+function toCardView(item) {
+  if (item.kind === "tarjeta") {
+    const c = item.data;
+    return { name: c.name, type: "Tarjeta de crédito", bank: c.bank, network: c.network, last4: c.last4, balance: item.balance };
+  }
+  const a = item.data;
+  return { name: a.name, type: a.type, bank: a.bank, network: a.network, last4: a.last4, balance: item.balance };
+}
+// Tarjeta visual de una cuenta o tarjeta de crédito (2026-08-08, a pedido
+// del usuario; saldo llevado adentro de la tarjeta, a partir de una captura
+// de una app de banco real que mandó de referencia): forma y textura de una
 // tarjeta real (chip, número enmascarado, red), en el color del banco
 // elegido -- NO es el logo real del banco, es un color inspirado en su
-// identidad. El saldo ahora se muestra arriba, sobre la propia tarjeta
-// (antes iba como texto debajo).
-function AccountCard({ account, fmt, onEdit, onDelete }) {
-  const bank = BANKS.find((b) => b.name === account.bank) || BANKS[BANKS.length - 1];
+// identidad. Para una tarjeta de crédito, el número no es "saldo" sino
+// "deuda" (lo que has cargado menos lo que has pagado), así que la etiqueta
+// cambia según "kind".
+function AccountCard({ view, kind, fmt, onEdit, onDelete }) {
+  const bank = BANKS.find((b) => b.name === view.bank) || BANKS[BANKS.length - 1];
+  const isCard = kind === "tarjeta";
   return (
     <div
       className="group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6"
@@ -1813,14 +1917,14 @@ function AccountCard({ account, fmt, onEdit, onDelete }) {
       <div className="absolute right-3 top-3 flex gap-0.5 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100">
         <button
           onClick={onEdit}
-          aria-label="Editar cuenta"
+          aria-label={isCard ? "Editar tarjeta" : "Editar cuenta"}
           className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
         >
           <Pencil size={12} />
         </button>
         <button
           onClick={onDelete}
-          aria-label="Eliminar cuenta"
+          aria-label={isCard ? "Eliminar tarjeta" : "Eliminar cuenta"}
           className="rounded-lg bg-black/20 p-1.5 text-white/90 backdrop-blur-sm hover:bg-black/35"
         >
           <Trash2 size={12} />
@@ -1828,53 +1932,55 @@ function AccountCard({ account, fmt, onEdit, onDelete }) {
       </div>
       <div className="flex items-start justify-between gap-3 pr-14">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">Saldo actual</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">{isCard ? "Debes actualmente" : "Saldo actual"}</p>
           <p className="mt-1 truncate text-[28px] font-extrabold leading-tight tracking-tight text-white sm:text-[32px]">
-            {fmt(account.current_balance)}
+            {fmt(view.balance)}
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">{account.bank || "Otro"}</p>
-          <p className="mt-0.5 text-[10px] text-white/50">{account.type}</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">{view.bank || "Otro"}</p>
+          <p className="mt-0.5 text-[10px] text-white/50">{view.type}</p>
         </div>
       </div>
       <div>
         <div className="h-5 w-8 rounded-[4px] bg-gradient-to-br from-yellow-200 to-yellow-500" />
         <p className="mt-2 font-mono text-sm tracking-[0.2em] text-white/90">
-          •••• •••• •••• {account.last4 || "····"}
+          •••• •••• •••• {view.last4 || "····"}
         </p>
         <div className="mt-2 flex items-end justify-between">
-          <p className="min-w-0 truncate text-sm font-medium text-white/80">{account.name}</p>
-          <NetworkMark network={account.network} />
+          <p className="min-w-0 truncate text-sm font-medium text-white/80">{view.name}</p>
+          <NetworkMark network={view.network} />
         </div>
       </div>
     </div>
   );
 }
-// Carrusel de cuentas (2026-08-08, a pedido del usuario, a partir de una
-// captura de referencia): una tarjeta a la vez con flechitas a los lados en
-// pantallas grandes, flechitas debajo en móvil, y puntos indicando cuántas
-// cuentas hay. Si solo hay una cuenta, no se muestran ni flechitas ni
-// puntos.
-function AccountsCarousel({ accounts, fmt, onEdit, onDelete }) {
+// Carrusel de cuentas y tarjetas (2026-08-08, a pedido del usuario, a partir
+// de una captura de referencia): una tarjeta a la vez con flechitas a los
+// lados en pantallas grandes, flechitas debajo en móvil, y puntos indicando
+// cuántas hay. Si solo hay una, no se muestran ni flechitas ni puntos. Las
+// tarjetas de crédito (kind === "tarjeta") además muestran un botón
+// "Registrar pago" debajo, para bajar su deuda.
+function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay }) {
   const [index, setIndex] = useState(0);
-  const count = accounts.length;
+  const count = items.length;
   const safeIndex = count ? ((index % count) + count) % count : 0;
-  const account = accounts[safeIndex];
+  const item = items[safeIndex];
   function prev() {
     setIndex((i) => (i - 1 + count) % count);
   }
   function next() {
     setIndex((i) => (i + 1) % count);
   }
-  if (!account) return null;
+  if (!item) return null;
+  const view = toCardView(item);
   return (
     <div>
       <div className="flex items-center gap-3">
         {count > 1 && (
           <button
             onClick={prev}
-            aria-label="Cuenta anterior"
+            aria-label="Anterior"
             className="hidden shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 sm:flex"
           >
             <ChevronLeft size={18} />
@@ -1882,16 +1988,25 @@ function AccountsCarousel({ accounts, fmt, onEdit, onDelete }) {
         )}
         <div className="min-w-0 flex-1">
           <AccountCard
-            account={account}
+            view={view}
+            kind={item.kind}
             fmt={fmt}
-            onEdit={() => onEdit(account)}
-            onDelete={() => onDelete(account)}
+            onEdit={() => onEdit(item)}
+            onDelete={() => onDelete(item)}
           />
+          {item.kind === "tarjeta" && (
+            <button
+              onClick={() => onPay(item)}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <Landmark size={13} /> Registrar pago
+            </button>
+          )}
         </div>
         {count > 1 && (
           <button
             onClick={next}
-            aria-label="Siguiente cuenta"
+            aria-label="Siguiente"
             className="hidden shrink-0 items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 sm:flex"
           >
             <ChevronRight size={18} />
@@ -1902,14 +2017,14 @@ function AccountsCarousel({ accounts, fmt, onEdit, onDelete }) {
         <div className="mt-3 flex items-center justify-center gap-4 sm:hidden">
           <button
             onClick={prev}
-            aria-label="Cuenta anterior"
+            aria-label="Anterior"
             className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
           >
             <ChevronLeft size={18} />
           </button>
           <button
             onClick={next}
-            aria-label="Siguiente cuenta"
+            aria-label="Siguiente"
             className="rounded-full border border-slate-200 p-2 text-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-500 dark:hover:bg-slate-800"
           >
             <ChevronRight size={18} />
@@ -1918,11 +2033,11 @@ function AccountsCarousel({ accounts, fmt, onEdit, onDelete }) {
       )}
       {count > 1 && (
         <div className="mt-3 flex items-center justify-center gap-1.5">
-          {accounts.map((a, i) => (
+          {items.map((it, i) => (
             <button
-              key={a.id}
+              key={`${it.kind}-${it.id}`}
               onClick={() => setIndex(i)}
-              aria-label={`Ir a la cuenta ${i + 1}`}
+              aria-label={`Ir al ítem ${i + 1}`}
               className={`h-1.5 rounded-full transition-all ${
                 i === safeIndex ? "w-5 bg-slate-700 dark:bg-white" : "w-1.5 bg-slate-300 dark:bg-slate-600"
               }`}
@@ -3214,7 +3329,7 @@ function GoalModal({ goal, onClose, onSaved }) {
 /* ---------------------------------------------------------------
    INGRESOS
 ------------------------------------------------------------------ */
-function IncomesView({ fmt, onDataChanged, year, month }) {
+function IncomesView({ fmt, onDataChanged, year, month, accounts }) {
   const [incomes, setIncomes] = useState([]);
   const [recurring, setRecurring] = useState([]);
   // Tipos de ingreso (ej. "Salario", "Freelance"): no dependen del año/mes
@@ -3274,10 +3389,11 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
   useEffect(() => {
     refetchTypes();
   }, []);
-  async function handleDelete(id) {
-    const { error } = await supabase.from("incomes").delete().eq("id", id);
+  async function handleDelete(record) {
+    const { error } = await supabase.from("incomes").delete().eq("id", record.id);
     if (error) throw error;
-    setIncomes((prev) => prev.filter((i) => i.id !== id));
+    if (record.account_id) await adjustAccountBalance(record.account_id, -Number(record.amount));
+    setIncomes((prev) => prev.filter((i) => i.id !== record.id));
     if (onDataChanged) onDataChanged();
     setDeletingIncome(null);
   }
@@ -3458,10 +3574,10 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
         ))}
       </div>
       {showModal && (
-        <IncomeModal types={types} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
+        <IncomeModal types={types} accounts={accounts} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
       )}
       {editingIncome && (
-        <IncomeModal types={types} income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
+        <IncomeModal types={types} accounts={accounts} income={editingIncome} onClose={() => setEditingIncome(null)} onSaved={refetchIncomes} onTypesChanged={refetchTypes} />
       )}
       {showTypesManager && (
         <IncomeTypesManagerModal types={types} onClose={() => setShowTypesManager(false)} onChanged={refetchTypes} />
@@ -3471,7 +3587,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
           title="Eliminar ingreso"
           message={`¿Seguro que quieres eliminar este ingreso de ${fmt(deletingIncome.amount)}? Esta acción no se puede deshacer.`}
           onCancel={() => setDeletingIncome(null)}
-          onConfirm={() => handleDelete(deletingIncome.id)}
+          onConfirm={() => handleDelete(deletingIncome)}
         />
       )}
       {showRecurringModal && (
@@ -3491,7 +3607,7 @@ function IncomesView({ fmt, onDataChanged, year, month }) {
     </div>
   );
 }
-function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultDate }) {
+function IncomeModal({ income, types, accounts, onClose, onSaved, onTypesChanged, defaultDate }) {
   const isEditing = Boolean(income);
   const today = localDateString();
   const [typeId, setTypeId] = useState(income?.type_id || "");
@@ -3499,6 +3615,12 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
   const [amount, setAmount] = useState(income ? String(income.amount) : "");
   const [date, setDate] = useState(income?.date || defaultDate || today);
   const [paymentMethod, setPaymentMethod] = useState(income?.payment_method || "");
+  // Cuenta real a la que se liga este ingreso (2026-08-08), distinta del
+  // "Método de pago" de arriba (que es solo una etiqueta descriptiva, texto
+  // libre, sin saldo detrás). Si se elige una cuenta, el monto se suma
+  // automáticamente a su saldo -- mismo patrón que "Vincular a una meta" en
+  // Ahorros.
+  const [accountId, setAccountId] = useState(income?.account_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   // Ver el mismo comentario en SavingModal: guarda acá los tipos creados en
@@ -3515,6 +3637,8 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
     const selectedType = allTypes.find((t) => t.id === typeId);
     setSaving(true);
     setErrorMsg("");
+    const newAccountId = accountId || null;
+    const newAmount = Number(amount);
     if (isEditing) {
       const { error } = await supabase.from("incomes").update({
         year: dateStringYear(date),
@@ -3522,10 +3646,21 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
         type: selectedType?.name || "",
         type_id: typeId,
         description,
-        amount: Number(amount),
+        amount: newAmount,
         date,
         payment_method: paymentMethod || null,
+        account_id: newAccountId,
       }).eq("id", income.id);
+      if (!error) {
+        const oldAccountId = income.account_id || null;
+        const oldAmount = Number(income.amount);
+        if (oldAccountId === newAccountId) {
+          if (oldAccountId) await adjustAccountBalance(oldAccountId, newAmount - oldAmount);
+        } else {
+          if (oldAccountId) await adjustAccountBalance(oldAccountId, -oldAmount);
+          if (newAccountId) await adjustAccountBalance(newAccountId, newAmount);
+        }
+      }
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -3544,10 +3679,12 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
       type: selectedType?.name || "",
       type_id: typeId,
       description,
-      amount: Number(amount),
+      amount: newAmount,
       date,
       payment_method: paymentMethod || null,
+      account_id: newAccountId,
     });
+    if (!error && newAccountId) await adjustAccountBalance(newAccountId, newAmount);
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
@@ -3596,12 +3733,22 @@ function IncomeModal({ income, types, onClose, onSaved, onTypesChanged, defaultD
           </div>
         </div>
         <div>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Cuenta / método de pago (opcional)</label>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Método de pago (opcional)</label>
           <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
             <option value="">Sin especificar</option>
             {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
+        {(accounts || []).length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una cuenta (opcional)</label>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="">Ninguna</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            {accountId && <p className="mt-1.5 text-xs text-slate-400">El monto se sumará automáticamente al saldo de esa cuenta.</p>}
+          </div>
+        )}
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
@@ -3950,7 +4097,7 @@ function IncomeTypesReport({ types, incomes, recurring, year, month, fmt }) {
 /* ---------------------------------------------------------------
    GASTOS
 ------------------------------------------------------------------ */
-function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refetchCards }) {
+function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refetchCards, accounts }) {
   const [expenses, setExpenses] = useState([]);
   const [plans, setPlans] = useState([]);
   const [paymentOverrides, setPaymentOverrides] = useState([]);
@@ -3983,10 +4130,12 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   // había puesto por error en "Gasto por artículo" (la sección de las
   // barras) — se corrigió para que sea esta lista, no esa, la colapsable.
   const [expensesListOpen, setExpensesListOpen] = useState(false);
-  const [showCardsManager, setShowCardsManager] = useState(false);
-  // "Tarjetas" y "Plan de pago" son los botones que menos se usan día a día,
-  // así que quedan escondidos detrás de "Más opciones" (empieza cerrado) —
-  // deja la fila de botones de Gastos menos cargada por defecto.
+  // "Plan de pago" es el botón que menos se usa día a día, así que queda
+  // escondido detrás de "Más opciones" (empieza cerrado) — deja la fila de
+  // botones de Gastos menos cargada por defecto. "Tarjetas" vivía acá
+  // también, pero se quitó (2026-08-08, a pedido del usuario): las tarjetas
+  // de crédito ahora se crean/editan/borran desde Cuentas (Inicio), para
+  // que solo haya un lugar donde manejarlas.
   const [moreOpen, setMoreOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Todas");
@@ -4060,10 +4209,11 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
   useEffect(() => {
     refetchItems();
   }, []);
-  async function handleDelete(id) {
-    const { error } = await supabase.from("expenses").delete().eq("id", id);
+  async function handleDelete(record) {
+    const { error } = await supabase.from("expenses").delete().eq("id", record.id);
     if (error) throw error;
-    setExpenses((prev) => prev.filter((e) => e.id !== id));
+    if (record.account_id) await adjustAccountBalance(record.account_id, Number(record.amount));
+    setExpenses((prev) => prev.filter((e) => e.id !== record.id));
     if (onDataChanged) onDataChanged();
     setDeletingExpense(null);
   }
@@ -4080,12 +4230,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
     setRecurring((prev) => prev.filter((r) => r.id !== id));
     if (onDataChanged) onDataChanged();
     setDeletingRecurring(null);
-  }
-  async function handleDeleteCard(id) {
-    const { error } = await supabase.from("credit_cards").delete().eq("id", id);
-    if (error) throw error;
-    if (refetchCards) refetchCards();
-    refetchExpenses();
   }
   const monthExpenses = expenses.filter((e) => dateStringMonth(e.date) - 1 === month);
   // Los gastos fijos y las cuotas de planes de pago no se guardan como fila
@@ -4236,12 +4380,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           </button>
           {moreOpen && (
             <>
-              <button
-                onClick={() => setShowCardsManager(true)}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                <Landmark size={15} /> Tarjetas
-              </button>
               <button
                 onClick={() => setShowPlanModal(true)}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -4430,13 +4568,14 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
         </CollapsibleSection>
       </Card>
       {showModal && (
-        <ExpenseModal categories={categories} cards={cards} items={items} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} onItemsChanged={refetchItems} />
+        <ExpenseModal categories={categories} cards={cards} items={items} accounts={accounts} defaultDate={defaultDateForMonth(month, year)} onClose={() => setShowModal(false)} onSaved={refetchExpenses} onItemsChanged={refetchItems} />
       )}
       {editingExpense && (
         <ExpenseModal
           categories={categories}
           cards={cards}
           items={items}
+          accounts={accounts}
           expense={editingExpense}
           onClose={() => setEditingExpense(null)}
           onSaved={refetchExpenses}
@@ -4448,7 +4587,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           title="Eliminar gasto"
           message={`¿Seguro que quieres eliminar el gasto "${deletingExpense.description || deletingExpense.categories?.name || "sin descripción"}" de ${fmt(deletingExpense.amount)}? Esta acción no se puede deshacer.`}
           onCancel={() => setDeletingExpense(null)}
-          onConfirm={() => handleDelete(deletingExpense.id)}
+          onConfirm={() => handleDelete(deletingExpense)}
         />
       )}
       {showPlanModal && (
@@ -4499,14 +4638,6 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           onConfirm={() => handleDeleteRecurring(deletingRecurring.id)}
         />
       )}
-      {showCardsManager && (
-        <CreditCardsManagerModal
-          cards={cards}
-          onClose={() => setShowCardsManager(false)}
-          onChanged={refetchCards}
-          onDeleteCard={handleDeleteCard}
-        />
-      )}
       {showItemsManager && (
         <ExpenseItemsManagerModal
           categories={categories}
@@ -4520,7 +4651,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
 }
 // Valor sentinela del selector de "Artículo" que significa "quiero escribir
 // uno nuevo" (mismo patrón que "Otro (escribir nombre)" en tipos de ahorro).
-function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, onItemsChanged, defaultDate }) {
+function ExpenseModal({ categories, cards, items, expense, accounts, onClose, onSaved, onItemsChanged, defaultDate }) {
   const cardsList = cards || [];
   const itemsList = items || [];
   const isEditing = Boolean(expense);
@@ -4531,6 +4662,12 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, onI
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
   const [date, setDate] = useState(expense?.purchase_date || expense?.date || defaultDate || today);
   const [cardId, setCardId] = useState(expense?.card_id || "");
+  // Cuenta real de la que sale este gasto (2026-08-08) -- solo tiene
+  // sentido cuando NO se paga con tarjeta: un gasto con tarjeta ya se suma
+  // solo a la deuda de esa tarjeta (ver refetchCardCharges en Dashboard), no
+  // le resta a ninguna cuenta de débito. Si se elige una cuenta, el monto se
+  // resta automáticamente de su saldo.
+  const [accountId, setAccountId] = useState(expense?.account_id || "");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -4557,29 +4694,43 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, onI
     }
     setSaving(true);
     setErrorMsg("");
+    const newAmount = Number(amount);
+    const newAccountId = selectedCard ? null : (accountId || null);
     const payload = selectedCard
       ? {
           category_id: categoryId,
           description,
           item_id: itemId || null,
-          amount: Number(amount),
+          amount: newAmount,
           date: computedPaymentDate,
           purchase_date: date,
           card_id: selectedCard.id,
+          account_id: null,
           is_recurring: false,
         }
       : {
           category_id: categoryId,
           description,
           item_id: itemId || null,
-          amount: Number(amount),
+          amount: newAmount,
           date,
           purchase_date: null,
           card_id: null,
+          account_id: newAccountId,
           is_recurring: false,
         };
     if (isEditing) {
       const { error } = await supabase.from("expenses").update(payload).eq("id", expense.id);
+      if (!error) {
+        const oldAccountId = expense.account_id || null;
+        const oldAmount = Number(expense.amount);
+        if (oldAccountId === newAccountId) {
+          if (oldAccountId) await adjustAccountBalance(oldAccountId, -(newAmount - oldAmount));
+        } else {
+          if (oldAccountId) await adjustAccountBalance(oldAccountId, oldAmount);
+          if (newAccountId) await adjustAccountBalance(newAccountId, -newAmount);
+        }
+      }
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -4595,6 +4746,7 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, onI
       user_id: userId || null,
       ...payload,
     });
+    if (!error && newAccountId) await adjustAccountBalance(newAccountId, -newAmount);
     setSaving(false);
     if (error) {
       setErrorMsg("Error al guardar: " + error.message);
@@ -4671,6 +4823,19 @@ function ExpenseModal({ categories, cards, items, expense, onClose, onSaved, onI
                 Corte el día {selectedCard.cutoff_day} y pago el día {selectedCard.payment_day}: este gasto se contará en tu balance con fecha de pago <span className="font-medium text-slate-600 dark:text-slate-300">{computedPaymentDate}</span>.
               </p>
             )}
+          </div>
+        )}
+        {/* Solo tiene sentido ligar a una cuenta de débito cuando NO se paga
+            con tarjeta -- un gasto con tarjeta ya afecta la deuda de esa
+            tarjeta, no el saldo de una cuenta (2026-08-08). */}
+        {!selectedCard && (accounts || []).length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Vincular a una cuenta (opcional)</label>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              <option value="">Ninguna</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            {accountId && <p className="mt-1.5 text-xs text-slate-400">El monto se restará automáticamente del saldo de esa cuenta.</p>}
           </div>
         )}
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
@@ -4941,68 +5106,24 @@ function ExpenseItemModal({ categoryId, item, onClose, onSaved }) {
     </ModalShell>
   );
 }
-function CreditCardsManagerModal({ cards, onClose, onChanged, onDeleteCard }) {
-  const [showCardModal, setShowCardModal] = useState(false);
-  const [editingCard, setEditingCard] = useState(null);
-  const [deletingCard, setDeletingCard] = useState(null);
-  return (
-    <ModalShell
-      onClose={onClose}
-      title="Tarjetas de crédito"
-      overlayExtras={
-        <>
-          {showCardModal && (
-            <CreditCardModal onClose={() => setShowCardModal(false)} onSaved={onChanged} />
-          )}
-          {editingCard && (
-            <CreditCardModal card={editingCard} onClose={() => setEditingCard(null)} onSaved={onChanged} />
-          )}
-          {deletingCard && (
-            <ConfirmDeleteModal
-              title="Eliminar tarjeta"
-              message={`¿Seguro que quieres eliminar la tarjeta "${deletingCard.name}"? Los gastos ya registrados con esta tarjeta no se borran, pero dejarán de mostrar su nombre. Esta acción no se puede deshacer.`}
-              onCancel={() => setDeletingCard(null)}
-              onConfirm={async () => { await onDeleteCard(deletingCard.id); setDeletingCard(null); }}
-            />
-          )}
-        </>
-      }
-    >
-      <div className="space-y-2">
-        {cards.length === 0 && (
-          <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-700">
-            Aún no has registrado tarjetas.
-          </p>
-        )}
-        {cards.map((c) => (
-          <div key={c.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-3 dark:border-slate-800">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-                <Landmark size={16} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{c.name}</p>
-                <p className="truncate text-xs text-slate-400">Corte día {c.cutoff_day} · Pago día {c.payment_day}</p>
-              </div>
-            </div>
-            <RowActions onEdit={() => setEditingCard(c)} onDelete={() => setDeletingCard(c)} />
-          </div>
-        ))}
-      </div>
-      <button
-        onClick={() => setShowCardModal(true)}
-        className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-      >
-        <Plus size={15} /> Agregar tarjeta
-      </button>
-    </ModalShell>
-  );
-}
+// Modal de crear/editar una tarjeta de crédito (2026-08-08, ahora vive en
+// Cuentas -- antes había un "CreditCardsManagerModal" aparte dentro de
+// Gastos, se quitó para que solo haya un lugar donde manejar tarjetas). Se
+// le agregaron los mismos campos visuales que ya tienen las cuentas
+// (banco/red/últimos 4 dígitos) más "Deuda ya existente", para poder
+// arrancar con el saldo real si ya debías algo antes de usar la app -- de
+// ahí en adelante, la deuda se calcula sola (ver refetchCardCharges en
+// Dashboard) a partir de los gastos que le cargues menos los pagos que
+// registres, así que este campo no se vuelve a tocar después de crearla.
 function CreditCardModal({ card, onClose, onSaved }) {
   const isEditing = Boolean(card);
   const [name, setName] = useState(card?.name || "");
+  const [bank, setBank] = useState(card?.bank || BANKS[0].name);
+  const [network, setNetwork] = useState(card?.network || CARD_NETWORKS[0]);
+  const [last4, setLast4] = useState(card?.last4 || "");
   const [cutoffDay, setCutoffDay] = useState(card ? String(card.cutoff_day) : "");
   const [paymentDay, setPaymentDay] = useState(card ? String(card.payment_day) : "");
+  const [initialBalance, setInitialBalance] = useState(card ? String(card.initial_balance || 0) : "0");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -5016,10 +5137,16 @@ function CreditCardModal({ card, onClose, onSaved }) {
     }
     setSaving(true);
     setErrorMsg("");
+    const payload = {
+      name, bank,
+      network: network === "Ninguna" ? null : network,
+      last4: last4 ? last4.slice(-4) : null,
+      cutoff_day: cutoff,
+      payment_day: payment,
+      initial_balance: Number(initialBalance) || 0,
+    };
     if (isEditing) {
-      const { error } = await supabase.from("credit_cards").update({
-        name, cutoff_day: cutoff, payment_day: payment,
-      }).eq("id", card.id);
+      const { error } = await supabase.from("credit_cards").update(payload).eq("id", card.id);
       setSaving(false);
       if (error) {
         setErrorMsg("Error al guardar: " + error.message);
@@ -5032,7 +5159,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData?.user?.id;
     const { error } = await supabase.from("credit_cards").insert({
-      user_id: userId || null, name, cutoff_day: cutoff, payment_day: payment,
+      user_id: userId || null, ...payload,
     });
     setSaving(false);
     if (error) {
@@ -5043,7 +5170,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
     }
   }
   return (
-    <ModalShell onClose={onClose} title={isEditing ? "Editar tarjeta" : "Nueva tarjeta"} maxWidth="max-w-sm" zIndex="z-[60]">
+    <ModalShell onClose={onClose} title={isEditing ? "Editar tarjeta" : "Nueva tarjeta"}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Nombre de la tarjeta</label>
@@ -5051,6 +5178,27 @@ function CreditCardModal({ card, onClose, onSaved }) {
             value={name} onChange={(e) => setName(e.target.value)}
             placeholder="Ej. BAC Visa"
             className={`mt-1 ${INPUT_CLASS}`}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Banco</label>
+            <select value={bank} onChange={(e) => setBank(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              {BANKS.map((b) => <option key={b.name}>{b.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Red</label>
+            <select value={network} onChange={(e) => setNetwork(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+              {CARD_NETWORKS.map((n) => <option key={n}>{n}</option>)}
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Últimos 4 dígitos</label>
+          <input
+            value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            placeholder="1234" inputMode="numeric" className={`mt-1 ${INPUT_CLASS}`}
           />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -5071,12 +5219,93 @@ function CreditCardModal({ card, onClose, onSaved }) {
             />
           </div>
         </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Deuda ya existente (opcional)</label>
+          <input type="number" value={initialBalance} onChange={(e) => setInitialBalance(e.target.value)} placeholder="0" className={`mt-1 ${INPUT_CLASS}`} />
+          <p className="mt-1 text-xs text-slate-400">Si ya debías algo en esta tarjeta antes de empezar a usarla acá, ponlo aquí -- de ahí en adelante, la deuda se calcula sola con lo que le cargues y lo que le pagues.</p>
+        </div>
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
           className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
         >
-          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tarjeta"}
+          {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear tarjeta"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+// Modal para registrar un pago a una tarjeta de crédito (2026-08-08): baja
+// la deuda de la tarjeta (se resta de lo que has cargado) y, si eliges de
+// qué cuenta salió el dinero, también le resta el monto a esa cuenta --
+// como una transferencia real (decisión confirmada con el usuario).
+function CardPaymentModal({ card, accounts, onClose, onSaved }) {
+  const today = localDateString();
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today);
+  const [accountId, setAccountId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!amount || Number(amount) <= 0) {
+      setErrorMsg("Ingresa un monto válido.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("credit_card_payments").insert({
+      user_id: userId || null,
+      card_id: card.id,
+      account_id: accountId || null,
+      amount: Number(amount),
+      date,
+    });
+    if (!error && accountId) await adjustAccountBalance(accountId, -Number(amount));
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+      return;
+    }
+    onSaved();
+    onClose();
+  }
+  return (
+    <ModalShell onClose={onClose} title={`Registrar pago -- ${card.name}`}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Monto</label>
+            <input
+              type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder="50000"
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fecha</label>
+            <input
+              type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className={`mt-1 ${INPUT_CLASS}`}
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿De cuál cuenta salió el dinero? (opcional)</label>
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={`mt-1 ${INPUT_CLASS}`}>
+            <option value="">Ninguna -- solo registrar el pago</option>
+            {(accounts || []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          {accountId && <p className="mt-1.5 text-xs text-slate-400">A esa cuenta también se le va a restar este monto, como si fuera una transferencia.</p>}
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : "Registrar pago"}
         </button>
       </form>
     </ModalShell>
@@ -6496,14 +6725,24 @@ export default function FinanceApp() {
   // a la base de datos por la misma información.
   const [categories, setCategories] = useState([]);
   const [cards, setCards] = useState([]);
+  // Cuentas (2026-08-08): igual que categorías y tarjetas, se cargan una
+  // sola vez acá arriba -- las necesitan tanto Inicio (para el carrusel de
+  // "Tus cuentas") como Ingresos y Gastos (para el selector opcional de
+  // "Cuenta" que liga cada movimiento con el saldo real de una cuenta).
+  const [accounts, setAccounts] = useState([]);
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   async function refetchCards() {
     const { data } = await supabase.from("credit_cards").select("*").order("name", { ascending: true });
     setCards(data || []);
   }
+  async function refetchAccounts() {
+    const { data } = await supabase.from("accounts").select("*").order("created_at", { ascending: true });
+    setAccounts(data || []);
+  }
   useEffect(() => {
     supabase.from("categories").select("*").then(({ data }) => setCategories(sortCategories(data || [])));
     refetchCards();
+    refetchAccounts();
   }, []);
 
   async function loadYearData(y = year) {
@@ -6671,7 +6910,19 @@ export default function FinanceApp() {
           ) : (
             <>
               {tab === "inicio" && (
-                <Dashboard fmt={format} onSelectMonth={openMonth} yearData={yearData} year={year} month={month} categories={categories} onNavigateTab={setTab} />
+                <Dashboard
+                  fmt={format}
+                  onSelectMonth={openMonth}
+                  yearData={yearData}
+                  year={year}
+                  month={month}
+                  categories={categories}
+                  onNavigateTab={setTab}
+                  accounts={accounts}
+                  refetchAccounts={refetchAccounts}
+                  cards={cards}
+                  refetchCards={refetchCards}
+                />
               )}
               {tab === "mensual" && (
                 <QuincenasView fmt={format} yearData={yearData} year={year} month={month} onJumpToMonth={setMonth} />
@@ -6679,8 +6930,8 @@ export default function FinanceApp() {
               {tab === "calendar" && <CalendarView fmt={format} year={year} month={month} yearData={yearData} />}
             </>
           )}
-          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} />}
-          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} />}
+          {tab === "incomes" && <IncomesView fmt={format} onDataChanged={loadYearData} year={year} month={month} accounts={accounts} />}
+          {tab === "expenses" && <ExpensesView fmt={format} onDataChanged={loadYearData} year={year} month={month} categories={categories} cards={cards} refetchCards={refetchCards} accounts={accounts} />}
           {tab === "budgets" && <BudgetsView fmt={format} year={year} month={month} categories={categories} />}
           {tab === "savings" && (
             <SavingsGoalsView
