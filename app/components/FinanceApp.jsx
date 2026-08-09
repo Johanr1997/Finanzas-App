@@ -6472,9 +6472,26 @@ function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, on
   }, [card.id]);
   const cardPlans = useMemo(() => (plans || []).filter((p) => p.card_id === card.id), [plans, card.id]);
   const cardRecurring = useMemo(() => (recurringExpenses || []).filter((it) => it.card_id === card.id), [recurringExpenses, card.id]);
-  // Cuotas de plan ya "tocadas": desde que empezó el plan hasta hoy, una por
-  // mes -- mismo criterio que ya se usa para la deuda de la tarjeta
-  // (planElapsedMonths / planChargesByCard).
+  // Estado de cuotas de los planes de esta tarjeta (2026-08-09, a pedido del
+  // usuario: mostrar aquí el mismo estado de "Ver cuotas" de Gastos). Es
+  // puramente informativo -- viene de `installment_payment_status`, la
+  // misma tabla que ya usa PlanPaymentsModal en Gastos (una sola fuente de
+  // verdad), y NO se usa para calcular planChargesByCard: un cargo de
+  // tarjeta se acumula solo cada mes sin importar si se marcó una cuota
+  // aquí, la deuda real solo baja con un pago real ("Registrar pago").
+  const [planOverrides, setPlanOverrides] = useState([]);
+  const [viewingPlanPayments, setViewingPlanPayments] = useState(null);
+  async function refetchPlanOverrides() {
+    const ids = cardPlans.map((p) => p.id);
+    if (ids.length === 0) { setPlanOverrides([]); return; }
+    const { data } = await supabase.from("installment_payment_status").select("*").in("plan_id", ids);
+    setPlanOverrides(data || []);
+  }
+  useEffect(() => {
+    refetchPlanOverrides();
+  }, [cardPlans]);
+  // Cuotas de plan ya "tocadas" -- desde que empezó el plan hasta hoy, una
+  // por mes (planElapsedMonths / planChargesByCard).
   const planMovements = useMemo(() => {
     const out = [];
     cardPlans.forEach((p) => {
@@ -6630,6 +6647,51 @@ function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, on
         <p className="py-6 text-center text-sm text-slate-400">Todavía no tienes gastos fijos ligados a esta tarjeta. Puedes ligar uno desde "Gasto fijo" en Gastos.</p>
       ) : (
         <RecurringPaidChecklist items={cardRecurring} marks={marks} fmt={fmt} onMark={onMark} onUnmark={onUnmark} />
+      )}
+      {/* Planes de pago · estado de cuotas (2026-08-09, a pedido del
+          usuario: "así como los gastos fijos con la tarjeta de crédito,
+          puedes hacer también con los planes de pago?") -- a diferencia de
+          los gastos fijos de arriba, esto NO tiene su propio checkbox: reusa
+          "Ver cuotas" (PlanPaymentsModal), el mismo que ya existe en Gastos,
+          para no tener dos lugares distintos marcando lo mismo. */}
+      <p className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">Planes de pago · estado de cuotas</p>
+      <p className="mb-4 -mt-2 text-xs text-slate-400">
+        Cada cuota se suma sola a la deuda de la tarjeta cuando pasa su mes. Este estado es solo informativo (el mismo de "Ver cuotas" en Gastos) y no cambia ese cálculo.
+      </p>
+      {cardPlans.length === 0 ? (
+        <p className="py-6 text-center text-sm text-slate-400">Todavía no tienes planes de pago ligados a esta tarjeta.</p>
+      ) : (
+        <div className="space-y-2">
+          {cardPlans.map((p) => {
+            const unpaid = planUnpaidCount(planOverrides, p.id);
+            return (
+              <div key={p.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-4 py-2.5 text-sm dark:border-slate-800">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-slate-700 dark:text-slate-200">{p.description || "Plan de pago"}</p>
+                  <p className={`text-xs ${unpaid > 0 ? "text-red-500" : "text-emerald-600"}`}>
+                    {unpaid > 0 ? `${unpaid} cuota${unpaid > 1 ? "s" : ""} marcada${unpaid > 1 ? "s" : ""} como no pagada` : "Al día"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingPlanPayments(p)}
+                  className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Ver cuotas
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {viewingPlanPayments && (
+        <PlanPaymentsModal
+          plan={viewingPlanPayments}
+          overrides={planOverrides}
+          fmt={fmt}
+          onClose={() => setViewingPlanPayments(null)}
+          onChanged={refetchPlanOverrides}
+        />
       )}
     </ModalShell>
   );
