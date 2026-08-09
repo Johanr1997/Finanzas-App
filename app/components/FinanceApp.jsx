@@ -133,7 +133,7 @@ const CURRENCIES = {
 // que de verdad viven en dólares en la vida real (el límite de la tarjeta),
 // no una conversión de exhibición.
 function fmtUSD(n) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(n) || 0);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(n) || 0);
 }
 // Tipo de cambio por defecto (2026-08-09) cuando todavía no se ha guardado
 // ninguno en `app_settings` -- el usuario puede editarlo desde el botón de
@@ -1375,6 +1375,10 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   // Ver desglose de gastos fijos de una tarjeta (2026-08-08, a pedido del
   // usuario: poder marcar un gasto fijo como pagado desde la tarjeta misma).
   const [viewingCardDetail, setViewingCardDetail] = useState(null);
+  // Detalle de movimientos de una cuenta normal (2026-08-09, a pedido del
+  // usuario: "se puede hacer con todas las otras, no solo las de
+  // crédito?") -- mismo patrón que viewingCardDetail, ver AccountDetailModal.
+  const [viewingAccountDetail, setViewingAccountDetail] = useState(null);
   const [editingAccount, setEditingAccount] = useState(null);
   const [deletingAccount, setDeletingAccount] = useState(null);
   const [editingCard, setEditingCard] = useState(null);
@@ -1776,7 +1780,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
             onEdit={(item) => (item.kind === "cuenta" ? setEditingAccount({ account: item.data }) : setEditingCard({ card: item.data }))}
             onDelete={(item) => (item.kind === "cuenta" ? setDeletingAccount(item.data) : setDeletingCard(item.data))}
             onPay={(item) => setPayingCard(item.data)}
-            onViewDetail={(item) => setViewingCardDetail(item.data)}
+            onViewDetail={(item) => (item.kind === "tarjeta" ? setViewingCardDetail(item.data) : setViewingAccountDetail(item.data))}
           />
         )}
       </div>
@@ -2128,6 +2132,15 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           onUnmark={unmarkRecurringExpensePaid}
         />
       )}
+      {viewingAccountDetail && (
+        <AccountDetailModal
+          account={viewingAccountDetail}
+          accounts={accounts}
+          fmt={fmt}
+          onClose={() => setViewingAccountDetail(null)}
+          onSwitchAccount={setViewingAccountDetail}
+        />
+      )}
     </div>
   );
 }
@@ -2193,11 +2206,11 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
     || BANKS[BANKS.length - 1];
   return (
     <div
-      className={`group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6 ${isCard && onViewDetail ? "cursor-pointer" : ""}`}
+      className={`group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6 ${onViewDetail ? "cursor-pointer" : ""}`}
       style={{ backgroundImage: `linear-gradient(135deg, ${bank.from}, ${bank.to})` }}
-      onClick={isCard && onViewDetail ? onViewDetail : undefined}
-      role={isCard && onViewDetail ? "button" : undefined}
-      aria-label={isCard && onViewDetail ? `Ver detalle de ${view.name}` : undefined}
+      onClick={onViewDetail || undefined}
+      role={onViewDetail ? "button" : undefined}
+      aria-label={onViewDetail ? `Ver detalle de ${view.name}` : undefined}
     >
       {/* Banda diagonal decorativa, genérica (no es el isotipo de ningún
           banco en particular) -- solo para que la tarjeta se sienta menos
@@ -2214,8 +2227,9 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
           dos botones, que detienen la propagación) se abre el detalle
           completo con todos sus movimientos -- pedido del usuario
           (2026-08-08): "al presionar una tarjeta, se abra una parte con
-          todos los movimientos de esa tarjeta". Solo aplica a tarjetas de
-          crédito, que son las que tienen ese detalle. */}
+          todos los movimientos de esa tarjeta". Al principio solo aplicaba a
+          tarjetas de crédito; el usuario pidió (2026-08-09) que las cuentas
+          normales también tengan su propio detalle (AccountDetailModal). */}
       <div className="absolute right-3 top-3 flex gap-0.5 opacity-60 transition-opacity hover:opacity-100 group-hover:opacity-100">
         <button
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
@@ -2250,7 +2264,11 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
               de la fuente, mucho menos propenso a este problema. Se agregó
               también "tabular-nums" (no lo tenía) para que los dígitos no
               salten de ancho al cambiar de tarjeta. */}
-          <p className="mt-1 truncate text-[32px] font-bold leading-tight tracking-tight tabular-nums text-white sm:text-[36px]">
+          {/* Tamaño de letra un poco menor para el disponible en dólares
+              (2026-08-09): "$4,000.00" o cifras con centavos son más largas
+              que un monto en colones sin decimales, y se cortaban con
+              "truncate" en el ancho de la tarjeta. */}
+          <p className={`mt-1 truncate font-bold leading-tight tracking-tight tabular-nums text-white ${isCard && view.creditLimitUsd != null ? "text-[26px] sm:text-[30px]" : "text-[32px] sm:text-[36px]"}`}>
             {isCard && view.creditLimitUsd != null ? fmtUSD(view.availableUsd) : fmt(view.balance)}
           </p>
           {isCard && view.creditLimitUsd != null && (
@@ -2518,9 +2536,9 @@ function AccountCardBlock({ item, view, fmt, onEdit, onDelete, onPay, onViewDeta
         fmt={fmt}
         onEdit={() => onEdit(item)}
         onDelete={() => onDelete(item)}
-        onViewDetail={item.kind === "tarjeta" ? () => onViewDetail(item) : undefined}
+        onViewDetail={() => onViewDetail(item)}
       />
-      {item.kind === "tarjeta" && (
+      {item.kind === "tarjeta" ? (
         <div className="mt-2 grid grid-cols-2 gap-2">
           <button
             onClick={() => onPay(item)}
@@ -2531,6 +2549,18 @@ function AccountCardBlock({ item, view, fmt, onEdit, onDelete, onPay, onViewDeta
           <button
             onClick={() => onViewDetail(item)}
             className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Receipt size={13} /> Detalle
+          </button>
+        </div>
+      ) : (
+        // Cuentas normales (2026-08-09, a pedido del usuario: el detalle de
+        // movimientos ya no es solo de tarjetas de crédito) -- un solo botón
+        // de "Detalle", sin "Registrar pago" porque eso es propio de tarjetas.
+        <div className="mt-2">
+          <button
+            onClick={() => onViewDetail(item)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Receipt size={13} /> Detalle
           </button>
@@ -6589,6 +6619,138 @@ function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, on
         <p className="py-6 text-center text-sm text-slate-400">Todavía no tienes gastos fijos ligados a esta tarjeta. Puedes ligar uno desde "Gasto fijo" en Gastos.</p>
       ) : (
         <RecurringPaidChecklist items={cardRecurring} marks={marks} fmt={fmt} onMark={onMark} onUnmark={onUnmark} />
+      )}
+    </ModalShell>
+  );
+}
+// Insignias de tipo de movimiento para el detalle de una CUENTA normal
+// (2026-08-09, a pedido del usuario: "lo de darle clic a la tarjeta... se
+// puede hacer con todas las otras, no solo las de crédito?") -- equivalente
+// a CARD_MOVEMENT_TYPES pero para todo lo que puede tocar el saldo de una
+// cuenta (no solo tarjetas): ingresos, gastos, ahorros, transferencias
+// entre cuentas propias y pagos de tarjeta hechos desde esta cuenta.
+const ACCOUNT_MOVEMENT_TYPES = {
+  Ingreso: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  Gasto: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
+  Ahorro: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+  "Transferencia recibida": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
+  "Transferencia enviada": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  "Pago de tarjeta": "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200",
+};
+// Detalle completo de una cuenta normal (2026-08-09): mismo espíritu que
+// CardDetailModal (movimientos + poder cambiar de cuenta sin cerrar la
+// ventana), pero junta CINCO fuentes distintas porque una cuenta normal
+// puede recibir/perder dinero de más formas que una tarjeta: ingresos,
+// gastos, ahorros (libres y de metas, que restan de la cuenta),
+// transferencias entre cuentas propias (entrantes Y salientes) y pagos de
+// tarjeta hechos desde esta cuenta. No tiene el gráfico ni el checklist de
+// "marcar como pagado" de CardDetailModal porque esos son propios de la
+// deuda de una tarjeta, algo que una cuenta normal no tiene.
+function AccountDetailModal({ account, accounts, fmt, onClose, onSwitchAccount }) {
+  const accountIndex = (accounts || []).findIndex((a) => a.id === account.id);
+  function switchTo(offset) {
+    if (!accounts || accounts.length <= 1) return;
+    const next = accounts[(accountIndex + offset + accounts.length) % accounts.length];
+    if (next) onSwitchAccount(next);
+  }
+  const [loading, setLoading] = useState(true);
+  const [movements, setMovements] = useState([]);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    Promise.all([
+      supabase.from("incomes").select("id, amount, date, description, type").eq("account_id", account.id),
+      supabase.from("expenses").select("id, amount, date, description, categories(name)").eq("account_id", account.id),
+      supabase.from("savings").select("id, amount, date, type").eq("account_id", account.id),
+      supabase.from("account_transfers").select("id, amount, date, description, from_account_id, to_account_id")
+        .or(`from_account_id.eq.${account.id},to_account_id.eq.${account.id}`),
+      supabase.from("credit_card_payments").select("id, amount, date, credit_cards(name)").eq("account_id", account.id),
+    ]).then(([inc, exp, sav, trf, pay]) => {
+      if (!active) return;
+      const out = [];
+      (inc.data || []).forEach((r) => out.push({
+        id: `inc-${r.id}`, date: r.date, amount: Number(r.amount),
+        description: r.description || r.type || "Ingreso", type: "Ingreso",
+      }));
+      (exp.data || []).forEach((r) => out.push({
+        id: `exp-${r.id}`, date: r.date, amount: -Number(r.amount),
+        description: r.description || r.categories?.name || "Gasto", type: "Gasto",
+      }));
+      (sav.data || []).forEach((r) => out.push({
+        // El monto de un ahorro ya viene con el signo correcto desde donde se
+        // guardó (negativo cuando resta de la cuenta, que es el caso normal
+        // desde 2026-08-08/09 -- ver SavingModal/GoalQuickAdjustModal), así
+        // que se usa tal cual, sin invertirlo.
+        id: `sav-${r.id}`, date: r.date, amount: Number(r.amount),
+        description: r.type || "Ahorro", type: "Ahorro",
+      }));
+      (trf.data || []).forEach((r) => {
+        if (r.to_account_id === account.id) out.push({
+          id: `trf-in-${r.id}`, date: r.date, amount: Number(r.amount),
+          description: r.description || "Transferencia recibida", type: "Transferencia recibida",
+        });
+        if (r.from_account_id === account.id) out.push({
+          id: `trf-out-${r.id}`, date: r.date, amount: -Number(r.amount),
+          description: r.description || "Transferencia enviada", type: "Transferencia enviada",
+        });
+      });
+      (pay.data || []).forEach((r) => out.push({
+        id: `pay-${r.id}`, date: r.date, amount: -Number(r.amount),
+        description: `Pago -- ${r.credit_cards?.name || "tarjeta"}`, type: "Pago de tarjeta",
+      }));
+      out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+      setMovements(out);
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, [account.id]);
+  return (
+    <ModalShell onClose={onClose} title={`Detalle · ${account.name}`} maxWidth="max-w-lg">
+      {accounts && accounts.length > 1 && (
+        <div className="mb-4 -mt-2 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => switchTo(-1)}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            <ChevronLeft size={14} /> Anterior
+          </button>
+          <span className="text-xs text-slate-400">{accountIndex + 1} de {accounts.length}</span>
+          <button
+            type="button"
+            onClick={() => switchTo(1)}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            Siguiente <ChevronRight size={14} />
+          </button>
+        </div>
+      )}
+      <div className="mb-4 rounded-xl border border-slate-100 p-3 dark:border-slate-800">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Saldo actual</p>
+        <p className="mt-1 text-lg font-bold tabular-nums text-slate-800 dark:text-white">{fmt(Number(account.current_balance))}</p>
+      </div>
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Movimientos</p>
+      {loading ? (
+        <p className="py-6 text-center text-sm text-slate-400">Cargando...</p>
+      ) : movements.length === 0 ? (
+        <p className="py-6 text-center text-sm text-slate-400">Todavía no hay movimientos en esta cuenta.</p>
+      ) : (
+        <div className="max-h-96 divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+          {movements.map((m) => (
+            <div key={m.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-slate-700 dark:text-slate-200">{m.description}</p>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${ACCOUNT_MOVEMENT_TYPES[m.type]}`}>{m.type}</span>
+                  <span className="text-xs text-slate-400">{m.date}</span>
+                </div>
+              </div>
+              <p className={`shrink-0 font-semibold ${m.amount >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-slate-700 dark:text-slate-200"}`}>
+                {m.amount >= 0 ? "+" : ""}{fmt(m.amount)}
+              </p>
+            </div>
+          ))}
+        </div>
       )}
     </ModalShell>
   );
