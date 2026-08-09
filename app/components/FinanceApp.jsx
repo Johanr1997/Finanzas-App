@@ -624,9 +624,22 @@ const INPUT_CLASS = "w-full rounded-lg border border-slate-200 bg-white px-3 py-
 /* ---------------------------------------------------------------
    PRIMITIVES
 ------------------------------------------------------------------ */
-function Card({ children, className = "" }) {
+// `hoverable` (2026-08-09, a pedido del usuario: "podemos darle un poco de
+// sombra y hover a todas las cosas de la app?") -- opt-in a propósito, NO es
+// el comportamiento por defecto: se activa solo en las tarjetas que
+// representan un registro con acciones reales encima (editar/borrar, "Ver
+// cuotas", etc.), nunca en tarjetas puramente informativas (gráficos,
+// resúmenes, "Saldo disponible") -- ahí un hover que no lleva a ningún lado
+// solo generaría ruido visual, mismo criterio que se acordó con el usuario.
+function Card({ children, className = "", hoverable = false }) {
   return (
-    <div className={`rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none transition-colors ${className}`}>
+    <div
+      className={`rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-16px_rgba(15,23,42,0.12)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none ${
+        hoverable
+          ? "transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_4px_14px_rgba(15,23,42,0.08),0_20px_36px_-18px_rgba(15,23,42,0.22)] dark:hover:shadow-[0_20px_36px_-18px_rgba(0,0,0,0.65)]"
+          : "transition-colors"
+      } ${className}`}
+    >
       {children}
     </div>
   );
@@ -746,7 +759,7 @@ function CollapsibleSection({ open, onToggle, header, buttonClassName, children 
       <button
         type="button"
         onClick={onToggle}
-        className={buttonClassName || "flex w-full items-center justify-between gap-2 text-left"}
+        className={`transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${buttonClassName || "flex w-full items-center justify-between gap-2 text-left"}`}
       >
         {header}
         <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
@@ -999,7 +1012,7 @@ function ConfirmDeleteModal({ title, message, onCancel, onConfirm }) {
             type="button"
             onClick={onCancel}
             disabled={deleting}
-            className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 transition-shadow hover:bg-slate-50 hover:shadow-sm disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             Cancelar
           </button>
@@ -1007,7 +1020,7 @@ function ConfirmDeleteModal({ title, message, onCancel, onConfirm }) {
             type="button"
             onClick={handleConfirm}
             disabled={deleting}
-            className="flex-1 rounded-lg bg-red-500 py-2.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50"
+            className="flex-1 rounded-lg bg-red-500 py-2.5 text-sm font-medium text-white transition-shadow hover:bg-red-600 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none"
           >
             {deleting ? "Eliminando..." : "Eliminar"}
           </button>
@@ -2214,7 +2227,7 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
     || BANKS[BANKS.length - 1];
   return (
     <div
-      className={`group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6 ${onViewDetail ? "cursor-pointer" : ""}`}
+      className={`group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6 ${onViewDetail ? "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-slate-900/25" : ""}`}
       style={{ backgroundImage: `linear-gradient(135deg, ${bank.from}, ${bank.to})` }}
       onClick={onViewDetail || undefined}
       role={onViewDetail ? "button" : undefined}
@@ -2561,13 +2574,13 @@ function AccountCardBlock({ item, view, fmt, onEdit, onDelete, onPay, onViewDeta
         <div className="mt-2 grid grid-cols-2 gap-2">
           <button
             onClick={() => onPay(item)}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Landmark size={13} /> Registrar pago
           </button>
           <button
             onClick={() => onViewDetail(item)}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Receipt size={13} /> Detalle
           </button>
@@ -2579,7 +2592,7 @@ function AccountCardBlock({ item, view, fmt, onEdit, onDelete, onPay, onViewDeta
         <div className="mt-2">
           <button
             onClick={() => onViewDetail(item)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Receipt size={13} /> Detalle
           </button>
@@ -2710,7 +2723,7 @@ function AccountModal({ account, onClose, onSaved }) {
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
           <button
             type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
           >
             {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear cuenta"}
           </button>
@@ -3663,7 +3676,7 @@ function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
         // datos para estimarlo (forecast.status === "ok").
         const daysToGoal = forecast.status === "ok" ? Math.max(1, daysBetweenDateStrings(localDateString(), forecast.targetDate)) : null;
         return (
-          <Card key={g.id} className="p-5">
+          <Card key={g.id} className="p-5" hoverable>
             <div className="flex items-start justify-between gap-2">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: `${g.color}1a`, color: g.color }}>
@@ -3700,7 +3713,7 @@ function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 onClick={() => setAdjustingGoal({ goal: g, mode: "depositar" })}
-                className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold text-white transition-all hover:opacity-90 hover:shadow-md"
                 style={{ backgroundColor: g.color }}
               >
                 <ArrowUp size={13} /> Depositar
@@ -3708,7 +3721,7 @@ function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
               <button
                 onClick={() => setAdjustingGoal({ goal: g, mode: "retirar" })}
                 disabled={Number(g.current_amount) <= 0}
-                className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all hover:opacity-90 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:shadow-none"
                 style={{ backgroundColor: `${g.color}1a`, color: g.color }}
               >
                 <ArrowDown size={13} /> Retirar
@@ -3722,7 +3735,7 @@ function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
             <div className="mt-3">
               <button
                 onClick={() => setViewingContributionsGoal(g)}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 Ver aportes
               </button>
@@ -3732,7 +3745,7 @@ function GoalsView({ fmt, yearData, month, accounts, refetchAccounts }) {
       })}
       <button
         onClick={() => setShowModal(true)}
-        className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        className="flex min-h-[152px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-all hover:border-slate-300 hover:text-slate-500 hover:shadow-sm dark:border-slate-700 dark:hover:border-slate-600"
       >
         <Plus size={20} />
         <span className="text-sm font-medium">Crear nueva meta</span>
@@ -4094,7 +4107,7 @@ function GoalModal({ goal, initialValues, onClose, onSaved }) {
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
           <button
             type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
           >
             {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear meta"}
           </button>
@@ -4263,7 +4276,7 @@ function IncomesView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           tarjeta de "Ingresos en {mes}". */}
       <button
         onClick={() => setShowModal(true)}
-        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-all hover:border-slate-300 hover:text-slate-500 hover:shadow-sm dark:border-slate-700 dark:hover:border-slate-600"
       >
         <Plus size={20} />
         <span className="text-sm font-medium">Agregar ingreso</span>
@@ -4283,7 +4296,7 @@ function IncomesView({ fmt, onDataChanged, year, month, accounts, refetchAccount
               {recurring.map((r) => {
                 const isQuincenal = r.frequency === "quincenal";
                 return (
-                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-slate-900/5 dark:border-slate-800 dark:hover:shadow-black/30">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
                         <Repeat size={16} />
@@ -4339,7 +4352,7 @@ function IncomesView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           )
         )}
         {filteredIncomes.map((i) => (
-          <Card key={i.id} className="p-5">
+          <Card key={i.id} className="p-5" hoverable>
             <div className="flex items-start justify-between gap-2">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10">
@@ -4545,7 +4558,7 @@ function IncomeModal({ income, types, accounts, onClose, onSaved, onTypesChanged
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar ingreso"}
         </button>
@@ -4684,7 +4697,7 @@ function RecurringIncomeModal({ item, types, accounts, onClose, onSaved, onTypes
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear ingreso fijo"}
         </button>
@@ -4741,7 +4754,7 @@ function IncomeTypesManagerModal({ types, onClose, onChanged }) {
         ) : (
           <div className="max-h-[40vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {sortedTypes.map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+              <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
                 <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{t.name}</p>
                 <RowActions onEdit={() => setEditingType(t)} onDelete={() => setDeletingType(t)} />
               </div>
@@ -4751,7 +4764,7 @@ function IncomeTypesManagerModal({ types, onClose, onChanged }) {
         <button
           type="button"
           onClick={() => setShowTypeModal(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
         >
           <Plus size={15} /> Agregar tipo
         </button>
@@ -4808,7 +4821,7 @@ function IncomeTypeModal({ type, onClose, onSaved }) {
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tipo"}
         </button>
@@ -5203,7 +5216,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
     const unpaid = planUnpaidCount(paymentOverrides, p.id);
     const saldoPendiente = planSaldoPendiente(p, paymentOverrides, year, month);
     return (
-      <div key={p.id} className="rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+      <div key={p.id} className="rounded-xl border border-slate-100 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-slate-900/5 dark:border-slate-800 dark:hover:shadow-black/30">
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">
             <div
@@ -5312,7 +5325,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           ahora ocupa el ancho completo. */}
       <button
         onClick={() => setShowModal(true)}
-        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-all hover:border-slate-300 hover:text-slate-500 hover:shadow-sm dark:border-slate-700 dark:hover:border-slate-600"
       >
         <Plus size={20} />
         <span className="text-sm font-medium">Agregar gasto</span>
@@ -5344,7 +5357,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
                       const color = r.categories?.color || "#64748B";
                       const isQuincenal = r.frequency === "quincenal";
                       return (
-                        <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+                        <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-slate-900/5 dark:border-slate-800 dark:hover:shadow-black/30">
                           <div className="flex min-w-0 items-center gap-3">
                             <div
                               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
@@ -5434,7 +5447,7 @@ function ExpensesView({ fmt, onDataChanged, year, month, categories, cards, refe
           </div>
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {filteredExpenses.map((e) => (
-              <div key={e.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm">
+              <div key={e.id} className="flex items-center justify-between gap-2 px-5 py-3 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
                 <div className="flex min-w-0 items-center gap-3">
                   <div
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold"
@@ -5762,7 +5775,7 @@ function ExpenseModal({ categories, cards, items, expense, accounts, onClose, on
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar gasto"}
         </button>
@@ -5952,7 +5965,7 @@ function ExpenseItemsManagerModal({ categories, items, onClose, onChanged }) {
         ) : (
           <div className="max-h-[40vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {itemsForCategory.map((it) => (
-              <div key={it.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+              <div key={it.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
                 <p className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">{it.name}</p>
                 <RowActions onEdit={() => setEditingItem(it)} onDelete={() => setDeletingItem(it)} />
               </div>
@@ -5962,7 +5975,7 @@ function ExpenseItemsManagerModal({ categories, items, onClose, onChanged }) {
         <button
           type="button"
           onClick={() => setShowItemModal(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
         >
           <Plus size={15} /> Agregar artículo
         </button>
@@ -6019,7 +6032,7 @@ function ExpenseItemModal({ categoryId, item, onClose, onSaved }) {
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar artículo"}
         </button>
@@ -6192,7 +6205,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear tarjeta"}
         </button>
@@ -6250,7 +6263,7 @@ function ExchangeRateModal({ currentRate, onClose, onSaved }) {
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : "Guardar"}
         </button>
@@ -6326,7 +6339,7 @@ function CardPaymentModal({ card, accounts, onClose, onSaved }) {
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : "Registrar pago"}
         </button>
@@ -6689,7 +6702,7 @@ function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, on
                 <button
                   type="button"
                   onClick={() => setViewingPlanPayments(p)}
-                  className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   Ver cuotas
                 </button>
@@ -6951,7 +6964,7 @@ function TransferModal({ accounts, onClose, onSaved }) {
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Transfiriendo..." : "Transferir"}
         </button>
@@ -7095,7 +7108,7 @@ function PlanModal({ categories, cards, plan, initialValues, onClose, onSaved })
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear plan de pago"}
         </button>
@@ -7253,7 +7266,7 @@ function RecurringExpenseModal({ categories, cards, accounts, item, onClose, onS
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear gasto fijo"}
         </button>
@@ -7405,7 +7418,7 @@ function SavingsTypeGoalCard({ type, currentTotal, fmt, onDeposit, onWithdraw, o
   const pct = target > 0 ? Math.min(100, Math.round((currentTotal / target) * 100)) : 0;
   const color = SAVINGS_TYPE_GOAL_COLOR;
   return (
-    <Card className="p-5">
+    <Card className="p-5" hoverable>
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: `${color}1a`, color }}>
@@ -7726,7 +7739,7 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           completo. */}
       <button
         onClick={() => setShowModal(true)}
-        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-500 dark:border-slate-700 dark:hover:border-slate-600"
+        className="flex min-h-[152px] w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 transition-all hover:border-slate-300 hover:text-slate-500 hover:shadow-sm dark:border-slate-700 dark:hover:border-slate-600"
       >
         <Plus size={20} />
         <span className="text-sm font-medium">Agregar ahorro libre</span>
@@ -7819,7 +7832,7 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
           )
         )}
         {filteredSavings.map((s) => (
-          <Card key={s.id} className="p-5">
+          <Card key={s.id} className="p-5" hoverable>
             <div className="flex items-start justify-between gap-2">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-500/10">
@@ -8152,7 +8165,7 @@ function SavingModal({ saving: savingRecord, types, goals, accounts, onClose, on
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar ahorro"}
         </button>
@@ -8208,7 +8221,7 @@ function SavingsTypesManagerModal({ types, onClose, onChanged }) {
         ) : (
           <div className="max-h-[40vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
             {sortedTypes.map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+              <div key={t.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60">
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium text-slate-700 dark:text-slate-200">{t.name}</p>
                   {t.target_amount != null && (
@@ -8223,7 +8236,7 @@ function SavingsTypesManagerModal({ types, onClose, onChanged }) {
         <button
           type="button"
           onClick={() => setShowTypeModal(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-slate-500 transition-shadow hover:bg-slate-50 hover:shadow-sm dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
         >
           <Plus size={15} /> Agregar tipo
         </button>
@@ -8302,7 +8315,7 @@ function SavingsTypeModal({ type, onClose, onSaved }) {
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
-          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Agregar tipo"}
         </button>
@@ -8439,7 +8452,7 @@ function BudgetsView({ fmt, year, month, categories }) {
           const barColor = over ? "bg-red-500" : near ? "bg-amber-400" : "bg-emerald-500";
           const pctColor = over ? "text-red-500" : near ? "text-amber-500" : "text-emerald-600";
           return (
-            <div key={category.id} className="flex items-center gap-3 px-4 py-3 sm:px-5">
+            <div key={category.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 sm:px-5">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold" style={{ backgroundColor: `${color}1a`, color }}>
                 {category.name.charAt(0)}
               </div>
@@ -8689,7 +8702,7 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
           {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
           <button
             type="submit" disabled={saving}
-            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-all hover:bg-slate-700 hover:shadow-md disabled:opacity-50 disabled:hover:shadow-none dark:bg-white dark:text-slate-900"
           >
             {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Definir presupuesto"}
           </button>
@@ -9046,8 +9059,8 @@ export default function FinanceApp() {
                   <button
                     key={t.id}
                     onClick={() => setTab(t.id)}
-                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                      active ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
+                      active ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "text-slate-500 hover:bg-slate-100 hover:shadow-sm dark:text-slate-400 dark:hover:bg-slate-800"
                     }`}
                   >
                     <Icon size={14} /> {t.label}
@@ -9065,13 +9078,13 @@ export default function FinanceApp() {
               <button
                 onClick={() => setShowDeleteAllModal(true)}
                 title="Eliminar toda mi información"
-                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 hover:border-red-200 hover:bg-red-50 hover:text-red-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-red-500/30 dark:hover:bg-red-500/10"
+                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 transition-shadow hover:border-red-200 hover:bg-red-50 hover:text-red-500 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-red-500/30 dark:hover:bg-red-500/10"
               >
                 <Trash2 size={15} />
               </button>
               <button
                 onClick={handleLogout}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 transition-shadow hover:bg-slate-100 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
               >
                 Salir
               </button>
