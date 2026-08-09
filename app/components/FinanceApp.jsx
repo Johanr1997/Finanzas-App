@@ -1259,12 +1259,14 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
     const [
       { data: sav, error: savErr },
       { data: pl, error: plErr },
+      { data: ov, error: ovErr },
     ] = await Promise.all([
       supabase.from("savings").select("amount, date"),
       supabase.from("installment_plans").select("*, credit_cards(name, cutoff_day, payment_day)"),
+      supabase.from("installment_payment_status").select("*"),
     ]);
-    setPatrimonioError(Boolean(savErr || plErr));
-    setPatrimonioRaw({ savings: sav || [], plans: pl || [] });
+    setPatrimonioError(Boolean(savErr || plErr || ovErr));
+    setPatrimonioRaw({ savings: sav || [], plans: pl || [], overrides: ov || [] });
   }
   useEffect(() => {
     refetchPatrimonioRaw();
@@ -1306,22 +1308,27 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   useEffect(() => {
     refetchExchangeRate();
   }, []);
-  // Cuotas de planes de pago vinculados a una tarjeta (2026-08-08, a pedido
-  // del usuario -- antes esto era una limitación conocida, ya no). Reusa
-  // patrimonioRaw.plans (que ya se carga para el cálculo de patrimonio, con
-  // TODOS los planes, no solo los de una tarjeta) en vez de pedirlo de
-  // nuevo. Para cada plan con card_id, suma lo que ya se le ha "cargado" a
-  // la tarjeta hasta hoy: cuotas ya cumplidas (planElapsedMonths, con la
-  // fecha real de hoy, igual que "Próximos compromisos") × el monto de cada
-  // cuota -- las cuotas futuras todavía no se han cobrado, así que no
-  // cuentan como deuda todavía.
+  // Cuotas de planes de pago vinculados a una tarjeta (2026-08-08, corregido
+  // el 2026-08-09 -- a pedido del usuario: "cuando uno compra algo a plazos
+  // el monto total se rebaja del disponible de una vez, no según pasan los
+  // meses"). Antes esto sumaba solo las cuotas ya "cumplidas" (un modelo que
+  // va CRECIENDO desde 0 hasta el total, mes a mes) -- pero así no funciona
+  // una tarjeta real: al comprar algo a plazos, el banco reserva de una vez
+  // el monto total contra el límite, y ese monto reservado va BAJANDO según
+  // se van pagando las cuotas (planSaldoPendiente, la misma función que ya
+  // usa "patrimonio neto" más abajo, y que ya usa el propio checklist "Ver
+  // cuotas" de Gastos para las marcadas manualmente como no pagadas). Reusa
+  // patrimonioRaw.plans/overrides (que ya se cargan para el cálculo de
+  // patrimonio, con TODOS los planes, no solo los de una tarjeta) en vez de
+  // pedirlo de nuevo. Usa la fecha real de hoy (sin year/month), igual que
+  // "Ver cuotas".
   const planChargesByCard = useMemo(() => {
     const plans = patrimonioRaw?.plans || [];
+    const overrides = patrimonioRaw?.overrides || [];
     const map = {};
     plans.forEach((p) => {
       if (!p.card_id) return;
-      const elapsed = planElapsedMonths(p);
-      map[p.card_id] = (map[p.card_id] || 0) + elapsed * Number(p.monthly_amount);
+      map[p.card_id] = (map[p.card_id] || 0) + planSaldoPendiente(p, overrides);
     });
     return map;
   }, [patrimonioRaw]);
@@ -1555,7 +1562,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   // anterior" funciona bien incluso cruzando de diciembre a enero.
   const patrimonio = useMemo(() => {
     if (!patrimonioRaw) return null;
-    const { savings, plans } = patrimonioRaw;
+    const { savings, plans, overrides } = patrimonioRaw;
     // Las cuentas (Fase 2) solo tienen un saldo de "ahora", no un histórico
     // por fecha como los ahorros -- así que se suman igual sin importar qué
     // mes se esté viendo. Esto no distorsiona la comparación "vs. mes
@@ -1571,7 +1578,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
       const cutoff = endOfMonthStr(y, m);
       return savings.filter((s) => s.date <= cutoff).reduce((a, s) => a + Number(s.amount), 0);
     };
-    const pasivosHasta = (y, m) => plans.reduce((a, p) => a + planSaldoPendiente(p, [], y, m), 0);
+    const pasivosHasta = (y, m) => plans.reduce((a, p) => a + planSaldoPendiente(p, overrides || [], y, m), 0);
     const prevY = month === 0 ? year - 1 : year;
     const prevM = month === 0 ? 11 : month - 1;
     const activos = totalCuentas + ahorrosHasta(year, month);
@@ -2130,6 +2137,7 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           onSwitchCard={setViewingCardDetail}
           onMark={markRecurringExpensePaid}
           onUnmark={unmarkRecurringExpensePaid}
+          onPlanStatusChanged={refetchPatrimonioRaw}
         />
       )}
       {viewingAccountDetail && (
@@ -6442,7 +6450,7 @@ const CARD_MOVEMENT_TYPES = {
 // de TODOS los movimientos (compras sueltas + cuotas de planes + gastos
 // fijos), y al final el mismo checklist de siempre. Las flechitas de arriba
 // cambian de tarjeta sin cerrar la ventana.
-function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, onClose, onSwitchCard, onMark, onUnmark, cardView, usdExchangeRate }) {
+function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, onClose, onSwitchCard, onMark, onUnmark, cardView, usdExchangeRate, onPlanStatusChanged }) {
   const cardIndex = (cards || []).findIndex((c) => c.id === card.id);
   function switchTo(offset) {
     if (!cards || cards.length <= 1) return;
@@ -6650,13 +6658,19 @@ function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, on
       )}
       {/* Planes de pago · estado de cuotas (2026-08-09, a pedido del
           usuario: "así como los gastos fijos con la tarjeta de crédito,
-          puedes hacer también con los planes de pago?") -- a diferencia de
-          los gastos fijos de arriba, esto NO tiene su propio checkbox: reusa
-          "Ver cuotas" (PlanPaymentsModal), el mismo que ya existe en Gastos,
-          para no tener dos lugares distintos marcando lo mismo. */}
+          puedes hacer también con los planes de pago?", corregido el mismo
+          día: "cuando uno compra algo a plazos el monto total se rebaja del
+          disponible de una vez") -- a diferencia de los gastos fijos de
+          arriba, esto NO tiene su propio checkbox: reusa "Ver cuotas"
+          (PlanPaymentsModal), el mismo que ya existe en Gastos, para no
+          tener dos lugares distintos marcando lo mismo. A diferencia de la
+          primera versión de esta sección, esto YA NO es solo informativo:
+          marcar una cuota como pagada/no pagada aquí SÍ cambia el saldo
+          pendiente del plan (planSaldoPendiente) y por lo tanto la deuda y
+          el disponible de la tarjeta. */}
       <p className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">Planes de pago · estado de cuotas</p>
       <p className="mb-4 -mt-2 text-xs text-slate-400">
-        Cada cuota se suma sola a la deuda de la tarjeta cuando pasa su mes. Este estado es solo informativo (el mismo de "Ver cuotas" en Gastos) y no cambia ese cálculo.
+        Al comprar algo a plazos, el monto total se reserva de una vez contra el disponible de la tarjeta, y baja según se van pagando las cuotas -- el mismo estado de "Ver cuotas" en Gastos.
       </p>
       {cardPlans.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-400">Todavía no tienes planes de pago ligados a esta tarjeta.</p>
@@ -6690,7 +6704,15 @@ function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, on
           overrides={planOverrides}
           fmt={fmt}
           onClose={() => setViewingPlanPayments(null)}
-          onChanged={refetchPlanOverrides}
+          onChanged={() => {
+            // Refresca tanto el estado local (para las etiquetas "Al día"/
+            // "N cuotas no pagadas" de esta lista) como patrimonioRaw en
+            // Dashboard (para que planChargesByCard, y con eso "Debes"/
+            // "Disponible" de la tarjeta, reflejen el cambio de una vez, sin
+            // tener que cerrar y volver a abrir el detalle de la tarjeta).
+            refetchPlanOverrides();
+            if (onPlanStatusChanged) onPlanStatusChanged();
+          }}
         />
       )}
     </ModalShell>
