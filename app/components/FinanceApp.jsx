@@ -12,7 +12,7 @@ import {
   ShoppingBag, Repeat, MoreHorizontal, Sparkles, Check, Trash2,
   Calendar, Bell, ArrowUpRight, ArrowDownRight, Settings2, Globe,
   Pencil, Coins, AlertTriangle, CreditCard, Landmark, Tag, CalendarRange,
-  Minus, Clock, Wifi, Receipt, ArrowUp, ArrowDown, Calculator,
+  Minus, Clock, Wifi, Receipt, ArrowUp, ArrowDown, Calculator, RefreshCw,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 /* ---------------------------------------------------------------
@@ -126,6 +126,20 @@ const CURRENCIES = {
   USD: { symbol: "$", rate: 1 / 520, locale: "en-US" },
   EUR: { symbol: "€", rate: 1 / 560, locale: "es-ES" },
 };
+// Formato en dólares, SIEMPRE en dólares sin importar el selector de moneda
+// de arriba (2026-08-09, a pedido del usuario, para el límite/disponible de
+// tarjetas de crédito en dólares) -- a diferencia de `fmt` (que respeta lo
+// que la persona eligió ver en toda la app), esto es específico para montos
+// que de verdad viven en dólares en la vida real (el límite de la tarjeta),
+// no una conversión de exhibición.
+function fmtUSD(n) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(n) || 0);
+}
+// Tipo de cambio por defecto (2026-08-09) cuando todavía no se ha guardado
+// ninguno en `app_settings` -- el usuario puede editarlo desde el botón de
+// "Tipo de cambio" en Tus cuentas. No se actualiza solo (no hay integración
+// con el Banco Central todavía, ver ExchangeRateModal).
+const DEFAULT_USD_RATE = 454;
 // Un presupuesto puede ser "por defecto" (year=0, month=0 → aplica a todos
 // los meses) o "específico" de un mes puntual (year real, month 1-12). A
 // partir de todas las filas de "budgets" de una categoría, esto resuelve
@@ -1276,6 +1290,22 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
   useEffect(() => {
     refetchCardCharges();
   }, []);
+  // Tipo de cambio dólar-colón (2026-08-09, a pedido del usuario -- las
+  // tarjetas de crédito con límite en dólares lo usan para calcular cuánto
+  // de ese límite queda disponible a partir de la deuda, que se guarda en
+  // colones). Se guarda en `app_settings` (una fila por usuario) para que
+  // sea el mismo número en cualquier dispositivo, no algo local del
+  // navegador. Si todavía no hay fila guardada, se usa DEFAULT_USD_RATE
+  // (454, el que dio el usuario) sin escribir nada hasta que lo edite.
+  const [usdExchangeRate, setUsdExchangeRate] = useState(DEFAULT_USD_RATE);
+  const [showExchangeRateModal, setShowExchangeRateModal] = useState(false);
+  async function refetchExchangeRate() {
+    const { data } = await supabase.from("app_settings").select("usd_exchange_rate").maybeSingle();
+    if (data?.usd_exchange_rate) setUsdExchangeRate(Number(data.usd_exchange_rate));
+  }
+  useEffect(() => {
+    refetchExchangeRate();
+  }, []);
   // Cuotas de planes de pago vinculados a una tarjeta (2026-08-08, a pedido
   // del usuario -- antes esto era una limitación conocida, ya no). Reusa
   // patrimonioRaw.plans (que ya se carga para el cálculo de patrimonio, con
@@ -1392,14 +1422,25 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
       kind: "cuenta", id: a.id, data: a,
       balance: Number(a.current_balance),
     }));
-    const cardItems = cards.map((c) => ({
-      kind: "tarjeta",
-      id: c.id,
-      data: c,
-      balance: Number(c.initial_balance || 0) + (cardCharges[c.id] || 0) + (planChargesByCard[c.id] || 0) + (recurringChargesByCard[c.id] || 0),
-    }));
+    const cardItems = cards.map((c) => {
+      const debtColones = Number(c.initial_balance || 0) + (cardCharges[c.id] || 0) + (planChargesByCard[c.id] || 0) + (recurringChargesByCard[c.id] || 0);
+      // Disponible en dólares (2026-08-09, a pedido del usuario): solo para
+      // tarjetas con límite en dólares guardado -- límite menos la deuda
+      // (que se guarda en colones) convertida a dólares con el tipo de
+      // cambio de arriba.
+      const creditLimitUsd = c.credit_limit_usd != null ? Number(c.credit_limit_usd) : null;
+      const availableUsd = creditLimitUsd != null ? creditLimitUsd - debtColones / usdExchangeRate : null;
+      return {
+        kind: "tarjeta",
+        id: c.id,
+        data: c,
+        balance: debtColones,
+        creditLimitUsd,
+        availableUsd,
+      };
+    });
     return [...accountItems, ...cardItems];
-  }, [accounts, cards, cardCharges, planChargesByCard, recurringChargesByCard]);
+  }, [accounts, cards, cardCharges, planChargesByCard, recurringChargesByCard, usdExchangeRate]);
   const totals = useMemo(() => {
     const ingresos = yearData.reduce((a, m) => a + m.ingresoTotal, 0);
     const gastos = yearData.reduce((a, m) => a + m.gastoTotal, 0);
@@ -1711,6 +1752,17 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
             >
               <Plus size={13} /> Tarjeta
             </button>
+            {/* Tipo de cambio (2026-08-09, a pedido del usuario): solo se
+                muestra si ya hay al menos una tarjeta con límite en dólares
+                -- no tiene sentido antes de eso. */}
+            {cards.some((c) => c.credit_limit_usd != null) && (
+              <button
+                onClick={() => setShowExchangeRateModal(true)}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                <RefreshCw size={13} /> ₡{usdExchangeRate} = $1
+              </button>
+            )}
           </div>
         </div>
         {accountCarouselItems.length === 0 ? (
@@ -2037,6 +2089,13 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
           onSaved={() => { if (refetchCards) refetchCards(); refetchCardCharges(); }}
         />
       )}
+      {showExchangeRateModal && (
+        <ExchangeRateModal
+          currentRate={usdExchangeRate}
+          onClose={() => setShowExchangeRateModal(false)}
+          onSaved={(value) => setUsdExchangeRate(value)}
+        />
+      )}
       {deletingCard && (
         <ConfirmDeleteModal
           title="Eliminar tarjeta"
@@ -2056,6 +2115,8 @@ function Dashboard({ fmt, onSelectMonth, yearData, year, month, categories = [],
       {viewingCardDetail && (
         <CardDetailModal
           card={viewingCardDetail}
+          cardView={accountCarouselItems.find((it) => it.kind === "tarjeta" && it.id === viewingCardDetail.id)}
+          usdExchangeRate={usdExchangeRate}
           cards={cards}
           plans={patrimonioRaw?.plans || []}
           recurringExpenses={recurringRaw.expenses}
@@ -2100,6 +2161,7 @@ function toCardView(item) {
     return {
       name: c.name, type: "Tarjeta de crédito", bank: c.bank, network: c.network, last4: c.last4, balance: item.balance,
       colorFrom: c.color_from, colorTo: c.color_to,
+      creditLimitUsd: item.creditLimitUsd, availableUsd: item.availableUsd,
     };
   }
   const a = item.data;
@@ -2172,7 +2234,13 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
       </div>
       <div className="relative flex items-start justify-between gap-3 pr-14">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">{isCard ? "Debes actualmente" : "Saldo actual"}</p>
+          {/* Tarjetas con límite en dólares (2026-08-09, a pedido del
+              usuario): el número grande pasa a ser "Disponible" en dólares
+              en vez de "Debes actualmente" en colones -- el detalle en
+              ambas monedas se ve al hacer clic (CardDetailModal). */}
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/70">
+            {isCard ? (view.creditLimitUsd != null ? "Disponible" : "Debes actualmente") : "Saldo actual"}
+          </p>
           {/* "font-bold" en vez de "font-extrabold" (2026-08-08, reportado
               por el usuario en Safari): con el peso 800 de la fuente
               variable, al refrescar la página los dígitos a veces se veían
@@ -2183,8 +2251,11 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
               también "tabular-nums" (no lo tenía) para que los dígitos no
               salten de ancho al cambiar de tarjeta. */}
           <p className="mt-1 truncate text-[32px] font-bold leading-tight tracking-tight tabular-nums text-white sm:text-[36px]">
-            {fmt(view.balance)}
+            {isCard && view.creditLimitUsd != null ? fmtUSD(view.availableUsd) : fmt(view.balance)}
           </p>
+          {isCard && view.creditLimitUsd != null && (
+            <p className="mt-0.5 text-xs text-white/60">Debes {fmt(view.balance)}</p>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">{view.bank || "Otro"}</p>
@@ -5925,6 +5996,13 @@ function CreditCardModal({ card, onClose, onSaved }) {
   const [cutoffDay, setCutoffDay] = useState(card ? String(card.cutoff_day) : "");
   const [paymentDay, setPaymentDay] = useState(card ? String(card.payment_day) : "");
   const [initialBalance, setInitialBalance] = useState(card ? String(card.initial_balance || 0) : "0");
+  // Límite de crédito en dólares (2026-08-09, a pedido del usuario, solo
+  // para tarjetas -- las cuentas normales no lo tienen). Opcional: si se
+  // deja vacío, la tarjeta se sigue viendo igual que siempre ("Debes
+  // actualmente" en colones). Si se pone un límite, la tarjeta pasa a
+  // mostrar "Disponible" en dólares (ver AccountCard/CardDetailModal), con
+  // el tipo de cambio que se configura desde "Tipo de cambio" en Tus cuentas.
+  const [creditLimitUsd, setCreditLimitUsd] = useState(card?.credit_limit_usd != null ? String(card.credit_limit_usd) : "");
   // Color de la tarjeta, elegido a mano (2026-08-08, a pedido del usuario)
   // -- ver el mismo comentario en AccountModal. Para tarjeta de crédito,
   // el color "de fábrica" respeta el dorado especial de BN.
@@ -5954,6 +6032,7 @@ function CreditCardModal({ card, onClose, onSaved }) {
       cutoff_day: cutoff,
       payment_day: payment,
       initial_balance: Number(initialBalance) || 0,
+      credit_limit_usd: creditLimitUsd !== "" ? Number(creditLimitUsd) : null,
       color_from: color,
       color_to: darkenHex(color),
     };
@@ -6056,12 +6135,75 @@ function CreditCardModal({ card, onClose, onSaved }) {
           <input type="number" value={initialBalance} onChange={(e) => setInitialBalance(e.target.value)} placeholder="0" className={`mt-1 ${INPUT_CLASS}`} />
           <p className="mt-1 text-xs text-slate-400">Si ya debías algo en esta tarjeta antes de empezar a usarla acá, ponlo aquí -- de ahí en adelante, la deuda se calcula sola con lo que le cargues y lo que le pagues.</p>
         </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Límite de crédito en dólares (opcional)</label>
+          <input type="number" value={creditLimitUsd} onChange={(e) => setCreditLimitUsd(e.target.value)} placeholder="Ej. 4000" className={`mt-1 ${INPUT_CLASS}`} />
+          <p className="mt-1 text-xs text-slate-400">Si tu tarjeta tiene un límite en dólares, ponlo aquí -- la tarjeta pasa a mostrar "Disponible" en dólares en vez de lo que debes en colones, usando el tipo de cambio que configures en "Tipo de cambio" (Tus cuentas).</p>
+        </div>
         {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         <button
           type="submit" disabled={saving}
           className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
         >
           {saving ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear tarjeta"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+// Modal para editar el tipo de cambio dólar-colón (2026-08-09, a pedido del
+// usuario, para las tarjetas con límite en dólares). Se guarda en
+// `app_settings` (una fila por usuario, con `unique(user_id)` para que este
+// upsert funcione). No se actualiza solo con el Banco Central -- eso
+// requeriría un servicio aparte (su API de indicadores económicos es SOAP,
+// pide un token por correo y no se puede llamar directo desde el navegador
+// por CORS), así que por ahora es un número que la persona edita a mano
+// cuando quiera.
+function ExchangeRateModal({ currentRate, onClose, onSaved }) {
+  const [rate, setRate] = useState(String(currentRate));
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const value = Number(rate);
+    if (!value || value <= 0) {
+      setErrorMsg("Ingresa un tipo de cambio válido.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    const { error } = await supabase.from("app_settings").upsert(
+      { user_id: userId || null, usd_exchange_rate: value },
+      { onConflict: "user_id" }
+    );
+    setSaving(false);
+    if (error) {
+      setErrorMsg("Error al guardar: " + error.message);
+    } else {
+      onSaved(value);
+      onClose();
+    }
+  }
+  return (
+    <ModalShell onClose={onClose} title="Tipo de cambio">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">¿Cuántos colones vale 1 dólar?</label>
+          <input
+            type="number" value={rate} onChange={(e) => setRate(e.target.value)}
+            placeholder="454" autoFocus
+            className={`mt-1 ${INPUT_CLASS}`}
+          />
+          <p className="mt-1.5 text-xs text-slate-400">Se usa para calcular el disponible en dólares de tus tarjetas con límite en dólares. Actualízalo cuando quieras -- no se actualiza solo.</p>
+        </div>
+        {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+        <button
+          type="submit" disabled={saving}
+          className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+        >
+          {saving ? "Guardando..." : "Guardar"}
         </button>
       </form>
     </ModalShell>
@@ -6259,7 +6401,7 @@ const CARD_MOVEMENT_TYPES = {
 // de TODOS los movimientos (compras sueltas + cuotas de planes + gastos
 // fijos), y al final el mismo checklist de siempre. Las flechitas de arriba
 // cambian de tarjeta sin cerrar la ventana.
-function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, onClose, onSwitchCard, onMark, onUnmark }) {
+function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, onClose, onSwitchCard, onMark, onUnmark, cardView, usdExchangeRate }) {
   const cardIndex = (cards || []).findIndex((c) => c.id === card.id);
   function switchTo(offset) {
     if (!cards || cards.length <= 1) return;
@@ -6378,6 +6520,29 @@ function CardDetailModal({ card, cards, plans, recurringExpenses, marks, fmt, on
           >
             Siguiente <ChevronRight size={14} />
           </button>
+        </div>
+      )}
+      {/* Resumen en dólares y colones (2026-08-09, a pedido del usuario:
+          "que se vea en dólares y colones") -- solo para tarjetas con
+          límite en dólares guardado. `cardView` viene de accountCarouselItems
+          en Dashboard, que ya calcula la deuda real de esta tarjeta. */}
+      {card.credit_limit_usd != null && cardView && (
+        <div className="mb-6 grid grid-cols-3 gap-2 rounded-xl border border-slate-100 p-3 dark:border-slate-800">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Límite</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800 dark:text-white">{fmtUSD(card.credit_limit_usd)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Debes</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800 dark:text-white">{fmt(cardView.balance)}</p>
+            <p className="text-[11px] text-slate-400">≈ {fmtUSD(cardView.balance / usdExchangeRate)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Disponible</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800 dark:text-white">{fmtUSD(cardView.availableUsd)}</p>
+            <p className="text-[11px] text-slate-400">≈ {fmt(cardView.availableUsd * usdExchangeRate)}</p>
+          </div>
+          <p className="col-span-3 mt-1 text-[11px] text-slate-400">Tipo de cambio usado: ₡{usdExchangeRate} = $1 (editable desde "Tipo de cambio" en Tus cuentas).</p>
         </div>
       )}
       {hasChartData && (
