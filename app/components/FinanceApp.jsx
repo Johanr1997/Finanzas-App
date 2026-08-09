@@ -2303,13 +2303,14 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
 }
 // Carrusel de cuentas y tarjetas (2026-08-08, a partir de una captura de
 // referencia, ajustado el mismo día a pedido del usuario). En escritorio se
-// ven 2 tarjetas a la vez, con flechitas a los lados -- YA NO se puede
-// arrastrar/deslizar con el mouse o el trackpad ahí (al usuario no le gustó
-// esa sensación). En celular se sigue viendo una tarjeta a la vez y SÍ se
-// puede deslizar con el dedo para cambiar, exactamente como hasta ahora.
+// ven 3 tarjetas a la vez (2026-08-09: eran 2, el usuario pidió 3 porque "2
+// hace que no se vea simétrico"), con flechitas a los lados -- YA NO se
+// puede arrastrar/deslizar con el mouse o el trackpad ahí (al usuario no le
+// gustó esa sensación). En celular se sigue viendo una tarjeta a la vez y SÍ
+// se puede deslizar con el dedo para cambiar, exactamente como hasta ahora.
 // Si solo hay una cuenta/tarjeta en total, no se muestran flechitas ni
-// puntos en ningún lado; en escritorio tampoco se muestran si hay
-// exactamente 2 (ya se ven las dos a la vez, no hay nada más que avanzar).
+// puntos en ningún lado; en escritorio tampoco se muestran si hay 3 o menos
+// en total (ya se ven todas a la vez, no hay nada más que avanzar).
 // Las tarjetas de crédito (kind === "tarjeta") además muestran un botón
 // "Registrar pago" debajo, para bajar su deuda.
 function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail }) {
@@ -2317,10 +2318,13 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
   const count = items.length;
   const safeIndex = count ? ((index % count) + count) % count : 0;
   const item = items[safeIndex];
-  // Segunda tarjeta visible en escritorio -- la siguiente en la lista, con
-  // wraparound (si hay 2 en total, es simplemente la otra).
+  // Segunda y tercera tarjeta visibles en escritorio (2026-08-09: antes eran
+  // 2 tarjetas, el usuario pidió 3 -- "2 hace que no se vea simétrico") --
+  // las dos siguientes en la lista, con wraparound.
   const secondIndex = count ? (safeIndex + 1) % count : 0;
   const secondItem = items[secondIndex];
+  const thirdIndex = count ? (safeIndex + 2) % count : 0;
+  const thirdItem = items[thirdIndex];
   function prev() {
     setIndex((i) => (i - 1 + count) % count);
   }
@@ -2426,6 +2430,7 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
   if (!item) return null;
   const view = toCardView(item);
   const secondView = secondItem ? toCardView(secondItem) : null;
+  const thirdView = thirdItem ? toCardView(thirdItem) : null;
   return (
     <div>
       {/* Celular: una tarjeta a la vez, se puede deslizar con el dedo. */}
@@ -2476,11 +2481,14 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
           </div>
         )}
       </div>
-      {/* Escritorio: dos tarjetas a la vez, solo con flechitas -- sin
-          deslizar/arrastrar (2026-08-08, a pedido del usuario). */}
+      {/* Escritorio: tres tarjetas a la vez, solo con flechitas -- sin
+          deslizar/arrastrar (2026-08-08, a pedido del usuario). Antes eran
+          2 tarjetas; se subió a 3 (2026-08-09, a pedido del usuario: "2 hace
+          que no se vea simétrico"). Las flechitas y los puntos solo aparecen
+          si hay MÁS de 3 en total -- si hay 3 o menos, ya se ven todas. */}
       <div className="hidden sm:block">
         <div className="flex items-center gap-3">
-          {count > 2 && (
+          {count > 3 && (
             <button
               onClick={prev}
               aria-label="Anterior"
@@ -2489,13 +2497,16 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
               <ChevronLeft size={18} />
             </button>
           )}
-          <div className={`mx-auto grid min-w-0 flex-1 gap-4 ${count > 1 ? "max-w-3xl grid-cols-2" : "max-w-sm grid-cols-1"}`}>
+          <div className={`mx-auto grid min-w-0 flex-1 gap-4 ${count > 2 ? "max-w-5xl grid-cols-3" : count > 1 ? "max-w-3xl grid-cols-2" : "max-w-sm grid-cols-1"}`}>
             <AccountCardBlock item={item} view={view} fmt={fmt} onEdit={onEdit} onDelete={onDelete} onPay={onPay} onViewDetail={onViewDetail} />
             {count > 1 && (
               <AccountCardBlock item={secondItem} view={secondView} fmt={fmt} onEdit={onEdit} onDelete={onDelete} onPay={onPay} onViewDetail={onViewDetail} />
             )}
+            {count > 2 && (
+              <AccountCardBlock item={thirdItem} view={thirdView} fmt={fmt} onEdit={onEdit} onDelete={onDelete} onPay={onPay} onViewDetail={onViewDetail} />
+            )}
           </div>
-          {count > 2 && (
+          {count > 3 && (
             <button
               onClick={next}
               aria-label="Siguiente"
@@ -2505,7 +2516,7 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
             </button>
           )}
         </div>
-        {count > 2 && (
+        {count > 3 && (
           <div className="mt-3 flex items-center justify-center gap-1.5">
             {items.map((it, i) => (
               <button
@@ -2513,7 +2524,7 @@ function AccountsCarousel({ items, fmt, onEdit, onDelete, onPay, onViewDetail })
                 onClick={() => setIndex(i)}
                 aria-label={`Ir al ítem ${i + 1}`}
                 className={`h-1.5 rounded-full transition-all ${
-                  i === safeIndex || i === secondIndex ? "w-5 bg-slate-700 dark:bg-white" : "w-1.5 bg-slate-300 dark:bg-slate-600"
+                  i === safeIndex || i === secondIndex || i === thirdIndex ? "w-5 bg-slate-700 dark:bg-white" : "w-1.5 bg-slate-300 dark:bg-slate-600"
                 }`}
               />
             ))}
