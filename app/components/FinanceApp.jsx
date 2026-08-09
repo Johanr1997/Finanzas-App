@@ -2225,6 +2225,21 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
     || (isCard && CREDIT_CARD_BANK_OVERRIDES[view.bank])
     || BANKS.find((b) => b.name === view.bank)
     || BANKS[BANKS.length - 1];
+  const showUsd = isCard && view.creditLimitUsd != null;
+  const usdText = showUsd ? fmtUSD(view.availableUsd) : null;
+  // Tamaño de letra dinámico según cuántos caracteres tenga el monto en
+  // dólares (2026-08-09, reportado por el usuario con capturas: montos como
+  // "$10,234" se veían cortados -- "$10…" -- porque no cabían en el ancho
+  // disponible, que además compite con el nombre del banco a la derecha).
+  // Mientras más dígitos, más chica la letra, para que el número se vea
+  // completo en vez de depender de "truncate" para disimular el corte.
+  const usdSizeClass = usdText
+    ? usdText.length > 10
+      ? "text-[15px] sm:text-[17px]"
+      : usdText.length > 7
+      ? "text-[19px] sm:text-[22px]"
+      : "text-[26px] sm:text-[30px]"
+    : "text-[32px] sm:text-[36px]";
   return (
     <div
       className={`group relative flex aspect-[16/10] w-full flex-col justify-between overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 sm:p-6 ${onViewDetail ? "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-slate-900/25" : ""}`}
@@ -2267,8 +2282,8 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
           <Trash2 size={12} />
         </button>
       </div>
-      <div className="relative flex items-start justify-between gap-3 pr-14">
-        <div className="min-w-0">
+      <div className="relative flex items-start justify-between gap-2 pr-14">
+        <div className="min-w-0 flex-1">
           {/* Tarjetas con límite en dólares (2026-08-09, a pedido del
               usuario): el número grande pasa a ser "Disponible" en dólares
               en vez de "Debes actualmente" en colones -- el detalle en
@@ -2285,20 +2300,23 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
               de la fuente, mucho menos propenso a este problema. Se agregó
               también "tabular-nums" (no lo tenía) para que los dígitos no
               salten de ancho al cambiar de tarjeta. */}
-          {/* Tamaño de letra un poco menor para el disponible en dólares
-              (2026-08-09): "$4,000.00" o cifras con centavos son más largas
-              que un monto en colones sin decimales, y se cortaban con
-              "truncate" en el ancho de la tarjeta. */}
-          <p className={`mt-1 truncate font-bold leading-tight tracking-tight tabular-nums text-white ${isCard && view.creditLimitUsd != null ? "text-[26px] sm:text-[30px]" : "text-[32px] sm:text-[36px]"}`}>
-            {isCard && view.creditLimitUsd != null ? fmtUSD(view.availableUsd) : fmt(view.balance)}
+          <p className={`mt-1 truncate font-bold leading-tight tracking-tight tabular-nums text-white ${usdSizeClass}`}>
+            {showUsd ? usdText : fmt(view.balance)}
           </p>
-          {isCard && view.creditLimitUsd != null && (
-            <p className="mt-0.5 text-xs text-white/60">Debes {fmt(view.balance)}</p>
+          {showUsd && (
+            <p className="mt-0.5 truncate text-xs text-white/60">Debes {fmt(view.balance)}</p>
           )}
         </div>
-        <div className="shrink-0 text-right">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">{view.bank || "Otro"}</p>
-          <p className="mt-0.5 text-[10px] text-white/50">{view.type}</p>
+        {/* max-w + truncate (2026-08-09, reportado por el usuario con
+            capturas: en tarjetas con nombre de banco largo, ej. "BANCO
+            NACIONAL (BN)", este bloque le quitaba tanto espacio al monto de
+            la izquierda que terminaba cortándose -- "$10…" -- antes de que
+            le tocara cortarse a él. Ahora, si alguno de los dos tiene que
+            truncarse por espacio, es este (el nombre del banco), nunca el
+            monto, que es el dato importante. */}
+        <div className="w-[34%] max-w-[130px] shrink-0 text-right">
+          <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-white/60">{view.bank || "Otro"}</p>
+          <p className="truncate text-[10px] text-white/50">{view.type}</p>
         </div>
       </div>
       <div className="relative">
@@ -2314,9 +2332,16 @@ function AccountCard({ view, kind, fmt, onEdit, onDelete, onViewDetail }) {
         <p className="mt-2 font-mono text-sm tracking-[0.2em] text-white/90">
           •••• •••• •••• {view.last4 || "····"}
         </p>
-        <div className="mt-2 flex items-end justify-between">
+        {/* shrink-0 en el logo (2026-08-09, reportado por el usuario con
+            capturas: en tarjetas con un nombre largo, el logo de Visa/
+            Mastercard se veía cortado) -- sin esto, un nombre largo podía
+            empujar/comprimir el logo en vez de ser el nombre el que se
+            trunca (que ya tenía "truncate" para eso). */}
+        <div className="mt-2 flex items-end justify-between gap-2">
           <p className="min-w-0 truncate text-sm font-medium text-white/80">{view.name}</p>
-          <NetworkMark network={view.network} />
+          <div className="shrink-0">
+            <NetworkMark network={view.network} />
+          </div>
         </div>
       </div>
     </div>
