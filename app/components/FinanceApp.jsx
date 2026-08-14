@@ -7655,12 +7655,29 @@ function SavingsView({ fmt, onDataChanged, year, month, accounts, refetchAccount
     const { error } = await supabase.from("savings").delete().eq("id", record.id);
     if (error) throw error;
     if (record.goal_id) await adjustGoalAmount(record.goal_id, -Number(record.amount));
+    // Bug reportado el 2026-08-09 (con ejemplo real: WINK/Coopenae): al
+    // crear un ahorro ligado a una cuenta, esa cuenta se REBAJA (el dinero
+    // "sale" de la cuenta hacia el ahorro) -- editar el monto ya devolvía
+    // bien la diferencia (ver SavingModal), pero ELIMINAR el ahorro completo
+    // volvía a rebajar la cuenta en vez de devolverle el monto completo
+    // (tenía el signo invertido: "-Number(record.amount)" en vez de
+    // "Number(record.amount)"), así que el dinero desaparecía en vez de
+    // volver a la cuenta. Mismo criterio que ya usa el borrado de un gasto
+    // (ver el handleDelete de ExpensesView, que si suma de vuelta).
+    let accountError = null;
     if (record.account_id) {
-      await adjustAccountBalance(record.account_id, -Number(record.amount));
+      accountError = await adjustAccountBalance(record.account_id, Number(record.amount));
       if (refetchAccounts) refetchAccounts();
     }
     setSavings((prev) => prev.filter((s) => s.id !== record.id));
     if (onDataChanged) onDataChanged();
+    if (accountError) {
+      // No se cierra el modal de confirmación acá -- se deja que
+      // ConfirmDeleteModal atrape este error y lo muestre, para que la
+      // persona sepa que el ahorro sí se borró pero el monto no volvió solo
+      // a la cuenta (mismo patrón que SavingModal usa al crear/editar).
+      throw new Error(`El ahorro se eliminó, pero no se pudo devolver el monto a la cuenta: ${accountError.message}`);
+    }
     setDeletingSaving(null);
   }
   async function handleDeleteType(id) {
