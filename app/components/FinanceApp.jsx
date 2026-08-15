@@ -8788,19 +8788,27 @@ function evaluatePurchaseImpact(monthlyImpact, avgMargin) {
   return { level: "red", ratio, text: `Usaría ${pct >= 300 ? "más del 300" : pct}% de tu margen mensual promedio -- no es recomendable ahora mismo. Valora un monto más bajo, esperar, ahorrar primero, o pagarlo a más meses.` };
 }
 function PurchaseSimulatorView({ fmt, categories, cards }) {
-  // Margen mensual promedio de los últimos 3 meses YA COMPLETOS (sin contar
-  // el mes actual, todavía a mitad de camino -- lo dejaría artificialmente
-  // bajo). Reusa fetchYearData (mismo que carga Resumen), que ya incluye
-  // gastos fijos y cuotas de planes de pago sintetizadas -- así el margen
-  // de acá es el mismo "real" que se ve en el resto de la app, no uno
-  // recalculado aparte que se podría desincronizar. Puede necesitar dos
-  // años distintos si los últimos 3 meses cruzan de diciembre a enero.
+  // Margen mensual promedio de hasta los últimos 3 meses que tengan datos
+  // reales de ingresos Y gastos (incluye el mes actual si ya tiene ambos
+  // registrados). Antes se excluía siempre el mes actual por estar "a mitad
+  // de camino", pero eso hacía que, si algún mes anterior tenía ingresos
+  // registrados y cero gastos (por no haberlos cargado aún), ese mes se
+  // colara como "representativo" y el margen terminara siendo el ingreso
+  // puro -- justo el problema que se veía en el simulador. Exigir ingresos
+  // Y gastos a la vez evita ese caso, y de paso deja usar el mes actual en
+  // cuanto ya tenga movimiento real de ambos tipos, que es el dato más
+  // fresco y preciso disponible. Reusa fetchYearData (mismo que carga
+  // Resumen), que ya incluye gastos fijos y cuotas de planes de pago
+  // sintetizadas -- así el margen de acá es el mismo "real" que se ve en
+  // el resto de la app, no uno recalculado aparte que se podría
+  // desincronizar. Puede necesitar dos años distintos si los últimos meses
+  // cruzan de diciembre a enero.
   const [marginState, setMarginState] = useState({ loading: true, error: false, avgMargin: null, monthLabels: [] });
   useEffect(() => {
     let active = true;
     async function loadMargins() {
       const today = new Date();
-      const targets = [1, 2, 3].map((i) => {
+      const targets = [0, 1, 2, 3].map((i) => {
         const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
         return { year: d.getFullYear(), month: d.getMonth() };
       });
@@ -8812,7 +8820,8 @@ function PurchaseSimulatorView({ fmt, categories, cards }) {
         years.forEach((y, i) => { dataByYear[y] = results[i]; });
         const withData = targets
           .map((t) => ({ ...t, data: dataByYear[t.year]?.months?.[t.month] }))
-          .filter((t) => t.data && (t.data.incomes.length > 0 || t.data.gastos.length > 0 || t.data.savings.length > 0));
+          .filter((t) => t.data && t.data.incomes.length > 0 && t.data.gastos.length > 0)
+          .slice(0, 3);
         if (withData.length === 0) {
           setMarginState({ loading: false, error: false, avgMargin: null, monthLabels: [] });
           return;
