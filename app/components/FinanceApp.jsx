@@ -8757,91 +8757,91 @@ function BudgetModal({ category, budget, forceScope, year, month, monthLabel, on
    SIMULADOR DE COMPRA
 ------------------------------------------------------------------ */
 // "¿Puedo comprar esto?" (2026-08-08, a pedido del usuario, ej. "¿quiero
-// comprar un iPhone de $1000?"): compara un monto (de contado o a plazos)
-// contra el margen mensual REAL de los últimos meses (ingresos menos
-// gastos menos ahorros, con gastos fijos y cuotas de planes de pago ya
-// incluidos -- mismo cálculo que ya usa Resumen) y da un veredicto con
-// reglas fijas, NO con un asistente de IA: para los mismos números,
-// siempre da el mismo resultado, sin riesgo de que "invente" un consejo
-// raro. El 30%/70% son el mismo criterio que ya usa buildGoalSavingsTip
-// para sugerir cuánto aportar a una meta sin afectar las finanzas -- se
-// reusa acá para que el "semáforo" se sienta consistente en toda la app.
+// comprar un iPhone de $1000?"; rediseñado el 2026-08-15): compara un monto
+// (de contado o a plazos) contra el margen PROYECTADO de tus próximas dos
+// quincenas (la actual + la siguiente) y da un veredicto con reglas fijas,
+// NO con un asistente de IA: para los mismos números, siempre da el mismo
+// resultado, sin riesgo de que "invente" un consejo raro. El 30%/70% son
+// el mismo criterio que ya usa buildGoalSavingsTip para sugerir cuánto
+// aportar a una meta sin afectar las finanzas -- se reusa acá para que el
+// "semáforo" se sienta consistente en toda la app.
 const PURCHASE_COMFORTABLE_RATIO = 0.3;
 const PURCHASE_TIGHT_RATIO = 0.7;
-function evaluatePurchaseImpact(monthlyImpact, avgMargin) {
-  if (avgMargin == null) return null;
-  if (avgMargin <= 0) {
+function evaluatePurchaseImpact(monthlyImpact, projectedMargin) {
+  if (projectedMargin == null) return null;
+  if (projectedMargin <= 0) {
     return {
       level: "red",
       ratio: null,
-      text: "En tus últimos meses, tus gastos y ahorros ya igualan o superan tus ingresos, así que no queda margen real para esta compra sin afectar tus finanzas.",
+      text: "En tus próximas quincenas, tus gastos y ahorros ya igualan o superan tus ingresos, así que no queda margen real para esta compra sin afectar tus finanzas.",
     };
   }
-  const ratio = monthlyImpact / avgMargin;
+  const ratio = monthlyImpact / projectedMargin;
   const pct = Math.round(ratio * 100);
   if (ratio <= PURCHASE_COMFORTABLE_RATIO) {
-    return { level: "green", ratio, text: `Usaría cerca del ${pct}% de tu margen mensual promedio -- no debería afectar tus finanzas.` };
+    return { level: "green", ratio, text: `Usaría cerca del ${pct}% de tu margen proyectado para tus próximas quincenas -- no debería afectar tus finanzas.` };
   }
   if (ratio <= PURCHASE_TIGHT_RATIO) {
-    return { level: "amber", ratio, text: `Usaría cerca del ${pct}% de tu margen mensual promedio -- es viable, pero ese mes quedarías bastante ajustado. Vale la pena pensarlo.` };
+    return { level: "amber", ratio, text: `Usaría cerca del ${pct}% de tu margen proyectado para tus próximas quincenas -- es viable, pero quedarías bastante ajustado. Vale la pena pensarlo.` };
   }
-  return { level: "red", ratio, text: `Usaría ${pct >= 300 ? "más del 300" : pct}% de tu margen mensual promedio -- no es recomendable ahora mismo. Valora un monto más bajo, esperar, ahorrar primero, o pagarlo a más meses.` };
+  if (ratio <= 1) {
+    return { level: "red", ratio, text: `Usaría ${pct}% de tu margen proyectado para tus próximas quincenas -- no es recomendable ahora mismo. Valora un monto más bajo, esperar, ahorrar primero, o pagarlo a más meses.` };
+  }
+  return { level: "red", ratio, text: `Esto supera tu margen proyectado para tus próximas quincenas -- quedarías en negativo si lo comprás así. Valora un monto más bajo, esperar, ahorrar primero, o pagarlo a más meses.` };
 }
 function PurchaseSimulatorView({ fmt, categories, cards }) {
-  // Margen mensual promedio de hasta los últimos 3 meses que tengan datos
-  // reales de ingresos Y gastos (incluye el mes actual si ya tiene ambos
-  // registrados). Antes se excluía siempre el mes actual por estar "a mitad
-  // de camino", pero eso hacía que, si algún mes anterior tenía ingresos
-  // registrados y cero gastos (por no haberlos cargado aún), ese mes se
-  // colara como "representativo" y el margen terminara siendo el ingreso
-  // puro -- justo el problema que se veía en el simulador. Exigir ingresos
-  // Y gastos a la vez evita ese caso, y de paso deja usar el mes actual en
-  // cuanto ya tenga movimiento real de ambos tipos, que es el dato más
-  // fresco y preciso disponible. Reusa fetchYearData (mismo que carga
-  // Resumen), que ya incluye gastos fijos y cuotas de planes de pago
-  // sintetizadas -- así el margen de acá es el mismo "real" que se ve en
-  // el resto de la app, no uno recalculado aparte que se podría
-  // desincronizar. Puede necesitar dos años distintos si los últimos meses
-  // cruzan de diciembre a enero.
-  const [marginState, setMarginState] = useState({ loading: true, error: false, avgMargin: null, monthLabels: [] });
+  // Margen PROYECTADO de tus próximas dos quincenas -- la que está corriendo
+  // ahora mismo + la siguiente (2026-08-15, reemplaza el enfoque anterior de
+  // promediar meses YA PASADOS). El promedio histórico se sentía
+  // desconectado de la realidad: el usuario detectó que una compra que sí lo
+  // dejaba en negativo para sus próximas quincenas (según la propia vista
+  // Mensual/Quincenal) el simulador la mostraba como "viable", porque
+  // promediaba meses de atrás en vez de mirar hacia adelante. Reusa
+  // computePaydayPeriods (la misma función que ya arma la vista Mensual →
+  // Quincenal, alineada a los días de pago reales del 15 y 30, no a la
+  // quincena de calendario) para que el número de acá sea exactamente el
+  // mismo "saldo por quincena" que el usuario ya ve y en el que confía. Solo
+  // hace falta el AÑO en curso, salvo el caso borde de estar en la última
+  // quincena del año (30 dic-1 ene), donde la "siguiente" quincena ya cae en
+  // el año nuevo y hay que pedir ese año aparte.
+  const [marginState, setMarginState] = useState({ loading: true, error: false, projectedMargin: null, periodLabels: [] });
   useEffect(() => {
     let active = true;
-    async function loadMargins() {
+    async function loadMargin() {
       const today = new Date();
-      const targets = [0, 1, 2, 3].map((i) => {
-        const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-        return { year: d.getFullYear(), month: d.getMonth() };
-      });
-      const years = [...new Set(targets.map((t) => t.year))];
+      const year = today.getFullYear();
+      const todayStr = `${year}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
       try {
-        const results = await Promise.all(years.map((y) => fetchYearData(y)));
+        const yearData = await fetchYearData(year);
         if (!active) return;
-        const dataByYear = {};
-        years.forEach((y, i) => { dataByYear[y] = results[i]; });
-        const withData = targets
-          .map((t) => ({ ...t, data: dataByYear[t.year]?.months?.[t.month] }))
-          .filter((t) => t.data && t.data.incomes.length > 0 && t.data.gastos.length > 0)
-          .slice(0, 3);
-        if (withData.length === 0) {
-          setMarginState({ loading: false, error: false, avgMargin: null, monthLabels: [] });
-          return;
+        const periods = computePaydayPeriods(yearData.months, year);
+        let idx = periods.findIndex((p) => todayStr >= p.start && todayStr < p.end);
+        if (idx < 0) idx = periods.length - 1;
+        const selected = [periods[idx]];
+        if (idx + 1 < periods.length) {
+          selected.push(periods[idx + 1]);
+        } else {
+          const nextYearData = await fetchYearData(year + 1);
+          if (!active) return;
+          const nextPeriods = computePaydayPeriods(nextYearData.months, year + 1);
+          if (nextPeriods[0]) selected.push(nextPeriods[0]);
         }
-        const avg = withData.reduce((a, t) => a + t.data.balance, 0) / withData.length;
+        const margin = selected.reduce((a, p) => a + p.balanceDelPeriodo, 0);
         setMarginState({
           loading: false,
           error: false,
-          avgMargin: avg,
-          monthLabels: withData.map((t) => `${MONTHS_FULL[t.month]} ${t.year}`),
+          projectedMargin: margin,
+          periodLabels: selected.map((p) => p.longLabel),
         });
       } catch (e) {
-        console.error("Error calculando el margen para el simulador:", e);
-        if (active) setMarginState({ loading: false, error: true, avgMargin: null, monthLabels: [] });
+        console.error("Error calculando el margen proyectado para el simulador:", e);
+        if (active) setMarginState({ loading: false, error: true, projectedMargin: null, periodLabels: [] });
       }
     }
-    loadMargins();
+    loadMargin();
     return () => { active = false; };
   }, []);
-  const { avgMargin, monthLabels, loading: marginLoading, error: marginError } = marginState;
+  const { projectedMargin, periodLabels, loading: marginLoading, error: marginError } = marginState;
 
   const [itemName, setItemName] = useState("");
   const [amount, setAmount] = useState("");
@@ -8852,13 +8852,13 @@ function PurchaseSimulatorView({ fmt, categories, cards }) {
 
   const numericAmount = Number(amount) || 0;
   const numericMonths = Number(months) || 0;
-  const contadoResult = numericAmount > 0 ? evaluatePurchaseImpact(numericAmount, avgMargin) : null;
-  const plazosResult = numericAmount > 0 && numericMonths > 1 ? evaluatePurchaseImpact(numericAmount / numericMonths, avgMargin) : null;
+  const contadoResult = numericAmount > 0 ? evaluatePurchaseImpact(numericAmount, projectedMargin) : null;
+  const plazosResult = numericAmount > 0 && numericMonths > 1 ? evaluatePurchaseImpact(numericAmount / numericMonths, projectedMargin) : null;
   // Si de contado no queda cómodo, ¿a cuántos meses SÍ quedaría cómodo?
   // (para poder sugerir un plan de pago concreto, en vez de solo decir
   // "considera pagarlo a plazos" sin ningún número).
-  const comfortableMonths = (avgMargin != null && avgMargin > 0 && contadoResult && contadoResult.level !== "green")
-    ? Math.max(2, Math.ceil(numericAmount / (avgMargin * PURCHASE_COMFORTABLE_RATIO)))
+  const comfortableMonths = (projectedMargin != null && projectedMargin > 0 && contadoResult && contadoResult.level !== "green")
+    ? Math.max(2, Math.ceil(numericAmount / (projectedMargin * PURCHASE_COMFORTABLE_RATIO)))
     : null;
 
   const toneClasses = {
@@ -8885,7 +8885,7 @@ function PurchaseSimulatorView({ fmt, categories, cards }) {
       <Card className="p-5">
         <Eyebrow>¿Puedo comprar esto?</Eyebrow>
         <p className="mt-1 text-xs text-slate-400">
-          Reglas simples, no un asistente de IA: compara el monto contra tu margen mensual REAL (ingresos menos gastos menos ahorros, incluyendo gastos fijos y cuotas de planes de pago) de tus últimos meses -- así el resultado siempre es consistente.
+          Reglas simples, no un asistente de IA: compara el monto contra tu margen PROYECTADO para tus próximas dos quincenas (ingresos menos gastos menos ahorros, incluyendo gastos fijos y cuotas de planes de pago -- el mismo cálculo que ya ves en Mensual → Quincenal) -- así el resultado siempre es consistente.
         </p>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
@@ -8915,19 +8915,19 @@ function PurchaseSimulatorView({ fmt, categories, cards }) {
         </div>
       </Card>
       {marginLoading ? (
-        <Card className="p-5"><p className="text-sm text-slate-400">Calculando tu margen mensual promedio...</p></Card>
+        <Card className="p-5"><p className="text-sm text-slate-400">Calculando tu margen proyectado...</p></Card>
       ) : marginError ? (
-        <LoadErrorBanner message="No se pudo calcular tu margen mensual. Revisa tu conexión e intenta recargar la página." />
-      ) : avgMargin == null ? (
+        <LoadErrorBanner message="No se pudo calcular tu margen proyectado. Revisa tu conexión e intenta recargar la página." />
+      ) : projectedMargin == null ? (
         <Card className="p-5">
-          <p className="text-sm text-slate-400">Todavía no hay suficiente historial (al menos un mes con ingresos o gastos registrados en los últimos 3 meses) para calcular tu margen mensual promedio. Vuelve a intentarlo cuando lleves un par de meses usando la app.</p>
+          <p className="text-sm text-slate-400">No se pudo calcular el margen proyectado para tus próximas quincenas. Vuelve a intentarlo más tarde.</p>
         </Card>
       ) : (
         <>
           <Card className="p-5">
-            <Eyebrow>Tu margen mensual promedio</Eyebrow>
-            <p className={`mt-1 text-2xl font-semibold tabular-nums ${avgMargin >= 0 ? "text-slate-800 dark:text-white" : "text-red-500"}`}>{fmt(avgMargin)}</p>
-            <p className="mt-1 text-xs text-slate-400">Promedio de {monthLabels.join(", ")} (ingresos menos gastos menos ahorros de esos meses).</p>
+            <Eyebrow>Tu margen proyectado</Eyebrow>
+            <p className={`mt-1 text-2xl font-semibold tabular-nums ${projectedMargin >= 0 ? "text-slate-800 dark:text-white" : "text-red-500"}`}>{fmt(projectedMargin)}</p>
+            <p className="mt-1 text-xs text-slate-400">Suma de tus próximas quincenas: {periodLabels.join(" y ")} (ingresos menos gastos menos ahorros proyectados de esos períodos).</p>
           </Card>
           {numericAmount > 0 && (
             <div className="space-y-3">
